@@ -47,7 +47,6 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7
         with:
-          distribution: goreleaser-pro
           version: latest
           args: release --clean --release-notes=${{ runner.temp }}/release_notes.md
         env:
