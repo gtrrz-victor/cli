@@ -118,27 +118,19 @@ type Event struct {
 	SubagentType    string
 	TaskDescription string
 
-	// ModifiedFiles is a list of file paths modified by a subagent or a tool call.
-	// Populated on:
-	//   - SubagentEnd events when the agent provides this data directly via hook
-	//     payload (e.g., Cursor's subagentStop).
-	//   - ToolUse events when the agent fires a per-tool-use hook with file paths
-	//     (e.g., Codex's PostToolUse for apply_patch).
-	// Paths may be absolute, cwd-relative, or repo-relative; the lifecycle handler
-	// normalizes them via FilterAndNormalizePaths using the event's CWD or the
-	// repo root.
+	// ModifiedFiles is the list of file paths modified by a subagent (SubagentEnd)
+	// or a tool call (ToolUse). Paths may be absolute, cwd-relative, or
+	// repo-relative; lifecycle handlers normalize against the worktree root.
 	ModifiedFiles []string
 
-	// NewFiles is a list of file paths created by a tool call (ToolUse events).
-	NewFiles []string
-
-	// DeletedFiles is a list of file paths deleted by a tool call (ToolUse events).
+	// NewFiles and DeletedFiles carry create/delete paths for ToolUse events,
+	// kept separate from ModifiedFiles so consumers can reason about agent intent.
+	NewFiles     []string
 	DeletedFiles []string
 
 	// CWD is the working directory the agent was running in when the event fired.
-	// Populated on ToolUse events so the lifecycle handler can resolve cwd-relative
-	// paths from the hook payload (e.g., Codex apply_patch paths) to absolute paths
-	// before normalization to repo-relative.
+	// Set on ToolUse so cwd-relative payload paths can be resolved before
+	// repo-root normalization.
 	CWD string
 
 	// ResponseMessage is an optional message to display to the user via the agent.

@@ -98,21 +98,19 @@ func (c *CodexAgent) parseTurnStart(stdin io.Reader) (*agent.Event, error) {
 	}, nil
 }
 
+// Codex PostToolUse tool_name values that represent file mutations. The
+// canonical Codex name is apply_patch; Write and Edit are matcher aliases
+// Codex registers for compatibility with Claude-style hook configs — see
+// codex-rs/core/src/tools/hook_names.rs:apply_patch.
+const (
+	toolNameApplyPatch = "apply_patch"
+	toolAliasWrite     = "Write"
+	toolAliasEdit      = "Edit"
+)
+
 // parsePostToolUse turns a Codex PostToolUse hook into a ToolUse lifecycle event.
-//
-// Codex fires PostToolUse for every tool the agent runs (apply_patch, shell,
-// unified_exec, MCP tools). We only care about file mutations: apply_patch
-// (canonical name) and its matcher aliases Write/Edit (Codex accepts those for
-// Claude-style hook configs — see codex-rs/core/src/tools/hook_names.rs).
-// Other tool names produce a no-op event (nil) so the dispatcher skips them.
-//
-// The patch envelope arrives in tool_input.command using Codex's plain-text
-// format (`*** Add File: …`, `*** Update File: …`, `*** Delete File: …`).
-// Path classification matters here: Add → NewFiles, Delete → DeletedFiles,
-// Update → ModifiedFiles. The strategy's mergeFilesTouched dedups across the
-// three buckets, so misclassification only loses signal — but keeping them
-// separate matches what SaveStep does at TurnEnd and lets future consumers
-// reason about agent intent.
+// Non-mutating tools (shell, MCP) produce a nil event so the dispatcher skips
+// them — extracting files from arbitrary shell commands would be unreliable.
 func (c *CodexAgent) parsePostToolUse(stdin io.Reader) (*agent.Event, error) {
 	raw, err := agent.ReadAndParseHookInput[postToolUseRaw](stdin)
 	if err != nil {
@@ -124,18 +122,13 @@ func (c *CodexAgent) parsePostToolUse(stdin io.Reader) (*agent.Event, error) {
 	}
 
 	var input applyPatchToolInput
-	if len(raw.ToolInput) > 0 {
-		// Best-effort: an unparseable tool_input means we can't extract files,
-		// but we shouldn't fail the hook (which would block the agent's tool call).
-		_ = json.Unmarshal(raw.ToolInput, &input) //nolint:errcheck // input.Command stays empty on failure
-	}
-	if input.Command == "" {
-		return nil, nil //nolint:nilnil // no patch envelope, nothing to record
-	}
+	// Best-effort: an unparseable tool_input means we can't extract files, but
+	// we shouldn't fail the hook (which would block the agent's tool call).
+	_ = json.Unmarshal(raw.ToolInput, &input) //nolint:errcheck // input.Command stays empty on failure
 
 	added, modified, deleted := classifyApplyPatchPaths(input.Command)
 	if len(added) == 0 && len(modified) == 0 && len(deleted) == 0 {
-		return nil, nil //nolint:nilnil // empty patch — no files to record
+		return nil, nil //nolint:nilnil // empty or unparseable envelope
 	}
 
 	return &agent.Event{
@@ -152,13 +145,9 @@ func (c *CodexAgent) parsePostToolUse(stdin io.Reader) (*agent.Event, error) {
 	}, nil
 }
 
-// isApplyPatchTool reports whether a Codex PostToolUse tool_name represents an
-// apply_patch invocation. The canonical name is "apply_patch"; Write and Edit
-// are matcher aliases Codex accepts for compatibility with Claude-style hook
-// configs (see codex-rs/core/src/tools/hook_names.rs:apply_patch).
 func isApplyPatchTool(name string) bool {
 	switch name {
-	case "apply_patch", "Write", "Edit":
+	case toolNameApplyPatch, toolAliasWrite, toolAliasEdit:
 		return true
 	default:
 		return false

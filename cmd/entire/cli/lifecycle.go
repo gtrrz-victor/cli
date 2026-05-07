@@ -254,13 +254,8 @@ func handleLifecycleModelUpdate(ctx context.Context, ag agent.Agent, event *agen
 
 // handleLifecycleToolUse merges files reported by a per-tool-use hook into
 // the session's FilesTouched. Lightweight by design: no SaveStep, no shadow
-// branch commit — just enough so a mid-turn commit's PostCommit handler sees
-// an accurate FilesTouched list and the carry-forward decision is correct.
-//
-// Path normalization mirrors handleLifecycleTurnEnd: paths are filtered to
-// repo-root-relative via FilterAndNormalizePaths against the worktree root,
-// after first being made absolute via event.CWD when they're relative
-// (Codex's apply_patch envelope carries cwd-relative paths).
+// branch commit — just enough so PostCommit's carry-forward decision sees
+// an accurate file list mid-turn.
 func handleLifecycleToolUse(ctx context.Context, ag agent.Agent, event *agent.Event) error {
 	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
 
@@ -305,10 +300,9 @@ func handleLifecycleToolUse(ctx context.Context, ag agent.Agent, event *agent.Ev
 	return nil
 }
 
-// normalizeToolUsePaths converts hook-payload paths to repo-relative form.
-// Cwd-relative entries (the common Codex apply_patch shape) are first joined
-// against eventCWD so FilterAndNormalizePaths sees an absolute path it can
-// rewrite against repoRoot. Absolute entries pass through unchanged.
+// normalizeToolUsePaths converts hook-payload paths to repo-root-relative form.
+// Codex apply_patch envelopes carry cwd-relative paths, so we join them against
+// eventCWD before FilterAndNormalizePaths rewrites against repoRoot.
 func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 	if len(files) == 0 {
 		return nil

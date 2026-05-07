@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,14 +74,16 @@ type tokenUsageData struct {
 	TotalTokens           int `json:"total_tokens"`
 }
 
-// applyPatchFileRegex extracts file paths from apply_patch input.
-// Matches "*** Add File: <path>", "*** Update File: <path>", "*** Delete File: <path>"
-var applyPatchFileRegex = regexp.MustCompile(`\*\*\* (?:Add|Update|Delete) File: (.+)`)
+// Apply-patch envelope verbs Codex uses in tool_input.command — see
+// codex-rs/core/src/tools/handlers/apply_patch.rs. Capture group 1 is the
+// verb, group 2 is the path.
+const (
+	applyPatchVerbAdd    = "Add"
+	applyPatchVerbUpdate = "Update"
+	applyPatchVerbDelete = "Delete"
+)
 
-// applyPatchClassifiedRegex splits apply_patch entries by intent so callers can
-// route files into NewFiles/ModifiedFiles/DeletedFiles. Capture group 1 is the
-// verb (Add|Update|Delete), group 2 is the path.
-var applyPatchClassifiedRegex = regexp.MustCompile(`\*\*\* (Add|Update|Delete) File: (.+)`)
+var applyPatchFileRegex = regexp.MustCompile(`\*\*\* (Add|Update|Delete) File: (.+)`)
 
 // GetTranscriptPosition returns the current line count of a Codex rollout transcript.
 func (c *CodexAgent) GetTranscriptPosition(path string) (int, error) {
@@ -181,30 +184,27 @@ func extractFilesFromLine(lineData []byte) []string {
 	return nil
 }
 
-// extractFilesFromApplyPatch parses apply_patch input for file paths.
-// Format: "*** Add File: <path>" or "*** Update File: <path>" or "*** Delete File: <path>"
+// extractFilesFromApplyPatch returns every file path in an apply_patch envelope,
+// across Add/Update/Delete entries, deduplicated.
 func extractFilesFromApplyPatch(input string) []string {
-	matches := applyPatchFileRegex.FindAllStringSubmatch(input, -1)
-	var files []string
-	seen := make(map[string]struct{})
-	for _, m := range matches {
-		path := strings.TrimSpace(m[1])
-		if path != "" {
-			if _, ok := seen[path]; !ok {
-				seen[path] = struct{}{}
-				files = append(files, path)
-			}
-		}
+	added, modified, deleted := classifyApplyPatchPaths(input)
+	total := len(added) + len(modified) + len(deleted)
+	if total == 0 {
+		return nil
 	}
+	files := make([]string, 0, total)
+	files = append(files, added...)
+	files = append(files, modified...)
+	files = append(files, deleted...)
 	return files
 }
 
 // classifyApplyPatchPaths splits an apply_patch envelope into added, modified,
-// and deleted file paths. Each list is deduped within itself; an Update on the
-// same path as an Add wins toward Add (envelopes shouldn't do this, but if one
-// does the more specific intent is preferable). Empty paths are dropped.
+// and deleted file paths. An Add on the same path as an Update wins toward Add
+// — envelopes shouldn't do this, but the more specific intent is preferable.
+// Each bucket is sorted for deterministic output.
 func classifyApplyPatchPaths(input string) (added, modified, deleted []string) {
-	matches := applyPatchClassifiedRegex.FindAllStringSubmatch(input, -1)
+	matches := applyPatchFileRegex.FindAllStringSubmatch(input, -1)
 	bucket := make(map[string]string, len(matches))
 	for _, m := range matches {
 		verb := m[1]
@@ -213,7 +213,7 @@ func classifyApplyPatchPaths(input string) (added, modified, deleted []string) {
 			continue
 		}
 		if existing, ok := bucket[path]; ok {
-			if existing == "Add" || existing == "Delete" {
+			if existing == applyPatchVerbAdd || existing == applyPatchVerbDelete {
 				continue
 			}
 		}
@@ -221,14 +221,17 @@ func classifyApplyPatchPaths(input string) (added, modified, deleted []string) {
 	}
 	for path, verb := range bucket {
 		switch verb {
-		case "Add":
+		case applyPatchVerbAdd:
 			added = append(added, path)
-		case "Update":
+		case applyPatchVerbUpdate:
 			modified = append(modified, path)
-		case "Delete":
+		case applyPatchVerbDelete:
 			deleted = append(deleted, path)
 		}
 	}
+	sort.Strings(added)
+	sort.Strings(modified)
+	sort.Strings(deleted)
 	return added, modified, deleted
 }
 

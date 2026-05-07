@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -364,19 +365,12 @@ func LoadAgentTypeHint(ctx context.Context, sessionID string) types.AgentType {
 	return types.AgentType(strings.TrimSpace(string(data)))
 }
 
-// RecordFilesTouched merges the given files into the session's FilesTouched.
-// Used by mid-turn lifecycle events (e.g., per-tool-use hooks) to populate
-// state.FilesTouched incrementally — without this, agents like Codex that
-// commit mid-turn have no per-tool file accounting, and the carry-forward
-// path falls back to whole-transcript extraction.
-//
-// Inputs are merged via the same dedup+normalize logic SaveStep uses, so the
-// resulting list is stable regardless of which path populated it. Paths must
-// already be repo-relative; the caller (handleLifecycleToolUse) normalizes
-// before reaching here.
-//
-// No-op when the session state doesn't exist (event arrived before
-// InitializeSession) or all input lists are empty.
+// RecordFilesTouched merges paths into the session's FilesTouched, used by
+// mid-turn lifecycle events (per-tool-use hooks) so PostCommit's carry-forward
+// decision sees an accurate file list. Caller must pre-normalize paths to
+// repo-relative form. No-ops when the session state doesn't exist (event
+// arrived before InitializeSession) or the merge produced no changes — this
+// matters on Codex's hot path, where PostToolUse fires after every tool call.
 func RecordFilesTouched(ctx context.Context, sessionID string, modified, added, deleted []string) error {
 	if sessionID == "" {
 		return nil
@@ -391,7 +385,11 @@ func RecordFilesTouched(ctx context.Context, sessionID string, modified, added, 
 	if state == nil {
 		return nil
 	}
-	state.FilesTouched = mergeFilesTouched(state.FilesTouched, modified, added, deleted)
+	merged := mergeFilesTouched(state.FilesTouched, modified, added, deleted)
+	if slices.Equal(merged, state.FilesTouched) {
+		return nil
+	}
+	state.FilesTouched = merged
 	if err := SaveSessionState(ctx, state); err != nil {
 		return fmt.Errorf("save session state: %w", err)
 	}

@@ -57,16 +57,12 @@ type userPromptSubmitRaw struct {
 // We only consume the fields we need; unknown fields are ignored.
 type postToolUseRaw struct {
 	SessionID      string          `json:"session_id"`
-	TurnID         string          `json:"turn_id"`
 	TranscriptPath *string         `json:"transcript_path"`
 	CWD            string          `json:"cwd"`
-	HookEventName  string          `json:"hook_event_name"`
 	Model          string          `json:"model"`
-	PermissionMode string          `json:"permission_mode"`
 	ToolName       string          `json:"tool_name"`
 	ToolUseID      string          `json:"tool_use_id"`
 	ToolInput      json.RawMessage `json:"tool_input"`
-	ToolResponse   json.RawMessage `json:"tool_response"`
 }
 
 // applyPatchToolInput is the tool_input shape for apply_patch.
