@@ -150,14 +150,14 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 }
 
 // ensureSessionInitialized creates the session state file if it doesn't yet
-// exist (or has empty BaseCommit). Idempotent: subsequent calls are no-ops.
+// exist (or has empty BaseCommit). Idempotent: the existence check and the
+// create both happen inside initializeSession's session gate so a concurrent
+// turn-start hook can't slip a richer state in between, only to have it
+// overwritten with blank fields.
 func (s *ManualCommitStrategy) ensureSessionInitialized(ctx context.Context, repo *git.Repository, sessionID string, agentTypeHint types.AgentType) error {
 	state, err := s.loadSessionState(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to load session state: %w", err)
-	}
-	if state != nil && state.BaseCommit != "" {
-		return nil
 	}
 	agentType := resolveAgentType(agentTypeHint, state)
 	if err := s.initializeSession(ctx, repo, sessionID, agentType, "", "", ""); err != nil {

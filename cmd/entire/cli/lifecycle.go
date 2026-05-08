@@ -1016,28 +1016,23 @@ func transitionSessionTurnEnd(ctx context.Context, sessionID string, event *agen
 // markSessionEnded transitions the session to ENDED phase via the state machine.
 // If event is non-nil, hook-provided metrics are persisted to state before saving.
 func markSessionEnded(ctx context.Context, event *agent.Event, sessionID string) error {
-	state, err := strategy.LoadSessionState(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to load session state: %w", err)
+	mutErr := strategy.MutateSessionState(ctx, sessionID, func(state *strategy.SessionState) error {
+		if event != nil {
+			persistEventMetadataToState(event, state)
+		}
+		if transErr := strategy.TransitionAndLog(ctx, state, session.EventSessionStop, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
+			logging.Warn(logging.WithComponent(ctx, "lifecycle"), "session stop transition failed",
+				slog.String("error", transErr.Error()))
+		}
+		now := time.Now()
+		state.EndedAt = &now
+		return nil
+	})
+	if errors.Is(mutErr, strategy.ErrStateNotFound) {
+		return nil
 	}
-	if state == nil {
-		return nil // No state file, nothing to update
-	}
-
-	if event != nil {
-		persistEventMetadataToState(event, state)
-	}
-
-	if transErr := strategy.TransitionAndLog(ctx, state, session.EventSessionStop, session.TransitionContext{}, session.NoOpActionHandler{}); transErr != nil {
-		logging.Warn(logging.WithComponent(ctx, "lifecycle"), "session stop transition failed",
-			slog.String("error", transErr.Error()))
-	}
-
-	now := time.Now()
-	state.EndedAt = &now
-
-	if err := strategy.SaveSessionState(ctx, state); err != nil {
-		return fmt.Errorf("failed to save session state: %w", err)
+	if mutErr != nil {
+		return fmt.Errorf("failed to save session state: %w", mutErr)
 	}
 	return nil
 }

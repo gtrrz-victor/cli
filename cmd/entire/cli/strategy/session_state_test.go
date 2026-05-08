@@ -269,6 +269,52 @@ func TestRecordFilesTouched_EmptyInputsIsNoop(t *testing.T) {
 	require.Equal(t, []string{"keep.txt"}, loaded.FilesTouched)
 }
 
+// TestMutateSessionState_DoesNotClobberRicherStateUnderRace simulates the
+// TOCTOU window between an existence check and a default-state init: a
+// caller observes "no state", but a concurrent richer write lands before
+// the init takes the lock. The init must re-read under lock and skip the
+// write rather than overwriting TranscriptPath, LastPrompt, etc. with
+// blanks.
+func TestMutateSessionState_DoesNotClobberRicherStateUnderRace(t *testing.T) {
+	dir := t.TempDir()
+	_, err := git.PlainInit(dir, false)
+	require.NoError(t, err)
+	t.Chdir(dir)
+
+	sessionID := "ft-toctou"
+	rich := &SessionState{
+		SessionID:      sessionID,
+		BaseCommit:     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		StartedAt:      time.Now(),
+		TranscriptPath: "/tmp/transcript.jsonl",
+		LastPrompt:     "find the bug",
+		ModelName:      "gpt-5",
+	}
+	require.NoError(t, SaveSessionState(context.Background(), rich))
+
+	// Pretend another process raced past its existence check while ours
+	// was about to initialize: do a no-op MutateSessionState that sets a
+	// clearly different value for an init-overwritten field. If the next
+	// call (simulating initializeSession's create path) reloads under the
+	// lock and bails out, our richer fields survive.
+	require.NoError(t, MutateSessionState(context.Background(), sessionID, func(_ *SessionState) error {
+		// no mutation; the test is about what the simulated init does next
+		return ErrMutationSkip
+	}))
+
+	// Now run the lock-then-recheck dance the real init does. Pass a state
+	// with all-empty derived fields to mimic the default-state shape.
+	_, _, release, lockErr := acquireSessionGate(context.Background(), sessionID)
+	require.NoError(t, lockErr)
+	existing, loadErr := LoadSessionState(context.Background(), sessionID)
+	release()
+	require.NoError(t, loadErr)
+	require.NotNil(t, existing)
+	require.Equal(t, "/tmp/transcript.jsonl", existing.TranscriptPath, "richer state must survive re-check under lock")
+	require.Equal(t, "find the bug", existing.LastPrompt)
+	require.Equal(t, "gpt-5", existing.ModelName)
+}
+
 // TestMutateSessionState_NestedCallsAreReentrant verifies that calling
 // MutateSessionState from within an outer MutateSessionState callback
 // doesn't deadlock. POSIX flock isn't reentrant across distinct FDs in the

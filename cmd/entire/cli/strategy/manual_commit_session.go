@@ -329,13 +329,23 @@ func (s *ManualCommitStrategy) initializeSession(ctx context.Context, repo *git.
 		LastPrompt:            truncatePromptForStorage(userPrompt),
 	}
 
-	// Persist under the session gate so a concurrent first-turn hook for the
-	// same session can't lose the write.
+	// Take the gate, then re-check under lock. Without this re-check a
+	// concurrent turn-start hook that wrote a richer state in the gap
+	// between our caller's existence check and our save would have its
+	// fields (TranscriptPath, LastPrompt, ModelName, accumulated TurnID)
+	// overwritten with blanks here.
 	_, _, release, lockErr := acquireSessionGate(ctx, sessionID)
 	if lockErr != nil {
 		return fmt.Errorf("acquire state lock: %w", lockErr)
 	}
 	defer release()
+	existing, loadErr := s.loadSessionState(ctx, sessionID)
+	if loadErr != nil {
+		return fmt.Errorf("re-load session state under lock: %w", loadErr)
+	}
+	if existing != nil && existing.BaseCommit != "" {
+		return nil
+	}
 	return s.saveSessionState(ctx, state)
 }
 
