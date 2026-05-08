@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,27 @@ func writeV2ArchiveRef(t *testing.T, repo *git.Repository, refName plumbing.Refe
 	require.NoError(t, err)
 	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(refName, commitHash)))
 	return commitHash
+}
+
+func enableFilteredFetchesForTest(t *testing.T, dir string) {
+	t.Helper()
+
+	entireDir := filepath.Join(dir, ".entire")
+	require.NoError(t, os.MkdirAll(entireDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(entireDir, paths.SettingsFileName),
+		[]byte(`{"enabled": true, "strategy_options": {"filtered_fetches": true}}`),
+		0o644,
+	))
+}
+
+func enableFilteredFetchServingForTest(t *testing.T, bareDir string) {
+	t.Helper()
+
+	cmd := exec.CommandContext(t.Context(), "git", "-C", bareDir, "config", "uploadpack.allowFilter", "true")
+	cmd.Env = testutil.GitIsolatedEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "enable uploadpack.allowFilter failed: %s", out)
 }
 
 func rotateV2CurrentForTest(t *testing.T, repo *git.Repository, archiveRefName plumbing.ReferenceName) plumbing.Hash {
@@ -878,6 +900,78 @@ func TestFetchAndMergeRef_RotationConflict(t *testing.T) {
 	// Check that the remote checkpoint (112233445566) is also there
 	_, err = archiveTree.Tree("11/2233445566")
 	assert.NoError(t, err, "archived generation should contain remote checkpoint 112233445566")
+}
+
+func TestFetchAndMergeRef_RotationConflictWithFilteredFetches(t *testing.T) {
+	ctx := context.Background()
+	fullCurrentRef := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
+	sharedCP := id.MustCheckpointID("aabbccddeeff")
+	remoteCP := id.MustCheckpointID("112233445566")
+	localOnlyCP := id.MustCheckpointID("ffeeddccbbaa")
+
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	require.NoError(t, initCmd.Run())
+	enableFilteredFetchServingForTest(t, bareDir)
+	bareURL := "file://" + bareDir
+
+	localDir := t.TempDir()
+	testutil.InitRepo(t, localDir)
+	testutil.WriteFile(t, localDir, "f.txt", "init")
+	testutil.GitAdd(t, localDir, "f.txt")
+	testutil.GitCommit(t, localDir, "init")
+	enableFilteredFetchesForTest(t, localDir)
+
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	writeV2Checkpoint(t, localRepo, sharedCP, "shared-session")
+
+	pushCurrent := exec.CommandContext(ctx, "git", "push", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef))
+	pushCurrent.Dir = localDir
+	out, err := pushCurrent.CombinedOutput()
+	require.NoError(t, err, "initial full/current push failed: %s", out)
+
+	remoteDir := t.TempDir()
+	testutil.InitRepo(t, remoteDir)
+	testutil.WriteFile(t, remoteDir, "f.txt", "init")
+	testutil.GitAdd(t, remoteDir, "f.txt")
+	testutil.GitCommit(t, remoteDir, "init")
+
+	fetchCurrent := exec.CommandContext(ctx, "git", "fetch", bareDir,
+		"+"+string(fullCurrentRef)+":"+string(fullCurrentRef))
+	fetchCurrent.Dir = remoteDir
+	out, err = fetchCurrent.CombinedOutput()
+	require.NoError(t, err, "fetch full/current failed: %s", out)
+
+	remoteRepo, err := git.PlainOpen(remoteDir)
+	require.NoError(t, err)
+	writeV2Checkpoint(t, remoteRepo, remoteCP, "remote-session")
+	rotateV2CurrentForTest(t, remoteRepo, archiveRefName)
+
+	pushRotated := exec.CommandContext(ctx, "git", "push", "--force", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef),
+		string(archiveRefName)+":"+string(archiveRefName))
+	pushRotated.Dir = remoteDir
+	out, err = pushRotated.CombinedOutput()
+	require.NoError(t, err, "push rotated state failed: %s", out)
+
+	writeV2Checkpoint(t, localRepo, localOnlyCP, "local-session")
+
+	t.Chdir(localDir)
+	err = fetchAndMergeRef(ctx, bareURL, fullCurrentRef)
+	require.NoError(t, err)
+
+	localRepo, err = git.PlainOpen(localDir)
+	require.NoError(t, err)
+	assert.True(t, refContainsV2Checkpoint(t, localRepo, archiveRefName, sharedCP))
+	assert.True(t, refContainsV2Checkpoint(t, localRepo, archiveRefName, remoteCP))
+	assert.True(t, refContainsV2Checkpoint(t, localRepo, archiveRefName, localOnlyCP))
+	assert.False(t, refContainsV2Checkpoint(t, localRepo, fullCurrentRef, sharedCP))
+	assert.False(t, refContainsV2Checkpoint(t, localRepo, fullCurrentRef, localOnlyCP))
 }
 
 func TestFetchAndMergeRef_RemoteRotatedMultipleTimesUsesRelatedArchive(t *testing.T) {

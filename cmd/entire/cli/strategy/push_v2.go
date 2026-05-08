@@ -364,10 +364,13 @@ func fetchAndMergeRef(ctx context.Context, target string, refName plumbing.Refer
 	tmpRefName := plumbing.ReferenceName("refs/entire-fetch-tmp/" + tmpRefSuffix)
 	refSpec := fmt.Sprintf("+%s:%s", refName, tmpRefName)
 
+	// Recovery flattens fetched trees recursively, so it needs a complete object
+	// graph instead of the normal blobless sync fetch.
 	if output, err := remote.Fetch(ctx, remote.FetchOptions{
 		Remote:    fetchTarget,
 		RefSpecs:  []string{refSpec},
 		NoTags:    true,
+		NoFilter:  true,
 		ExtraArgs: []string{"--no-write-fetch-head"},
 	}); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
@@ -485,6 +488,7 @@ func detectRemoteRotationArchives(ctx context.Context, target string, repo *git.
 }
 
 type fetchedRemoteRotationArchive struct {
+	repo       *git.Repository
 	refName    plumbing.ReferenceName
 	tmpRefName plumbing.ReferenceName
 	ref        *plumbing.Reference
@@ -508,6 +512,7 @@ func readFetchedRemoteRotationArchive(repo *git.Repository, archive string) (fet
 	}
 
 	return fetchedRemoteRotationArchive{
+		repo:       repo,
 		refName:    archiveRefName,
 		tmpRefName: archiveTmpRef,
 		ref:        archiveRef,
@@ -515,20 +520,28 @@ func readFetchedRemoteRotationArchive(repo *git.Repository, archive string) (fet
 	}, nil
 }
 
-func fetchRelatedRemoteRotationArchive(ctx context.Context, fetchTarget string, repo *git.Repository, archives []string, localCurrentHash plumbing.Hash) (fetchedRemoteRotationArchive, error) {
+func fetchRelatedRemoteRotationArchive(ctx context.Context, fetchTarget string, archives []string, localCurrentHash plumbing.Hash) (fetchedRemoteRotationArchive, error) {
 	refSpecs := make([]string, 0, len(archives))
 	for _, archive := range archives {
 		archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + archive)
 		archiveTmpRef := plumbing.ReferenceName("refs/entire-fetch-tmp/archive-" + archive)
 		refSpecs = append(refSpecs, fmt.Sprintf("+%s:%s", archiveRefName, archiveTmpRef))
 	}
+	// These archive commits are read immediately through go-git for tree
+	// flattening, so fetch the complete refs rather than blobless packfiles.
 	if output, fetchErr := remote.Fetch(ctx, remote.FetchOptions{
 		Remote:    fetchTarget,
 		RefSpecs:  refSpecs,
 		NoTags:    true,
+		NoFilter:  true,
 		ExtraArgs: []string{"--no-write-fetch-head"},
 	}); fetchErr != nil {
 		return fetchedRemoteRotationArchive{}, fmt.Errorf("fetch archived generations failed: %s", output)
+	}
+
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		return fetchedRemoteRotationArchive{}, fmt.Errorf("reopen repository after fetching archived generations: %w", err)
 	}
 
 	localCurrentAncestors, ok := currentGenerationAncestors(ctx, repo, localCurrentHash)
@@ -605,10 +618,23 @@ func archiveSharesHistoryWithCurrentGeneration(ctx context.Context, repo *git.Re
 // Merges local /full/current into the related remote archived generation to avoid
 // duplicating checkpoint data, then adopts remote's /full/current as local.
 func handleRotationConflict(ctx context.Context, target, fetchTarget string, repo *git.Repository, refName, tmpRefName plumbing.ReferenceName, remoteRotationArchives []string) error {
-	// Get local /full/current state before selecting an archive. If the remote
-	// rotated multiple times, the latest archive may belong to a different
-	// generation chain.
 	localRef, err := repo.Reference(refName, true)
+	if err != nil {
+		return fmt.Errorf("failed to get local ref: %w", err)
+	}
+
+	archive, err := fetchRelatedRemoteRotationArchive(ctx, fetchTarget, remoteRotationArchives, localRef.Hash())
+	if err != nil {
+		return fmt.Errorf("failed to find related archived generation: %w", err)
+	}
+	// fetchRelatedRemoteRotationArchive fetches via git CLI, so continue with
+	// the fresh go-git handle it used to avoid stale pack indexes.
+	repo = archive.repo
+	defer func() {
+		_ = repo.Storer.RemoveReference(archive.tmpRefName) //nolint:errcheck // cleanup is best-effort
+	}()
+
+	localRef, err = repo.Reference(refName, true)
 	if err != nil {
 		return fmt.Errorf("failed to get local ref: %w", err)
 	}
@@ -620,14 +646,6 @@ func handleRotationConflict(ctx context.Context, target, fetchTarget string, rep
 	if err != nil {
 		return fmt.Errorf("failed to get local tree: %w", err)
 	}
-
-	archive, err := fetchRelatedRemoteRotationArchive(ctx, fetchTarget, repo, remoteRotationArchives, localRef.Hash())
-	if err != nil {
-		return fmt.Errorf("failed to find related archived generation: %w", err)
-	}
-	defer func() {
-		_ = repo.Storer.RemoveReference(archive.tmpRefName) //nolint:errcheck // cleanup is best-effort
-	}()
 
 	// Tree-merge local /full/current into archived generation.
 	// Git content-addressing deduplicates shared shard paths automatically.

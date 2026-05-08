@@ -426,7 +426,7 @@ func TestMigrateCheckpointsV2_RollsBackArchiveWhenPublicationQueueFails(t *testi
 
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
-	blockingPath := filepath.Join(worktree.Filesystem.Root(), ".git", "entire-v2-rotations")
+	blockingPath := filepath.Join(worktree.Filesystem().Root(), ".git", "entire-v2-rotations")
 	require.NoError(t, os.WriteFile(blockingPath, []byte("not a directory"), 0o600))
 
 	var stdout bytes.Buffer
