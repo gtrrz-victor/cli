@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
+	"github.com/entireio/cli/cmd/entire/cli/lockfile"
 )
 
 const (
 	pendingV2FullGenerationPublicationVersion = 1
 	pendingV2FullGenerationPublicationDirName = "entire-v2-rotations"
 	pendingV2FullGenerationPublicationFile    = "pending.json"
+	pendingV2FullGenerationPublicationLock    = "pending.lock"
+	pendingV2FullGenerationPublicationLockTTL = 5 * time.Second
 )
 
 type PendingV2FullGenerationPublication struct {
@@ -43,13 +46,15 @@ func (s *V2GitStore) AppendPendingFullGenerationPublications(ctx context.Context
 	if len(publications) == 0 {
 		return nil
 	}
-	state, err := s.readPendingFullGenerationPublicationState(ctx)
-	if err != nil {
-		return err
-	}
-	state.Version = pendingV2FullGenerationPublicationVersion
-	state.Publications = append(state.Publications, publications...)
-	return s.writePendingFullGenerationPublicationState(ctx, state)
+	return s.withPendingFullGenerationPublicationLock(ctx, func() error {
+		state, err := s.readPendingFullGenerationPublicationState(ctx)
+		if err != nil {
+			return err
+		}
+		state.Version = pendingV2FullGenerationPublicationVersion
+		state.Publications = append(state.Publications, publications...)
+		return s.writePendingFullGenerationPublicationState(ctx, state)
+	})
 }
 
 func (s *V2GitStore) ReadPendingFullGenerationPublications(ctx context.Context) ([]PendingV2FullGenerationPublication, error) {
@@ -61,12 +66,73 @@ func (s *V2GitStore) ReadPendingFullGenerationPublications(ctx context.Context) 
 }
 
 func (s *V2GitStore) ClearPendingFullGenerationPublications(ctx context.Context) error {
+	return s.withPendingFullGenerationPublicationLock(ctx, func() error {
+		return s.removePendingFullGenerationPublicationFile(ctx)
+	})
+}
+
+func (s *V2GitStore) RemovePendingFullGenerationPublications(ctx context.Context, publications []PendingV2FullGenerationPublication) error {
+	if len(publications) == 0 {
+		return nil
+	}
+	return s.withPendingFullGenerationPublicationLock(ctx, func() error {
+		state, err := s.readPendingFullGenerationPublicationState(ctx)
+		if err != nil {
+			return err
+		}
+		state.Publications = removePendingFullGenerationPublications(state.Publications, publications)
+		if len(state.Publications) == 0 {
+			return s.removePendingFullGenerationPublicationFile(ctx)
+		}
+		state.Version = pendingV2FullGenerationPublicationVersion
+		return s.writePendingFullGenerationPublicationState(ctx, state)
+	})
+}
+
+func removePendingFullGenerationPublications(current, remove []PendingV2FullGenerationPublication) []PendingV2FullGenerationPublication {
+	removeCounts := make(map[PendingV2FullGenerationPublication]int, len(remove))
+	for _, publication := range remove {
+		removeCounts[comparablePendingFullGenerationPublication(publication)]++
+	}
+
+	remaining := make([]PendingV2FullGenerationPublication, 0, len(current))
+	for _, publication := range current {
+		key := comparablePendingFullGenerationPublication(publication)
+		if removeCounts[key] > 0 {
+			removeCounts[key]--
+			continue
+		}
+		remaining = append(remaining, publication)
+	}
+	return remaining
+}
+
+func comparablePendingFullGenerationPublication(publication PendingV2FullGenerationPublication) PendingV2FullGenerationPublication {
+	publication.QueuedAt = publication.QueuedAt.Round(0).UTC()
+	return publication
+}
+
+func (s *V2GitStore) removePendingFullGenerationPublicationFile(ctx context.Context) error {
 	path, err := s.pendingFullGenerationPublicationFilePath(ctx)
 	if err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove pending v2 full generation publications: %w", err)
+	}
+	return nil
+}
+
+func (s *V2GitStore) withPendingFullGenerationPublicationLock(ctx context.Context, fn func() error) (err error) {
+	lockPath, err := s.pendingFullGenerationPublicationLockPath(ctx)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
+		return fmt.Errorf("create pending v2 full generation publication lock dir: %w", err)
+	}
+	if err := lockfile.WithTimeout(ctx, lockPath, pendingV2FullGenerationPublicationLockTTL, fn); err != nil {
+		return fmt.Errorf("pending v2 full generation publication lock: %w", err)
 	}
 	return nil
 }
@@ -140,6 +206,14 @@ func (s *V2GitStore) pendingFullGenerationPublicationFilePath(ctx context.Contex
 		return "", err
 	}
 	return filepath.Join(commonDir, pendingV2FullGenerationPublicationDirName, pendingV2FullGenerationPublicationFile), nil
+}
+
+func (s *V2GitStore) pendingFullGenerationPublicationLockPath(ctx context.Context) (string, error) {
+	commonDir, err := s.gitCommonDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(commonDir, pendingV2FullGenerationPublicationDirName, pendingV2FullGenerationPublicationLock), nil
 }
 
 func (s *V2GitStore) gitCommonDir(ctx context.Context) (string, error) {

@@ -148,7 +148,7 @@ func publishPendingV2FullGenerationPublications(ctx context.Context, target stri
 
 	resetPublications := pendingFullCurrentResetPublications(publications)
 	if len(resetPublications) == 0 {
-		if err := store.ClearPendingFullGenerationPublications(ctx); err != nil {
+		if err := store.RemovePendingFullGenerationPublications(ctx, publications); err != nil {
 			return false, fmt.Errorf("clear pending v2 full generation publications: %w", err)
 		}
 		return false, nil
@@ -165,7 +165,7 @@ func publishPendingV2FullGenerationPublications(ctx context.Context, target stri
 		return true, fmt.Errorf("read remote %s: %w", shortRefName(currentRefName), err)
 	}
 	if remoteCurrentFound && remoteCurrentHash == localCurrentRef.Hash() {
-		if err := store.ClearPendingFullGenerationPublications(ctx); err != nil {
+		if err := store.RemovePendingFullGenerationPublications(ctx, publications); err != nil {
 			return true, fmt.Errorf("clear pending v2 full generation publications: %w", err)
 		}
 		return true, nil
@@ -184,7 +184,7 @@ func publishPendingV2FullGenerationPublications(ctx context.Context, target stri
 		return true, fmt.Errorf("push rotated %s: %w", shortRefName(currentRefName), err)
 	}
 
-	if err := store.ClearPendingFullGenerationPublications(ctx); err != nil {
+	if err := store.RemovePendingFullGenerationPublications(ctx, publications); err != nil {
 		return true, fmt.Errorf("clear pending v2 full generation publications: %w", err)
 	}
 	return true, nil

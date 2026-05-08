@@ -480,6 +480,36 @@ func TestRotateGeneration_SucceedsWhenPendingMarkerCannotBeRecorded(t *testing.T
 	assert.Equal(t, 3, archiveCount)
 }
 
+func TestRemovePendingFullGenerationPublications_PreservesLaterQueuedEntries(t *testing.T) {
+	t.Parallel()
+	repo := initTestRepo(t)
+	store := NewV2GitStore(repo, "origin")
+	ctx := context.Background()
+
+	first := PendingV2FullGenerationPublication{
+		ArchiveRefName:    paths.V2FullRefPrefix + "0000000000001",
+		ArchiveCommitHash: "1111111111111111111111111111111111111111",
+		QueuedAt:          time.Date(2026, 3, 19, 1, 2, 3, 0, time.UTC),
+	}
+	later := PendingV2FullGenerationPublication{
+		ArchiveRefName:    paths.V2FullRefPrefix + "0000000000002",
+		ArchiveCommitHash: "2222222222222222222222222222222222222222",
+		QueuedAt:          time.Date(2026, 3, 19, 4, 5, 6, 0, time.UTC),
+	}
+
+	require.NoError(t, store.AppendPendingFullGenerationPublication(ctx, first))
+	snapshot, err := store.ReadPendingFullGenerationPublications(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []PendingV2FullGenerationPublication{first}, snapshot)
+
+	require.NoError(t, store.AppendPendingFullGenerationPublication(ctx, later))
+	require.NoError(t, store.RemovePendingFullGenerationPublications(ctx, snapshot))
+
+	remaining, err := store.ReadPendingFullGenerationPublications(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []PendingV2FullGenerationPublication{later}, remaining)
+}
+
 func TestResetFullCurrentRefIfUnchangedRejectsConcurrentChange(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
