@@ -354,6 +354,77 @@ func TestPushV2Refs_LocalRotationDoesNotRehydrateArchivedCurrent(t *testing.T) {
 		"remote /full/current must stay fresh after publishing a local rotation")
 }
 
+// TestPushV2Refs_LocalRotationPublishesCurrentWorkAddedBeforePush verifies that
+// publishing a pending local rotation pushes the live /full/current head, not
+// just the fresh orphan root created when the rotation happened.
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestPushV2Refs_LocalRotationPublishesCurrentWorkAddedBeforePush(t *testing.T) {
+	ctx := context.Background()
+	fullCurrentRef := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	archiveRef := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
+	oldCPs := []id.CheckpointID{
+		id.MustCheckpointID("000000000001"),
+		id.MustCheckpointID("000000000002"),
+		id.MustCheckpointID("000000000003"),
+	}
+	newCPs := []id.CheckpointID{
+		id.MustCheckpointID("000000000004"),
+		id.MustCheckpointID("000000000005"),
+	}
+
+	localDir := setupRepoWithV2Ref(t)
+	localRepo, err := git.PlainOpen(localDir)
+	require.NoError(t, err)
+	localStore := checkpoint.NewV2GitStore(localRepo, "origin")
+
+	for i, cpID := range oldCPs {
+		writeV2Checkpoint(t, localRepo, cpID, "session-before-rotation-"+string(rune('a'+i)))
+	}
+
+	bareDir := t.TempDir()
+	initCmd := exec.CommandContext(ctx, "git", "init", "--bare")
+	initCmd.Dir = bareDir
+	initCmd.Env = testutil.GitIsolatedEnv()
+	out, err := initCmd.CombinedOutput()
+	require.NoError(t, err, "git init --bare failed: %s", out)
+
+	pushCurrent := exec.CommandContext(ctx, "git", "push", bareDir,
+		string(fullCurrentRef)+":"+string(fullCurrentRef))
+	pushCurrent.Dir = localDir
+	out, err = pushCurrent.CombinedOutput()
+	require.NoError(t, err, "initial full/current push failed: %s", out)
+
+	refName, rotated, err := localStore.RotateCurrentGenerationIfNeeded(ctx, 3)
+	require.NoError(t, err)
+	require.True(t, rotated)
+	require.Equal(t, archiveRef, refName)
+
+	for i, cpID := range newCPs {
+		writeV2Checkpoint(t, localRepo, cpID, "session-after-rotation-"+string(rune('a'+i)))
+	}
+
+	t.Chdir(localDir)
+	restore := captureStderr(t)
+	pushV2Refs(ctx, bareDir)
+	_ = restore()
+
+	bareRepo, err := git.PlainOpen(bareDir)
+	require.NoError(t, err)
+	for _, cpID := range oldCPs {
+		assert.True(t, refContainsV2Checkpoint(t, bareRepo, archiveRef, cpID),
+			"archive should contain old checkpoint %s", cpID)
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, fullCurrentRef, cpID),
+			"current should not contain archived checkpoint %s", cpID)
+	}
+	for _, cpID := range newCPs {
+		assert.False(t, refContainsV2Checkpoint(t, bareRepo, archiveRef, cpID),
+			"archive should not contain new checkpoint %s", cpID)
+		assert.True(t, refContainsV2Checkpoint(t, bareRepo, fullCurrentRef, cpID),
+			"current should contain new checkpoint %s", cpID)
+	}
+}
+
 func TestDetectRemoteRotationArchives_IncludesSameNameDifferentHash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
