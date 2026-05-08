@@ -784,7 +784,7 @@ func TestMigrateCmd_RepairsArchivedGenerationMetadata(t *testing.T) {
 	repo := initMigrateTestRepo(t)
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
-	t.Chdir(wt.Filesystem.Root())
+	t.Chdir(wt.Filesystem().Root())
 	paths.ClearWorktreeRootCache()
 
 	// A pre-existing archived generation with wrong generation.json
@@ -830,7 +830,7 @@ func TestMigrateCmd_NoOpRerunSkipsGenerationMetadataRepair(t *testing.T) {
 	repo := initMigrateTestRepo(t)
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
-	t.Chdir(wt.Filesystem.Root())
+	t.Chdir(wt.Filesystem().Root())
 	paths.ClearWorktreeRootCache()
 
 	v1Store, v2Store := newMigrateStores(repo)
@@ -1347,7 +1347,7 @@ func TestMigrateCmd_FailsFastWhenLockHeld(t *testing.T) {
 	repo := initMigrateTestRepo(t)
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
-	t.Chdir(wt.Filesystem.Root())
+	t.Chdir(wt.Filesystem().Root())
 	paths.ClearWorktreeRootCache()
 
 	commonDir, err := strategy.GetGitCommonDir(t.Context())
@@ -1388,7 +1388,7 @@ func TestAcquireCommandLock_SetupFailuresReturnVisibleError(t *testing.T) {
 		repo := initMigrateTestRepo(t)
 		wt, err := repo.Worktree()
 		require.NoError(t, err)
-		t.Chdir(wt.Filesystem.Root())
+		t.Chdir(wt.Filesystem().Root())
 
 		cmd := newMigrateCmd()
 		release, err := acquireCommandLock(t.Context(), cmd, filepath.Join("missing-dir", "entire-migrate.lock"), "migrate")
