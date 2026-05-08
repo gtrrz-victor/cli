@@ -13,6 +13,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/lockfile"
+	"github.com/go-git/go-git/v6"
 )
 
 const (
@@ -65,12 +66,6 @@ func (s *V2GitStore) ReadPendingFullGenerationPublications(ctx context.Context) 
 	return state.Publications, nil
 }
 
-func (s *V2GitStore) ClearPendingFullGenerationPublications(ctx context.Context) error {
-	return s.withPendingFullGenerationPublicationLock(ctx, func() error {
-		return s.removePendingFullGenerationPublicationFile(ctx)
-	})
-}
-
 func (s *V2GitStore) RemovePendingFullGenerationPublications(ctx context.Context, publications []PendingV2FullGenerationPublication) error {
 	if len(publications) == 0 {
 		return nil
@@ -80,7 +75,11 @@ func (s *V2GitStore) RemovePendingFullGenerationPublications(ctx context.Context
 		if err != nil {
 			return err
 		}
+		previousCount := len(state.Publications)
 		state.Publications = removePendingFullGenerationPublications(state.Publications, publications)
+		if len(state.Publications) == previousCount {
+			return nil
+		}
 		if len(state.Publications) == 0 {
 			return s.removePendingFullGenerationPublicationFile(ctx)
 		}
@@ -217,7 +216,14 @@ func (s *V2GitStore) pendingFullGenerationPublicationLockPath(ctx context.Contex
 }
 
 func (s *V2GitStore) gitCommonDir(ctx context.Context) (string, error) {
-	worktree, err := s.repo.Worktree()
+	s.commonDirOnce.Do(func() {
+		s.commonDir, s.commonDirErr = resolveGitCommonDir(ctx, s.repo)
+	})
+	return s.commonDir, s.commonDirErr
+}
+
+func resolveGitCommonDir(ctx context.Context, repo *git.Repository) (string, error) {
+	worktree, err := repo.Worktree()
 	if err != nil {
 		return "", fmt.Errorf("open worktree for pending v2 full generation publications: %w", err)
 	}
