@@ -45,10 +45,35 @@ func (c *ClaudeCodeAgent) DiscoverReviewSkills(ctx context.Context) ([]agent.Dis
 	found = append(found, scanUserSkills(ctx, filepath.Join(home, ".claude", "skills"))...)
 	found = append(found, scanFlatMarkdownDir(ctx, filepath.Join(home, ".claude", "commands"), "")...)
 	found = append(found, scanFlatMarkdownDir(ctx, filepath.Join(home, ".claude", "agents"), "")...)
+	found = dedupeByInvocation(found)
 	if len(found) == 0 {
 		return nil, nil
 	}
 	return found, nil
+}
+
+// dedupeByInvocation collapses entries that share an invocation name. A
+// single plugin commonly ships both `skills/<name>/SKILL.md` (the real
+// implementation) and `commands/<name>.md` (a thin wrapper that forwards
+// args to the skill); both produce the same `/<plugin>:<name>` invocation
+// and would otherwise show up as duplicate rows in the picker. First-seen
+// wins, which — given scan order skills/ → commands/ → agents/, then user
+// skills/ → user commands/ → user agents/ — keeps the skill (the real
+// implementation) over its command wrapper.
+func dedupeByInvocation(in []agent.DiscoveredSkill) []agent.DiscoveredSkill {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]agent.DiscoveredSkill, 0, len(in))
+	for _, s := range in {
+		if _, dup := seen[s.Name]; dup {
+			continue
+		}
+		seen[s.Name] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 // scanPluginCache walks <root>/<marketplace>/<plugin>/<version>/{skills,commands,agents}/
