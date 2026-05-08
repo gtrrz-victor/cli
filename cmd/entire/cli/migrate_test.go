@@ -564,8 +564,7 @@ func TestMigrateCheckpointsV2_RerunResumesInterruptedMigration(t *testing.T) {
 	require.NoError(t, migrateErr)
 	require.NotNil(t, fullCheckpoint)
 	require.NotEmpty(t, mainOpts)
-	_, err = v2Store.WriteCommittedMainBatch(ctx, mainOpts)
-	require.NoError(t, err)
+	require.NoError(t, v2Store.WriteCommittedMainBatch(ctx, mainOpts))
 
 	hasFullBefore, err := v2Store.HasFullSessionArtifacts(cpID, 0)
 	require.NoError(t, err)

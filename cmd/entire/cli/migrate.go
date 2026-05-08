@@ -418,7 +418,7 @@ func (s *migrateLoopState) flushMain(ctx context.Context, v2Store *checkpoint.V2
 	if len(s.pendingMain) == 0 {
 		return nil
 	}
-	if _, err := v2Store.WriteCommittedMainBatch(ctx, s.pendingMain); err != nil {
+	if err := v2Store.WriteCommittedMainBatch(ctx, s.pendingMain); err != nil {
 		return fmt.Errorf("failed to write batched v2 /main entries: %w", err)
 	}
 	s.pendingMain = s.pendingMain[:0]
