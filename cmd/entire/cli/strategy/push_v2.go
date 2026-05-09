@@ -114,16 +114,17 @@ func pushV2RefsWithRecovery(ctx context.Context, target string, refs []plumbing.
 	return results
 }
 
-func publishPendingV2FullGenerationPublications(ctx context.Context, target string, publications []checkpoint.PendingV2FullGenerationPublication) (pendingV2FullGenerationPublicationResult, error) {
+func publishPendingV2FullGenerationPublications(
+	ctx context.Context,
+	repo *git.Repository,
+	store *checkpoint.V2GitStore,
+	target string,
+	publications []checkpoint.PendingV2FullGenerationPublication,
+) (pendingV2FullGenerationPublicationResult, error) {
 	var result pendingV2FullGenerationPublicationResult
 	if len(publications) == 0 {
 		return result, nil
 	}
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		return result, fmt.Errorf("open repository: %w", err)
-	}
-	store := checkpoint.NewV2GitStore(repo, target)
 
 	archiveRefs := pendingFullArchiveRefs(publications)
 	if len(archiveRefs) > 0 {
@@ -778,8 +779,15 @@ func updateGenerationTimestamps(repo *git.Repository, genBlobHash plumbing.Hash,
 // Pushes active refs in one git push. Pending full-generation publications are
 // handled separately before /full/current recovery.
 func pushV2Refs(ctx context.Context, target string) {
-	refs := v2RefsToPush(ctx)
-	pendingPublications, pendingReadErr := readPendingV2FullGenerationPublications(ctx, target)
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		printV2PushFailures(ctx, target, nil, []error{fmt.Errorf("open repository: %w", err)}, false)
+		return
+	}
+	store := checkpoint.NewV2GitStore(repo, target)
+
+	refs := v2RefsToPush(repo)
+	pendingPublications, pendingReadErr := readPendingV2FullGenerationPublications(ctx, store)
 	if pendingReadErr != nil {
 		printV2PushFailures(ctx, target, nil, []error{pendingReadErr}, false)
 		return
@@ -800,7 +808,7 @@ func pushV2Refs(ctx context.Context, target string) {
 	var successfulRefs []plumbing.ReferenceName
 	pushedContent := false
 
-	pendingPublicationResult, pendingPublishErr := publishPendingV2FullGenerationPublications(ctx, target, pendingPublications)
+	pendingPublicationResult, pendingPublishErr := publishPendingV2FullGenerationPublications(ctx, repo, store, target, pendingPublications)
 	successfulRefs = append(successfulRefs, pendingPublicationResult.successfulRefs...)
 	if len(pendingPublicationResult.successfulRefs) > 0 {
 		pushedContent = true
@@ -838,12 +846,7 @@ func pushV2Refs(ctx context.Context, target string) {
 	printCheckpointsV2MigrationHint(ctx)
 }
 
-func readPendingV2FullGenerationPublications(ctx context.Context, target string) ([]checkpoint.PendingV2FullGenerationPublication, error) {
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("open repository: %w", err)
-	}
-	store := checkpoint.NewV2GitStore(repo, target)
+func readPendingV2FullGenerationPublications(ctx context.Context, store *checkpoint.V2GitStore) ([]checkpoint.PendingV2FullGenerationPublication, error) {
 	publications, err := store.ReadPendingFullGenerationPublications(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read pending v2 full generation publications: %w", err)
@@ -869,12 +872,7 @@ func printV2PushFailures(ctx context.Context, target string, successfulRefs []pl
 	printCheckpointsV2MigrationHint(ctx)
 }
 
-func v2RefsToPush(ctx context.Context) []plumbing.ReferenceName {
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		return nil
-	}
-
+func v2RefsToPush(repo *git.Repository) []plumbing.ReferenceName {
 	var refs []plumbing.ReferenceName
 	for _, refName := range []plumbing.ReferenceName{
 		plumbing.ReferenceName(paths.V2MainRefName),
