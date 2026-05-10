@@ -17,6 +17,13 @@ func TestEncodeRepoPathForPi(t *testing.T) {
 		{"/Users/foo/repo", "--Users-foo-repo--"},
 		{"/Users/foo/repo/", "--Users-foo-repo--"}, // trailing separator stripped
 		{"/private/var/folders/2y/T/e2e-repo-1", "--private-var-folders-2y-T-e2e-repo-1--"},
+		// Windows: git rev-parse --show-toplevel returns forward slashes
+		// regardless of platform — must encode the same way on every OS.
+		{`C:/Users/foo/repo`, `--C:-Users-foo-repo--`},
+		{`C:/Users/foo/repo/`, `--C:-Users-foo-repo--`},
+		// Native Windows separators (in case a caller passes them through).
+		{`C:\Users\foo\repo`, `--C:-Users-foo-repo--`},
+		{`C:\Users\foo\repo\`, `--C:-Users-foo-repo--`},
 		{"", ""},
 	}
 	for _, tt := range tests {

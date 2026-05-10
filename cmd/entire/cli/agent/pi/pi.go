@@ -196,17 +196,23 @@ func resolvePiHome() (string, error) {
 }
 
 // encodeRepoPathForPi encodes an absolute repo path into Pi's
-// session-directory naming scheme: '/' becomes '-', wrapped with '--'
-// delimiters. /Users/foo/repo encodes as --Users-foo-repo--. Trailing
-// separators are stripped so /a/b/ and /a/b encode the same way.
-// Empty input returns "".
+// session-directory naming scheme: every path separator becomes '-',
+// wrapped with '--' delimiters. /Users/foo/repo encodes as
+// --Users-foo-repo--. Leading and trailing separators are absorbed so
+// /a/b/ and /a/b encode the same way. Empty input returns "".
+//
+// Both '/' and '\\' are replaced regardless of host OS: on Windows,
+// git rev-parse --show-toplevel returns forward slashes, but native
+// Windows APIs use backslashes — a host-only replacement would leak
+// the other form through and produce nested directories instead of a
+// single name, breaking session lookup. filepath.ToSlash isn't enough
+// because it only normalises the host's separator.
 func encodeRepoPathForPi(repoPath string) string {
 	if repoPath == "" {
 		return ""
 	}
-	cleaned := strings.TrimRight(repoPath, string(filepath.Separator))
-	body := strings.ReplaceAll(cleaned, string(filepath.Separator), "-")
-	body = strings.TrimPrefix(body, "-")
+	body := strings.NewReplacer("/", "-", `\`, "-").Replace(repoPath)
+	body = strings.Trim(body, "-")
 	return "--" + body + "--"
 }
 
