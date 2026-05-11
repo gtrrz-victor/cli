@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -127,7 +128,7 @@ func (s *V2GitStore) GetRefState(refName plumbing.ReferenceName) (parentHash, tr
 	if err != nil {
 		cliTreeHash, cliErr := commitTreeHashViaCLI(context.Background(), ref.Hash())
 		if cliErr != nil {
-			return plumbing.ZeroHash, plumbing.ZeroHash, fmt.Errorf("failed to get commit for ref %s: %w (CLI fallback also failed: %w)", refName, err, cliErr)
+			return plumbing.ZeroHash, plumbing.ZeroHash, fmt.Errorf("failed to get commit for ref %s: %w", refName, errors.Join(err, cliErr))
 		}
 		logging.Warn(context.Background(), "GetRefState: go-git commit read failed, used git rev-parse fallback",
 			slog.String("ref", refName.String()),
