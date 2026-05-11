@@ -118,17 +118,24 @@ For pending local rotations, pre-push:
    This covers the crash or failure window where a marker was recorded but the
    reset never happened.
 2. Pushes the remaining pending archived generation refs together.
-3. Reads the current remote `/full/current` hash.
-4. Pushes local `/full/current` using `--force-with-lease`, guarded by the
-   expected old remote current hash.
-5. Removes the pending marker only after archive refs and the current reset are
+3. Reads the current remote `/full/current` hash. If it already matches local
+   `/full/current` (idempotent case after a successful prior push), clears the
+   pending marker and returns.
+4. Refuses to continue if the remote `/full/current` hash is not an ancestor of
+   any pending archive commit. This is the explicit "is the remote covered by a
+   local archive?" gate.
+5. Pushes local `/full/current` using `--force-with-lease` anchored to the
+   remote hash read in step 3.
+6. Removes the pending marker only after archive refs and the current reset are
    published successfully.
 
-The guarded current update is the key difference from a normal push. Replacing
+The leased current update is the key difference from a normal push. Replacing
 remote `/full/current` with a fresh orphan generation is not a fast-forward, so
-normal `git push` rejects it. The lease makes the reset explicit and safe: it
-only succeeds if the remote current is still the old generation covered by the
-local archive.
+normal `git push` rejects it. The lease anchors the reset to the remote hash
+just observed, so the push only succeeds if no other writer raced ahead between
+the read and the push. The ancestor check in step 4 is what enforces "the
+remote current is covered by the local archive"; `previous_full_current_hash`
+in the marker is informational and is not consulted for the lease.
 
 ### Example: Local Rotation With No New Work
 
@@ -257,26 +264,27 @@ Shared base:
   /full/current has IDs 1..95
 
 User A:
-  adds IDs 96..102
-  rotates and pushes
+  adds 5 more checkpoints (IDs 96..100)
+  rotation triggers at the 100 threshold
+  pushes /full/0000000000007 and the fresh /full/current
 
 Remote:
-  /full/0000000000007 has IDs 1..102
+  /full/0000000000007 has IDs 1..100
   /full/current is a fresh orphan
 
 User B:
-  adds IDs 103..105 on top of the old current
-  pushes and hits non-fast-forward
+  on stale shared base, adds 3 more checkpoints
+  pushes /full/current and hits non-fast-forward
 
 Recovery:
-  local old-current work is merged into /full/0000000000007
+  B's local old-current work is merged into /full/0000000000007
   local /full/current is replaced with remote fresh /full/current
 ```
 
 Final remote state:
 
 ```text
-/full/0000000000007 has IDs 1..105
+/full/0000000000007 has IDs 1..100 plus B's 3 checkpoints
 /full/current remains fresh
 ```
 
@@ -286,9 +294,10 @@ not duplicated across the archive and current generation.
 
 ## Archived Ref Collisions
 
-Archived generation refs are treated as effectively immutable cleanup units. If
-pre-push tries to publish a pending archive ref and the remote already has that
-same archive name at a different commit, the push surfaces an error instead of
+Outside the remote rotation conflict recovery path described above, archived
+generation refs are treated as effectively immutable cleanup units. If pre-push
+tries to publish a pending archive ref and the remote already has that same
+archive name at a different commit, the push surfaces an error instead of
 silently merging or renaming the local archive.
 
 Automatic recovery here is intentionally conservative:
@@ -310,7 +319,7 @@ Cleanup operates only on archived `/full/<N>` refs:
 1. List archived generation refs.
 2. Read each archive's `generation.json`.
 3. If the newest checkpoint in the archive is older than the retention window,
-   delete the whole ref on the checkpoint remote.
+   delete the whole ref locally and on the checkpoint remote.
 4. Git GC can reclaim the raw transcript blobs once no refs reach them.
 
 `/main` is never cleaned up this way. It contains the permanent, compact data
