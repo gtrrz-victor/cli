@@ -18,8 +18,9 @@ refs/entire/checkpoints/v2/full/0000000000002
 `transcript.jsonl` data, and compact transcript hashes. Cleanup does not delete
 or rewrite `/main`.
 
-`/full/current` is the active raw-transcript generation. It stores `full.jsonl`
-and `raw_transcript_hash.txt` entries for recently written checkpoints.
+`/full/current` is the active raw-transcript generation. It stores chunked
+`raw_transcript` files, such as `raw_transcript` and `raw_transcript.001`, plus
+`raw_transcript_hash.txt` entries for recently written checkpoints.
 
 `/full/<13-digit-number>` refs are archived raw-transcript generations. They are
 cleanup units: when the newest checkpoint in an archived generation is outside
@@ -112,10 +113,11 @@ The pre-push hook reads pending publications before pushing active v2 refs.
 
 For pending local rotations, pre-push:
 
-1. Drops stale pending reset publications whose `reset_full_current_root_hash`
-   is not in the live local `/full/current` history. This covers the crash or
-   failure window where a marker was recorded but the reset never happened.
-2. Pushes the pending archived generation refs.
+1. Drops stale pending reset publications until the newest queued
+   `reset_full_current_root_hash` is in the live local `/full/current` history.
+   This covers the crash or failure window where a marker was recorded but the
+   reset never happened.
+2. Pushes the remaining pending archived generation refs together.
 3. Reads the current remote `/full/current` hash.
 4. Pushes local `/full/current` using `--force-with-lease`, guarded by the
    expected old remote current hash.
