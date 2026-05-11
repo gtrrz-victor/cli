@@ -369,7 +369,7 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 	cutoff := time.Now().AddDate(0, 0, -s.GetFullTranscriptGenerationRetentionDays())
 	cleanupItems := make([]CleanupItem, 0, len(candidates))
 	generations := make([]cleanupGenerationState, 0, len(candidates))
-	fallbackRefs := make([]plumbing.ReferenceName, 0)
+	fallbackRefs := make([]plumbing.ReferenceName, 0, len(candidates))
 
 	for _, candidate := range candidates {
 		commitHash, treeHash, refErr := store.GetRefState(candidate.RefName)
@@ -392,28 +392,25 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 			}
 		}
 
-		needsFallback := !foundCheckpointTimes && !generationMetadataHasAnyTimestamp(gen)
-		if needsFallback {
+		if !generationMetadataHasAnyTimestamp(gen) {
 			fallbackRefs = append(fallbackRefs, candidate.RefName)
 		}
 		generations = append(generations, cleanupGenerationState{
-			candidate:     candidate,
-			commitHash:    commitHash,
-			gen:           gen,
-			needsFallback: needsFallback,
+			candidate:  candidate,
+			commitHash: commitHash,
+			gen:        gen,
 		})
 	}
 
 	fallbackGenerations := readGenerationsViaGit(ctx, fallbackRefs)
 	for _, generation := range generations {
 		gen := generation.gen
-		if generation.needsFallback {
-			fallbackGen := fallbackGenerations[generation.candidate.RefName]
+		if fallbackGen, ok := fallbackGenerations[generation.candidate.RefName]; ok {
 			if fallbackGen.err != nil {
 				warnings = append(warnings, fmt.Sprintf("generation %s: failed to read generation.json: %v", generation.candidate.Name, fallbackGen.err))
 				continue
 			}
-			if fallbackGen.found {
+			if generationMetadataHasAnyTimestamp(fallbackGen.gen) {
 				gen = fallbackGen.gen
 			}
 		}
@@ -451,10 +448,9 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 }
 
 type cleanupGenerationState struct {
-	candidate     archivedV2GenerationCandidate
-	commitHash    plumbing.Hash
-	gen           checkpoint.GenerationMetadata
-	needsFallback bool
+	candidate  archivedV2GenerationCandidate
+	commitHash plumbing.Hash
+	gen        checkpoint.GenerationMetadata
 }
 
 func generationMetadataHasAnyTimestamp(gen checkpoint.GenerationMetadata) bool {
@@ -462,11 +458,13 @@ func generationMetadataHasAnyTimestamp(gen checkpoint.GenerationMetadata) bool {
 }
 
 type generationGitReadResult struct {
-	gen   checkpoint.GenerationMetadata
-	found bool
-	err   error
+	gen checkpoint.GenerationMetadata
+	err error
 }
 
+// readGenerationsViaGit reads generation.json for each ref via `git cat-file
+// --batch`. Used as a fallback when go-git cannot resolve blobs from
+// partial-clone (--filter=blob:none) fetches.
 func readGenerationsViaGit(ctx context.Context, refNames []plumbing.ReferenceName) map[plumbing.ReferenceName]generationGitReadResult {
 	results := make(map[plumbing.ReferenceName]generationGitReadResult, len(refNames))
 	if len(refNames) == 0 {
@@ -475,14 +473,17 @@ func readGenerationsViaGit(ctx context.Context, refNames []plumbing.ReferenceNam
 
 	specs := make([]string, 0, len(refNames))
 	for _, refName := range refNames {
-		results[refName] = generationGitReadResult{}
-		specs = append(specs, generationGitSpec(refName))
+		specs = append(specs, fmt.Sprintf("%s:%s", refName, paths.GenerationFileName))
 	}
 
 	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
 	cmd.Stdin = strings.NewReader(strings.Join(specs, "\n") + "\n")
 	output, err := cmd.Output()
 	if err != nil {
+		wrapped := fmt.Errorf("run git cat-file: %w", err)
+		for _, refName := range refNames {
+			results[refName] = generationGitReadResult{err: wrapped}
+		}
 		return results
 	}
 
@@ -490,7 +491,9 @@ func readGenerationsViaGit(ctx context.Context, refNames []plumbing.ReferenceNam
 	for i, refName := range refNames {
 		result, parseErr := parseGenerationGitBatchEntry(reader)
 		if parseErr != nil {
-			setGenerationBatchReadError(results, refNames[i:], parseErr)
+			for _, r := range refNames[i:] {
+				results[r] = generationGitReadResult{err: parseErr}
+			}
 			break
 		}
 		results[refName] = result
@@ -498,14 +501,18 @@ func readGenerationsViaGit(ctx context.Context, refNames []plumbing.ReferenceNam
 	return results
 }
 
-func generationGitSpec(refName plumbing.ReferenceName) string {
-	return fmt.Sprintf("%s:%s", refName, paths.GenerationFileName)
-}
-
+// parseGenerationGitBatchEntry parses one entry from `git cat-file --batch`
+// stdout. A non-nil returned error signals a stream-level desync (abort the
+// remaining entries); a per-entry decode failure is returned inside the
+// result's err field so the stream can continue.
 func parseGenerationGitBatchEntry(reader *bufio.Reader) (generationGitReadResult, error) {
+	wrap := func(err error) error {
+		return fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)
+	}
+
 	header, err := reader.ReadString('\n')
 	if err != nil {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)
+		return generationGitReadResult{}, wrap(err)
 	}
 	header = strings.TrimSuffix(header, "\n")
 
@@ -514,21 +521,23 @@ func parseGenerationGitBatchEntry(reader *bufio.Reader) (generationGitReadResult
 		return generationGitReadResult{}, nil
 	}
 	if len(fields) != 3 {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: unexpected cat-file header %q", paths.GenerationFileName, header)
+		return generationGitReadResult{}, wrap(fmt.Errorf("unexpected cat-file header %q", header))
 	}
 
 	size, err := strconv.ParseInt(fields[2], 10, 64)
 	if err != nil {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: invalid cat-file size %q: %w", paths.GenerationFileName, fields[2], err)
+		return generationGitReadResult{}, wrap(fmt.Errorf("invalid cat-file size %q: %w", fields[2], err))
 	}
 	content := make([]byte, size)
 	if _, err := io.ReadFull(reader, content); err != nil {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)
+		return generationGitReadResult{}, wrap(err)
 	}
-	if separator, err := reader.ReadByte(); err != nil {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)
-	} else if separator != '\n' {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: unexpected cat-file separator %q", paths.GenerationFileName, separator)
+	separator, err := reader.ReadByte()
+	if err != nil {
+		return generationGitReadResult{}, wrap(err)
+	}
+	if separator != '\n' {
+		return generationGitReadResult{}, wrap(fmt.Errorf("unexpected cat-file separator %q", separator))
 	}
 
 	if fields[1] != "blob" {
@@ -537,19 +546,9 @@ func parseGenerationGitBatchEntry(reader *bufio.Reader) (generationGitReadResult
 
 	var gen checkpoint.GenerationMetadata
 	if err := json.Unmarshal(content, &gen); err != nil {
-		return generationGitReadResult{err: fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)}, nil
+		return generationGitReadResult{err: wrap(err)}, nil
 	}
-	return generationGitReadResult{gen: gen, found: true}, nil
-}
-
-func setGenerationBatchReadError(
-	results map[plumbing.ReferenceName]generationGitReadResult,
-	refNames []plumbing.ReferenceName,
-	err error,
-) {
-	for _, refName := range refNames {
-		results[refName] = generationGitReadResult{err: err}
-	}
+	return generationGitReadResult{gen: gen}, nil
 }
 
 type archivedV2GenerationCandidate struct {

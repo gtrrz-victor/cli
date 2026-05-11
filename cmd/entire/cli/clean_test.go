@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
@@ -373,25 +374,9 @@ func createRemoteOnlyArchivedGenerationRefFromSeparateRepoWithMetadata(
 	t.Helper()
 
 	producerDir := filepath.Join(t.TempDir(), "producer")
-	runCleanGit(t, "", "init", producerDir)
-	runCleanGit(t, producerDir, "config", "user.name", "test")
-	runCleanGit(t, producerDir, "config", "user.email", "test@test.com")
-	runCleanGit(t, producerDir, "config", "commit.gpgsign", "false")
-
-	writeCleanProducerFile := func(rel string, content []byte) {
-		t.Helper()
-
-		path := filepath.Join(producerDir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("failed to create parent for %s: %v", rel, err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatalf("failed to write %s: %v", rel, err)
-		}
-	}
-
-	writeCleanProducerFile(paths.GenerationFileName, generationJSON)
-	writeCleanProducerFile("aa/bbccddeeff/0/"+paths.TranscriptFileName, []byte(`{"transcript":"data"}`))
+	testutil.InitRepo(t, producerDir)
+	testutil.WriteFile(t, producerDir, paths.GenerationFileName, string(generationJSON))
+	testutil.WriteFile(t, producerDir, "aa/bbccddeeff/0/"+paths.TranscriptFileName, `{"transcript":"data"}`)
 
 	runCleanGit(t, producerDir, "add", ".")
 	runCleanGit(t, producerDir, "commit", "--no-gpg-sign", "-m", "archived generation")
