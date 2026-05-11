@@ -537,7 +537,7 @@ func parseGenerationGitBatchEntry(reader *bufio.Reader) (generationGitReadResult
 
 	var gen checkpoint.GenerationMetadata
 	if err := json.Unmarshal(content, &gen); err != nil {
-		return generationGitReadResult{}, fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)
+		return generationGitReadResult{err: fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)}, nil
 	}
 	return generationGitReadResult{gen: gen, found: true}, nil
 }
