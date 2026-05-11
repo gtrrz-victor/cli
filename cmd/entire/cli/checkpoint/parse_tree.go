@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -210,15 +211,28 @@ func ApplyTreeChanges(
 		return rootTreeHash, nil
 	}
 
-	// Read the current root tree
+	// Read the current root tree. Fall back to `git ls-tree` when go-git can't
+	// read the object: in partial-clone repos a tree can live in a promisor
+	// pack that go-git's storer has lost track of (stale pack index cache),
+	// while the native git CLI still resolves it. See FetchingTree.blobOnDisk
+	// for the analogous blob-side workaround.
 	var currentEntries []object.TreeEntry
 	if rootTreeHash != plumbing.ZeroHash {
 		tree, err := repo.TreeObject(rootTreeHash)
 		if err != nil {
-			return plumbing.ZeroHash, fmt.Errorf("failed to read tree: %w", err)
+			cliEntries, cliErr := readTreeEntriesViaCLI(ctx, rootTreeHash)
+			if cliErr != nil {
+				return plumbing.ZeroHash, fmt.Errorf("failed to read tree: %w (CLI fallback also failed: %w)", err, cliErr)
+			}
+			logging.Warn(ctx, "ApplyTreeChanges: go-git tree read failed, used git ls-tree fallback",
+				slog.String("tree", rootTreeHash.String()[:12]),
+				slog.String("gogit_error", err.Error()),
+			)
+			currentEntries = cliEntries
+		} else {
+			currentEntries = make([]object.TreeEntry, len(tree.Entries))
+			copy(currentEntries, tree.Entries)
 		}
-		currentEntries = make([]object.TreeEntry, len(tree.Entries))
-		copy(currentEntries, tree.Entries)
 	}
 
 	// Group changes by first path segment
@@ -294,6 +308,43 @@ func ApplyTreeChanges(
 	}
 	sortTreeEntries(result)
 	return storeTree(repo, result)
+}
+
+// readTreeEntriesViaCLI parses the output of `git ls-tree <hash>` into
+// go-git TreeEntry values. It is a fallback for go-git tree reads that fail
+// in partial-clone repos where the storer's packfile index has gone stale.
+func readTreeEntriesViaCLI(ctx context.Context, hash plumbing.Hash) ([]object.TreeEntry, error) {
+	cmd := exec.CommandContext(ctx, "git", "ls-tree", hash.String())
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-tree %s: %w", hash.String()[:12], err)
+	}
+	var entries []object.TreeEntry
+	for _, line := range strings.Split(strings.TrimRight(string(output), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		// Format: "<mode> <type> <hash>\t<name>"
+		tab := strings.IndexByte(line, '\t')
+		if tab < 0 {
+			return nil, fmt.Errorf("git ls-tree %s: malformed line %q", hash.String()[:12], line)
+		}
+		name := line[tab+1:]
+		fields := strings.Fields(line[:tab])
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("git ls-tree %s: malformed entry %q", hash.String()[:12], line)
+		}
+		mode, modeErr := filemode.New(fields[0])
+		if modeErr != nil {
+			return nil, fmt.Errorf("git ls-tree %s: invalid mode %q: %w", hash.String()[:12], fields[0], modeErr)
+		}
+		entries = append(entries, object.TreeEntry{
+			Name: name,
+			Mode: mode,
+			Hash: plumbing.NewHash(fields[2]),
+		})
+	}
+	return entries, nil
 }
 
 // WalkCheckpointShards iterates over the two-level shard structure (<id[:2]>/<id[2:]>/)
