@@ -13,7 +13,7 @@ This repo contains the CLI for Entire.
 - `entire/`: Main CLI entry point. Also home to kubectl-style external-command resolution (`entire <name>` → `entire-<name>` on PATH) — see [External Commands](docs/architecture/external-commands.md).
 - `entire/cli`: CLI utilities and helpers (Cobra commands, helpers, group roots)
 - `entire/cli/commands`: actual command implementations
-- `entire/cli/agent`: agent implementations (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI) - see [Agent Integration Checklist](docs/architecture/agent-integration-checklist.md) and [Agent Implementation Guide](docs/architecture/agent-guide.md)
+- `entire/cli/agent`: agent implementations (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI, Pi) - see [Agent Integration Checklist](docs/architecture/agent-integration-checklist.md) and [Agent Implementation Guide](docs/architecture/agent-guide.md)
 - `entire/cli/strategy`: strategy implementation (manual-commit) - see section below
 - `entire/cli/checkpoint`: checkpoint storage abstractions (temporary and committed)
 - `entire/cli/session`: session state management
@@ -115,6 +115,7 @@ mise run test:e2e --agent opencode [filter]          # OpenCode only
 mise run test:e2e --agent cursor [filter]            # Cursor only
 mise run test:e2e --agent factoryai-droid [filter]   # Factory AI Droid only
 mise run test:e2e --agent copilot-cli [filter]       # Copilot CLI only
+mise run test:e2e --agent pi [filter]                # Pi only
 ```
 
 E2E tests:
@@ -122,9 +123,9 @@ E2E tests:
 - Use the `//go:build e2e` build tag
 - Located in `e2e/tests/`
 - See [`e2e/README.md`](e2e/README.md) for full documentation (structure, debugging, adding agents)
-- Test real agent interactions (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI, or Vogon creating files, committing, etc.)
+- Test real agent interactions (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI, Pi, or Vogon creating files, committing, etc.)
 - Validate checkpoint scenarios documented in `docs/architecture/checkpoint-scenarios.md`
-- Support multiple agents via `E2E_AGENT` env var (`claude-code`, `gemini`, `opencode`, `cursor`, `factoryai-droid`, `copilot-cli`, `vogon`)
+- Support multiple agents via `E2E_AGENT` env var (`claude-code`, `gemini`, `opencode`, `cursor`, `factoryai-droid`, `copilot-cli`, `pi`, `vogon`)
 
 **Environment variables:**
 
@@ -707,7 +708,7 @@ The key is the agent name. The value is a `ReviewConfig` with `skills` (skill in
 
 #### How It Works (env-var handshake)
 
-1. `entire review` selects the configured agent (override → alphabetically first → prompt if multiple), composes the review prompt via `review.ComposeReviewPrompt`, and computes scope (closest-ancestor branch via `review.ComputeScopeStats`).
+1. `entire review` selects the configured agent (override → alphabetically first → prompt if multiple), composes the review prompt via `review.ComposeReviewPrompt`, and computes scope (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
 2. **For launchable agents** (claude-code, codex, gemini-cli): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
 3. **For non-launchable agents** (cursor, opencode, factoryai-droid): `RunMarkerFallback` writes a `PendingReviewMarker` file and prints guidance — the user opens the agent themselves and runs the skills. Single shared file (`review/marker_fallback.go`); adding new non-launchable agents is a registry entry, not a new file.
 4. The agent runs the review skills; the session ends naturally.
@@ -730,7 +731,7 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
 - **`Run(ctx, reviewer, cfg, sinks)`** (`cmd/entire/cli/review/run.go`): single-agent orchestrator. Forwards events to all sinks via `AgentEvent`, calls `RunFinished` once at end with a populated `RunSummary`. Sink dispatch is serialized; sinks need not internally synchronize.
 - **`RunMulti(ctx, reviewers, cfg, sinks)`** (`cmd/entire/cli/review/run_multi.go`): N-agent orchestrator. Each agent runs concurrently in its own goroutine; events fan into a single dispatch loop so the serial-dispatch contract is preserved. Per-agent skills/prompts are injected via `perAgentConfiguredReviewer` adapter (each reviewer sees its own `RunConfig` despite the shared API surface).
 - **Env-var contract** (`cmd/entire/cli/review/env.go`): single source of truth for `ENTIRE_REVIEW_*` constants used by spawn-side and lifecycle adoption.
-- **Scope detection** (`cmd/entire/cli/review/scope.go`): `detectScopeBaseRef` finds the closest non-self ancestor branch by tip timestamp, with fallback chain `origin/HEAD → origin/main → origin/master → main → master`. Banner output: "Reviewing feat/X vs main: 3 commits, 7 files changed, 2 uncommitted".
+- **Scope detection** (`cmd/entire/cli/review/scope.go`): `detectScopeBaseRef` returns the first existing ref from the fallback chain `origin/HEAD → origin/main → origin/master → main → master`. Overridable per-invocation via `--base <ref>` (validated through go-git's `ResolveRevision`). Banner output: "Reviewing feat/X vs main: 3 commits, 7 files changed, 2 uncommitted".
 
 #### Multi-Agent UI
 
