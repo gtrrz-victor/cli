@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -344,6 +345,12 @@ func DeleteOrphanedCheckpoints(ctx context.Context, checkpointIDs []string) (del
 	return checkpointIDs, []string{}, nil
 }
 
+type cleanupGenerationState struct {
+	candidate  archivedV2GenerationCandidate
+	commitHash plumbing.Hash
+	gen        checkpoint.GenerationMetadata
+}
+
 // ListEligibleV2Generations returns archived checkpoints v2 /full/* generations
 // eligible for deletion based on the configured retention window, along with
 // warnings for malformed generations that were skipped.
@@ -362,6 +369,8 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 
 	cutoff := time.Now().AddDate(0, 0, -s.GetFullTranscriptGenerationRetentionDays())
 	cleanupItems := make([]CleanupItem, 0, len(candidates))
+	generations := make([]cleanupGenerationState, 0, len(candidates))
+	metadataRefs := make([]plumbing.ReferenceName, 0, len(candidates))
 
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
@@ -373,28 +382,39 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 			continue
 		}
 
-		// Prefer the precomputed timestamps in generation.json — walking every
-		// checkpoint tree via go-git is expensive and generation.json (written
-		// at archive time and repaired by generation_repair.go) is the
-		// authoritative timestamp source in practice. The tree walk remains as
-		// a fallback for older generations whose generation.json is missing or
-		// incomplete; use the ctx-aware variant so Ctrl+C aborts the walk
-		// promptly.
-		gen, genErr := store.ReadGeneration(treeHash)
-		if genErr != nil || gen.OldestCheckpointAt.IsZero() || gen.NewestCheckpointAt.IsZero() {
-			var foundCheckpointTimes bool
-			var timestampErr error
-			gen, foundCheckpointTimes, timestampErr = store.ComputeGenerationTimestampsFromTreesCtx(ctx, treeHash, nil)
-			if timestampErr != nil {
-				if errors.Is(timestampErr, context.Canceled) || errors.Is(timestampErr, context.DeadlineExceeded) {
-					return nil, warnings, timestampErr //nolint:wrapcheck // propagate context cancellation unwrapped
-				}
-				warnings = append(warnings, fmt.Sprintf("generation %s: failed to compute raw transcript timestamps: %v", candidate.Name, timestampErr))
+		// Use the cancellable variant so the go-git tree walk (the slow path
+		// when generation.json is missing) honors a single Ctrl+C instead of
+		// running to completion. Cancellation surfaces as context.Canceled
+		// here, which we propagate unwrapped so the caller can map it to a
+		// SilentError and exit cleanly.
+		gen, foundCheckpointTimes, timestampErr := store.ComputeGenerationTimestampsFromTreesCtx(ctx, treeHash, nil)
+		if timestampErr != nil {
+			if errors.Is(timestampErr, context.Canceled) || errors.Is(timestampErr, context.DeadlineExceeded) {
+				return nil, warnings, timestampErr //nolint:wrapcheck // propagate context cancellation unwrapped
+			}
+			warnings = append(warnings, fmt.Sprintf("generation %s: failed to compute raw transcript timestamps: %v", candidate.Name, timestampErr))
+			continue
+		}
+		if !foundCheckpointTimes {
+			metadataRefs = append(metadataRefs, candidate.RefName)
+		}
+		generations = append(generations, cleanupGenerationState{
+			candidate:  candidate,
+			commitHash: commitHash,
+			gen:        gen,
+		})
+	}
+
+	generationMetadata := readGenerationMetadataFiles(ctx, metadataRefs)
+	for _, generation := range generations {
+		gen := generation.gen
+		if metadata, ok := generationMetadata[generation.candidate.RefName]; ok {
+			if metadata.err != nil {
+				warnings = append(warnings, fmt.Sprintf("generation %s: failed to read generation.json: %v", generation.candidate.Name, metadata.err))
 				continue
 			}
-			if !foundCheckpointTimes && genErr != nil {
-				warnings = append(warnings, fmt.Sprintf("generation %s: failed to read generation.json: %v", candidate.Name, genErr))
-				continue
+			if !metadata.gen.OldestCheckpointAt.IsZero() || !metadata.gen.NewestCheckpointAt.IsZero() {
+				gen = metadata.gen
 			}
 		}
 
@@ -402,32 +422,70 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 		hasNewest := !gen.NewestCheckpointAt.IsZero()
 		switch {
 		case !hasOldest && !hasNewest:
-			warnings = append(warnings, fmt.Sprintf("generation %s: missing generation.json", candidate.Name))
+			warnings = append(warnings, fmt.Sprintf("generation %s: missing generation.json", generation.candidate.Name))
 			continue
 		case hasOldest != hasNewest:
-			warnings = append(warnings, fmt.Sprintf("generation %s: incomplete generation.json", candidate.Name))
+			warnings = append(warnings, fmt.Sprintf("generation %s: incomplete generation.json", generation.candidate.Name))
 			continue
 		case gen.OldestCheckpointAt.After(gen.NewestCheckpointAt):
-			warnings = append(warnings, fmt.Sprintf("generation %s: invalid timestamps", candidate.Name))
+			warnings = append(warnings, fmt.Sprintf("generation %s: invalid timestamps", generation.candidate.Name))
 			continue
 		}
 		if !gen.NewestCheckpointAt.Before(cutoff) {
 			continue
 		}
 
-		refOID := candidate.RefOID
+		refOID := generation.candidate.RefOID
 		if refOID == "" {
-			refOID = commitHash.String()
+			refOID = generation.commitHash.String()
 		}
 		cleanupItems = append(cleanupItems, CleanupItem{
 			Type:   CleanupTypeV2Generation,
-			ID:     candidate.Name,
+			ID:     generation.candidate.Name,
 			RefOID: refOID,
 			Reason: "expired archived full transcript generation",
 		})
 	}
 
 	return cleanupItems, warnings, nil
+}
+
+type generationGitReadResult struct {
+	gen checkpoint.GenerationMetadata
+	err error
+}
+
+func readGenerationMetadataFiles(ctx context.Context, refNames []plumbing.ReferenceName) map[plumbing.ReferenceName]generationGitReadResult {
+	results := make(map[plumbing.ReferenceName]generationGitReadResult, len(refNames))
+	if len(refNames) == 0 {
+		return results
+	}
+
+	specs := make([]string, len(refNames))
+	for i, refName := range refNames {
+		specs[i] = fmt.Sprintf("%s:%s", refName, paths.GenerationFileName)
+	}
+
+	catResults := remote.CatFiles(ctx, remote.CatFilesOptions{Specs: specs})
+	for i, refName := range refNames {
+		results[refName] = generationMetadataFromCatFileResult(catResults[specs[i]])
+	}
+	return results
+}
+
+func generationMetadataFromCatFileResult(catResult remote.CatFileResult) generationGitReadResult {
+	if catResult.Err != nil {
+		return generationGitReadResult{err: catResult.Err}
+	}
+	if catResult.Missing {
+		return generationGitReadResult{}
+	}
+
+	var gen checkpoint.GenerationMetadata
+	if err := json.Unmarshal(catResult.Content, &gen); err != nil {
+		return generationGitReadResult{err: fmt.Errorf("parse git-readable %s: %w", paths.GenerationFileName, err)}
+	}
+	return generationGitReadResult{gen: gen}
 }
 
 type archivedV2GenerationCandidate struct {
