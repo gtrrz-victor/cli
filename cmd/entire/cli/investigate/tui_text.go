@@ -41,6 +41,18 @@ func padDisplayWidth(s string, width int) string {
 	return s + strings.Repeat(" ", remaining)
 }
 
+func padDisplayWidthWith(s string, width int, pad string) string {
+	s = truncateDisplayWidth(s, width)
+	remaining := width - ansi.StringWidth(s)
+	if remaining <= 0 {
+		return s
+	}
+	if ansi.StringWidth(pad) != 1 {
+		return s + strings.Repeat(" ", remaining)
+	}
+	return s + strings.Repeat(pad, remaining)
+}
+
 func truncateDisplayWidth(s string, width int) string {
 	if width <= 0 {
 		return ""
