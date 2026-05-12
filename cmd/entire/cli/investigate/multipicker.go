@@ -48,9 +48,7 @@ func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice) (PickedI
 		return PickedInvestigate{}, ErrInvestigatePickerCancelled
 	}
 
-	sorted := make([]AgentChoice, len(eligible))
-	copy(sorted, eligible)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	sorted := sortAgentChoices(eligible)
 
 	options := make([]huh.Option[string], 0, len(sorted))
 	for _, c := range sorted {
@@ -90,4 +88,14 @@ func PickInvestigateAgents(ctx context.Context, eligible []AgentChoice) (PickedI
 	}
 
 	return PickedInvestigate{Names: picked, PerRun: perRun}, nil
+}
+
+// sortAgentChoices returns a copy of eligible sorted alphabetically by
+// Name. Extracted from PickInvestigateAgents so the ordering can be
+// asserted without driving the huh form.
+func sortAgentChoices(eligible []AgentChoice) []AgentChoice {
+	sorted := make([]AgentChoice, len(eligible))
+	copy(sorted, eligible)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	return sorted
 }

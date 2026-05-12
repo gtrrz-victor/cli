@@ -297,6 +297,9 @@ func runInvestigate(ctx context.Context, cmd *cobra.Command, args []string, f ru
 				if !ok {
 					return nil
 				}
+			} else {
+				logging.Info(ctx, "HEAD already has a recorded investigation; running anyway (non-interactive)",
+					slog.String("info", info))
 			}
 		}
 	}
@@ -387,6 +390,38 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 		return wrapSilent(silentErr, err)
 	}
+
+	// Spawn-time multipicker on resume: when the persisted state has 2+
+	// agents AND --agents was not used, let the user narrow the list and
+	// optionally add a per-run preamble. Skipped silently in non-interactive
+	// contexts so scripted resumes don't block.
+	perRun := ""
+	if len(agents) >= 2 && strings.TrimSpace(f.agentsCSV) == "" {
+		picker := deps.InvestigateMultipicker
+		canRun := picker != nil
+		if picker == nil {
+			picker = PickInvestigateAgents
+			canRun = interactive.CanPromptInteractively()
+		}
+		if canRun {
+			choices := make([]AgentChoice, 0, len(agents))
+			for _, name := range agents {
+				choices = append(choices, AgentChoice{Name: name, Label: name})
+			}
+			picked, pickErr := picker(ctx, choices)
+			if pickErr != nil {
+				if errors.Is(pickErr, ErrInvestigatePickerCancelled) {
+					return nil
+				}
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), pickErr.Error())
+				return wrapSilent(silentErr, pickErr)
+			}
+			agents = picked.Names
+			perRun = picked.PerRun
+		}
+	}
+
 	// state.NextAgentIdx is the index into agents the next turn will use.
 	// If --agents shrinks the list (or the persisted state is otherwise
 	// inconsistent), the loop would index out of range on the first turn.
@@ -436,7 +471,7 @@ func runContinue(ctx context.Context, cmd *cobra.Command, f runFlags, deps Deps)
 		Agents:       agents,
 		MaxTurns:     maxTurns,
 		Quorum:       quorum,
-		AlwaysPrompt: alwaysPrompt,
+		AlwaysPrompt: composeAlwaysPrompt(alwaysPrompt, perRun),
 		FindingsDoc:  state.FindingsDoc,
 		TimelineDoc:  state.TimelineDoc,
 		StartingSHA:  state.StartingSHA,

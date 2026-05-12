@@ -180,7 +180,7 @@ func RunInvestigateConfigPicker(
 		MaxTurns: maxTurns,
 		Quorum:   quorum,
 	}
-	fmt.Fprintln(out, "Saved investigate config to .entire/settings.json. Edit directly or run `entire investigate --edit`.")
+	fmt.Fprintln(out, "Saved investigate config to .entire/settings.local.json. Edit directly or run `entire investigate --edit`.")
 	return cfg, nil
 }
 

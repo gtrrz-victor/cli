@@ -752,3 +752,44 @@ func TestRunInvestigate_SoftWarnAcceptedRunsLoop(t *testing.T) {
 	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // soft-warn accept proceeds; ignore downstream errors
 	require.True(t, loopCalled, "loop must run when user accepts soft warn")
 }
+
+// TestRunInvestigate_SoftWarnSilentInNonInteractive verifies that when
+// the user can't prompt (PromptYN is nil and CanPromptInteractively
+// returns false under `go test`), the soft-warn does NOT block the loop
+// — it proceeds and a single informational log line is emitted.
+func TestRunInvestigate_SoftWarnSilentInNonInteractive(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	testutil.InitRepo(t, tmp)
+	testutil.WriteFile(t, tmp, "f.txt", "x")
+	testutil.GitAdd(t, tmp, "f.txt")
+	testutil.GitCommit(t, tmp, "init")
+	require.NoError(t, os.MkdirAll(filepath.Join(tmp, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmp, ".entire/settings.local.json"),
+		[]byte(`{"investigate":{"agents":["claude-code"],"max_turns":1}}`), 0o644))
+
+	var loopCalled bool
+	deps := investigate.Deps{
+		GetAgentsWithHooksInstalled: func(_ context.Context) []types.AgentName {
+			return []types.AgentName{types.AgentName("claude-code")}
+		},
+		NewSilentError: func(err error) error { return err },
+		SpawnerFor:     func(_ string) spawn.Spawner { return stubSpawner{name: "claude-code"} },
+		HeadHasInvestigateCheckpoint: func(_ context.Context) (bool, string) {
+			return true, "checkpoint nonint"
+		},
+		// PromptYN intentionally nil → falls back to interactive.CanPromptInteractively(),
+		// which returns false under `go test` → soft-warn is silent.
+		LoopRun: func(_ context.Context, _ investigate.LoopInput, _ investigate.LoopDeps) (investigate.LoopResult, error) {
+			loopCalled = true
+			return investigate.LoopResult{Outcome: investigate.OutcomeQuorum}, nil
+		},
+	}
+	cmd := investigate.NewCommand(deps)
+	cmd.SetArgs([]string{"--topic", "foo"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	_ = cmd.ExecuteContext(context.Background()) //nolint:errcheck // non-interactive path proceeds
+	require.True(t, loopCalled, "loop must run when soft-warn is silent (non-interactive)")
+}
