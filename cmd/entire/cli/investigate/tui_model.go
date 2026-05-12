@@ -32,6 +32,20 @@ const (
 	rowStatusFailed
 )
 
+// timelineEntry is one row in the drill-in detail view's per-agent buffer.
+// Entries are turn-granular: one on TurnStarted and one on TurnFinished
+// (or TurnFinished with kind="failed" when the loop treated the turn as a
+// failure).
+type timelineEntry struct {
+	when     time.Time
+	turn     int
+	kind     string // "started" | "finished" | "failed"
+	stance   string
+	duration time.Duration
+	errStr   string
+	findings string
+}
+
 // agentRow holds per-agent live state during the TUI run.
 type agentRow struct {
 	name         string
@@ -42,6 +56,7 @@ type agentRow struct {
 	maxTurns     int
 	latestStance string // canonical: "approve" | "request-changes" | "abstain" | ""
 	lastErr      error
+	buffer       []timelineEntry
 }
 
 // turnStartedMsg is sent when the loop begins an agent turn.
@@ -59,6 +74,7 @@ type turnFinishedMsg struct {
 	duration time.Duration
 	failed   bool
 	err      error
+	findings string // optional preview line parsed from the timeline doc
 }
 
 // runFinishedMsg is sent once when the loop terminates.
@@ -189,6 +205,11 @@ func (m investigateTUIModel) handleTurnStarted(msg turnStartedMsg) investigateTU
 	row := &m.rows[idx]
 	row.status = rowStatusRunning
 	row.currentStart = time.Now()
+	row.buffer = append(row.buffer, timelineEntry{
+		when: time.Now(),
+		turn: msg.turn,
+		kind: "started",
+	})
 	return m
 }
 
@@ -217,6 +238,24 @@ func (m investigateTUIModel) handleTurnFinished(msg turnFinishedMsg) investigate
 	} else {
 		row.status = rowStatusQueued
 	}
+
+	kind := "finished"
+	if msg.failed {
+		kind = "failed"
+	}
+	var errStr string
+	if msg.err != nil {
+		errStr = msg.err.Error()
+	}
+	row.buffer = append(row.buffer, timelineEntry{
+		when:     time.Now(),
+		turn:     msg.turn,
+		kind:     kind,
+		stance:   msg.stance,
+		duration: msg.duration,
+		errStr:   errStr,
+		findings: msg.findings,
+	})
 
 	// Recompute round + approval counters from the full row set so we are
 	// resilient to out-of-order messages and replays.

@@ -2,9 +2,12 @@ package investigate
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // newTestModel returns a fresh model with three agents and a no-op cancel so
@@ -178,4 +181,52 @@ func TestFormatDuration(t *testing.T) {
 			t.Errorf("formatDuration(%v) = %q, want %q", c.in, got, c.want)
 		}
 	}
+}
+
+func TestModel_HandleTurnStartedAppendsTimelineEntry(t *testing.T) {
+	t.Parallel()
+	m := newInvestigateTUIModel("topic", "run", []string{"claude-code"}, 3, 1, func() {})
+	next, _ := m.Update(turnStartedMsg{agent: "claude-code", turn: 1})
+	got, ok := next.(investigateTUIModel)
+	require.True(t, ok)
+	require.Len(t, got.rows[0].buffer, 1)
+	require.Equal(t, "started", got.rows[0].buffer[0].kind)
+	require.Equal(t, 1, got.rows[0].buffer[0].turn)
+}
+
+func TestModel_HandleTurnFinishedAppendsFinishedEntry(t *testing.T) {
+	t.Parallel()
+	m := newInvestigateTUIModel("topic", "run", []string{"claude-code"}, 3, 1, func() {})
+	m1, _ := m.Update(turnStartedMsg{agent: "claude-code", turn: 1})
+	m1Model, ok := m1.(investigateTUIModel)
+	require.True(t, ok)
+	m2, _ := m1Model.Update(turnFinishedMsg{
+		agent:    "claude-code",
+		turn:     1,
+		stance:   stanceApprove,
+		duration: 2 * time.Second,
+		findings: "shared findings doc updated",
+	})
+	got, ok := m2.(investigateTUIModel)
+	require.True(t, ok)
+	require.Len(t, got.rows[0].buffer, 2)
+	require.Equal(t, "finished", got.rows[0].buffer[1].kind)
+	require.Equal(t, "shared findings doc updated", got.rows[0].buffer[1].findings)
+}
+
+func TestModel_HandleTurnFinishedFailedAppendsFailedEntry(t *testing.T) {
+	t.Parallel()
+	m := newInvestigateTUIModel("topic", "run", []string{"codex"}, 3, 1, func() {})
+	m1, _ := m.Update(turnFinishedMsg{
+		agent:    "codex",
+		turn:     1,
+		duration: 500 * time.Millisecond,
+		failed:   true,
+		err:      errors.New("spawner exited"),
+	})
+	got, ok := m1.(investigateTUIModel)
+	require.True(t, ok)
+	require.Len(t, got.rows[0].buffer, 1)
+	require.Equal(t, "failed", got.rows[0].buffer[0].kind)
+	require.Equal(t, "spawner exited", got.rows[0].buffer[0].errStr)
 }
