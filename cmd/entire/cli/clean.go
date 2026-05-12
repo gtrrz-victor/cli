@@ -278,21 +278,30 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 		s = &settings.EntireSettings{}
 	}
 
+	// V2 generation enumeration hits the network (git ls-remote + per-ref
+	// fetches). Print a status line first so the user knows the command isn't
+	// hung, then run it concurrently with the fast local enumeration below.
+	var (
+		v2Items    []strategy.CleanupItem
+		v2Warnings []string
+		v2Err      error
+	)
+	v2Done := make(chan struct{})
+	if s.IsCheckpointsV2Enabled() {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Checking remote for archived v2 generations...")
+		go func() {
+			defer close(v2Done)
+			v2Items, v2Warnings, v2Err = strategy.ListEligibleV2Generations(ctx, s, cmd.ErrOrStderr())
+		}()
+	} else {
+		close(v2Done)
+	}
+
 	// List all items (sessions, shadow branches) — not just orphaned ones
 	items, err := strategy.ListAllItems(ctx)
 	if err != nil {
+		<-v2Done
 		return fmt.Errorf("failed to list items: %w", err)
-	}
-
-	if s.IsCheckpointsV2Enabled() {
-		v2Items, warnings, err := strategy.ListEligibleV2Generations(ctx, s)
-		if err != nil {
-			return fmt.Errorf("failed to list v2 generations: %w", err)
-		}
-		items = append(items, v2Items...)
-		for _, warning := range warnings {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning)
-		}
 	}
 
 	// List temp files — skip active-session filter since --all deletes those sessions
@@ -300,6 +309,15 @@ func runCleanAll(ctx context.Context, cmd *cobra.Command, force, dryRun bool) er
 	if err != nil {
 		// Non-fatal: continue with other cleanup items
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to list temp files: %v\n", err)
+	}
+
+	<-v2Done
+	if v2Err != nil {
+		return fmt.Errorf("failed to list v2 generations: %w", v2Err)
+	}
+	items = append(items, v2Items...)
+	for _, warning := range v2Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning)
 	}
 
 	return runCleanAllWithItems(ctx, cmd, force, dryRun, items, tempFiles)

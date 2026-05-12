@@ -1064,7 +1064,14 @@ func TestCleanCmd_All_DryRunListsRemoteOnlyEligibleV2Generations(t *testing.T) {
 	}
 }
 
-func TestCleanCmd_All_UsesRawTranscriptTimeForV2GenerationRetention(t *testing.T) {
+func TestCleanCmd_All_PrefersGenerationJSONOverRawTranscript(t *testing.T) {
+	// Cleanup trusts generation.json's timestamps even when raw transcripts
+	// would imply different ages. Walking every archived checkpoint tree via
+	// go-git costs multi-second hangs per generation, and generation.json is
+	// authoritative in practice (written at archive time and repaired by
+	// generation_repair.go). Here generation.json says "now" while raw
+	// transcripts say 15-20 days ago — the generation must be treated as
+	// within retention because we trust generation.json.
 	repo, _ := setupCleanTestRepo(t)
 
 	wt, err := repo.Worktree()
@@ -1092,11 +1099,8 @@ func TestCleanCmd_All_UsesRawTranscriptTimeForV2GenerationRetention(t *testing.T
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "Archived v2 generations (1):") {
-		t.Fatalf("expected archived v2 generation section, got: %s", output)
-	}
-	if !strings.Contains(output, "0000000000005") {
-		t.Fatalf("expected generation to be eligible by raw transcript timestamps, got: %s", output)
+	if strings.Contains(output, "0000000000005") {
+		t.Fatalf("expected generation to be skipped because generation.json is within retention, got: %s", output)
 	}
 }
 

@@ -28,6 +28,11 @@ func main() {
 	go func() {
 		<-sigChan
 		cancel()
+		// Second signal forces exit. Some long-running operations (e.g.
+		// go-git tree walks) don't honor context cancellation, so cancel()
+		// alone may not stop the process. Give the user an escape hatch.
+		<-sigChan
+		os.Exit(130)
 	}()
 
 	// Create and execute root command
