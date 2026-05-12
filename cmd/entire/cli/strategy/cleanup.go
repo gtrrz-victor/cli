@@ -402,7 +402,7 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 				warnings = append(warnings, fmt.Sprintf("generation %s: failed to read generation.json: %v", generation.candidate.Name, metadata.err))
 				continue
 			}
-			if generationMetadataHasAnyTimestamp(metadata.gen) {
+			if !metadata.gen.OldestCheckpointAt.IsZero() || !metadata.gen.NewestCheckpointAt.IsZero() {
 				gen = metadata.gen
 			}
 		}
@@ -439,10 +439,6 @@ func ListEligibleV2Generations(ctx context.Context, s *settings.EntireSettings) 
 	return cleanupItems, warnings, nil
 }
 
-func generationMetadataHasAnyTimestamp(gen checkpoint.GenerationMetadata) bool {
-	return !gen.OldestCheckpointAt.IsZero() || !gen.NewestCheckpointAt.IsZero()
-}
-
 type generationGitReadResult struct {
 	gen checkpoint.GenerationMetadata
 	err error
@@ -454,17 +450,14 @@ func readGenerationMetadataFiles(ctx context.Context, refNames []plumbing.Refere
 		return results
 	}
 
-	specs := make([]string, 0, len(refNames))
-	specByRef := make(map[plumbing.ReferenceName]string, len(refNames))
-	for _, refName := range refNames {
-		spec := fmt.Sprintf("%s:%s", refName, paths.GenerationFileName)
-		specs = append(specs, spec)
-		specByRef[refName] = spec
+	specs := make([]string, len(refNames))
+	for i, refName := range refNames {
+		specs[i] = fmt.Sprintf("%s:%s", refName, paths.GenerationFileName)
 	}
 
 	catResults := remote.CatFiles(ctx, remote.CatFilesOptions{Specs: specs})
-	for _, refName := range refNames {
-		results[refName] = generationMetadataFromCatFileResult(catResults[specByRef[refName]])
+	for i, refName := range refNames {
+		results[refName] = generationMetadataFromCatFileResult(catResults[specs[i]])
 	}
 	return results
 }
