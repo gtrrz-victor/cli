@@ -755,11 +755,6 @@ func executeLoopAndCapture(ctx context.Context, cmd *cobra.Command, in LoopInput
 	if err != nil {
 		return LoopResult{}, fmt.Errorf("open run state store: %w", err)
 	}
-	commonDir, err := gitCommonDirForTranscripts(ctx)
-	if err != nil {
-		return LoopResult{}, err
-	}
-	transcriptDir := filepath.Join(commonDir, InvestigationsDirName, "transcripts")
 
 	out := cmd.OutOrStdout()
 	progress, tuiSink, runCtx, cancelTUI := buildProgressSink(ctx, in, out)
@@ -772,10 +767,9 @@ func executeLoopAndCapture(ctx context.Context, cmd *cobra.Command, in LoopInput
 	}
 
 	ldeps := LoopDeps{
-		SpawnerFor:    deps.SpawnerFor,
-		States:        stateStore,
-		TranscriptDir: transcriptDir,
-		Progress:      progress,
+		SpawnerFor: deps.SpawnerFor,
+		States:     stateStore,
+		Progress:   progress,
 	}
 
 	runner := deps.LoopRun
@@ -811,22 +805,6 @@ func buildProgressSink(ctx context.Context, in LoopInput, out io.Writer) (Progre
 	}
 	sink := newTUIProgressSink(in.Topic, in.RunID, in.Agents, maxTurns, quorum, cancel, out)
 	return sink, sink, runCtx, cancel
-}
-
-// gitCommonDirForTranscripts resolves the git common dir via the same
-// helper StateStore uses, so per-turn transcripts live alongside the run
-// state.
-func gitCommonDirForTranscripts(ctx context.Context) (string, error) {
-	store, err := NewStateStore(ctx)
-	if err != nil {
-		return "", err
-	}
-	// store.dir is <commonDir>/entire-investigations/state — strip the two
-	// trailing components to recover commonDir.
-	dir := store.dir
-	dir = filepath.Dir(dir) // entire-investigations
-	dir = filepath.Dir(dir) // commonDir
-	return dir, nil
 }
 
 // writeRunManifest builds a LocalManifest from the loop result and

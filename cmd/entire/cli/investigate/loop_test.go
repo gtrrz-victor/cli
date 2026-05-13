@@ -1,7 +1,6 @@
 package investigate
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -60,21 +59,20 @@ const failScript = `exit 1`
 // noopScript exits 0 without touching the timeline.
 const noopScript = `exit 0`
 
-// makeLoopFiles seeds the findings + timeline + transcript dirs for a
-// loop test. Returns the absolute paths.
-func makeLoopFiles(t *testing.T) (findings, timeline, transcripts string) {
+// makeLoopFiles seeds the findings + timeline files for a loop test.
+// Returns the absolute paths.
+func makeLoopFiles(t *testing.T) (findings, timeline string) {
 	t.Helper()
 	dir := t.TempDir()
 	findings = filepath.Join(dir, "findings.md")
 	timeline = filepath.Join(dir, "timeline.md")
-	transcripts = filepath.Join(dir, "transcripts")
 	if err := os.WriteFile(findings, []byte("# Findings\n"), 0o600); err != nil {
 		t.Fatalf("write findings: %v", err)
 	}
 	if err := os.WriteFile(timeline, []byte("# Timeline\n"), 0o600); err != nil {
 		t.Fatalf("write timeline: %v", err)
 	}
-	return findings, timeline, transcripts
+	return findings, timeline
 }
 
 // stableSpawner returns a SpawnerFor that always uses the supplied script
@@ -214,7 +212,7 @@ func TestRunInvestigateLoop_QuorumReachedFirstRound(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	store := NewStateStoreWithDir(t.TempDir())
 
 	in := LoopInput{
@@ -233,8 +231,7 @@ func TestRunInvestigateLoop_QuorumReachedFirstRound(t *testing.T) {
 			"codex":       appendTurnScript("codex", "approve"),
 			"gemini-cli":  appendTurnScript("gemini-cli", "approve"),
 		}),
-		States:        store,
-		TranscriptDir: transcripts,
+		States: store,
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -258,7 +255,7 @@ func TestRunInvestigateLoop_QuorumDefault(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "222222222222",
 		Topic:       "test",
@@ -273,8 +270,7 @@ func TestRunInvestigateLoop_QuorumDefault(t *testing.T) {
 			"claude-code": appendTurnScript("claude-code", "approve"),
 			"codex":       appendTurnScript("codex", "approve"),
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -293,7 +289,7 @@ func TestRunInvestigateLoop_Stalled(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "333333333333",
 		Topic:       "test",
@@ -308,8 +304,7 @@ func TestRunInvestigateLoop_Stalled(t *testing.T) {
 			"claude-code": appendTurnScript("claude-code", "request-changes"),
 			"codex":       appendTurnScript("codex", "request-changes"),
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -331,7 +326,7 @@ func TestRunInvestigateLoop_PausedOnTwoFailures(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "444444444444",
 		Topic:       "test",
@@ -346,8 +341,7 @@ func TestRunInvestigateLoop_PausedOnTwoFailures(t *testing.T) {
 			"claude-code": failScript,
 			"codex":       failScript,
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -379,7 +373,7 @@ func TestRunInvestigateLoop_UnknownStanceWhenTimelineMissing(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "555555555555",
 		Topic:       "test",
@@ -393,8 +387,7 @@ func TestRunInvestigateLoop_UnknownStanceWhenTimelineMissing(t *testing.T) {
 		SpawnerFor: stableSpawner(map[string]string{
 			"claude-code": noopScript, // exits 0 without writing the timeline
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -414,81 +407,6 @@ func TestRunInvestigateLoop_UnknownStanceWhenTimelineMissing(t *testing.T) {
 	}
 }
 
-// TestBoundedFileWriter verifies the cap-and-mark behaviour the per-turn
-// log uses to defend against agents that flood stdout. Writes report
-// len(p) so exec.Cmd never sees io.ErrShortWrite (which would tear down
-// the agent), but bytes past the limit are dropped and a single truncate
-// marker is appended.
-func TestBoundedFileWriter(t *testing.T) {
-	t.Parallel()
-
-	t.Run("writes under cap pass through", func(t *testing.T) {
-		t.Parallel()
-		var buf bytes.Buffer
-		w := newBoundedFileWriter(&buf, 100)
-		n, err := w.Write([]byte("hello"))
-		if err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		if n != 5 {
-			t.Errorf("n = %d, want 5", n)
-		}
-		if buf.String() != "hello" {
-			t.Errorf("buf = %q, want hello", buf.String())
-		}
-	})
-
-	t.Run("write at cap is fine; next write is dropped with marker", func(t *testing.T) {
-		t.Parallel()
-		var buf bytes.Buffer
-		w := newBoundedFileWriter(&buf, 5)
-		if _, err := w.Write([]byte("hello")); err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		// Subsequent write must report all bytes consumed but NOT append
-		// to the underlying buffer beyond the marker.
-		n, err := w.Write([]byte("world more bytes"))
-		if err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		if n != len("world more bytes") {
-			t.Errorf("n = %d, want %d (must report full consumption to avoid io.ErrShortWrite tearing down exec.Cmd)", n, len("world more bytes"))
-		}
-		got := buf.String()
-		if !strings.HasPrefix(got, "hello") {
-			t.Errorf("buf must start with hello; got %q", got)
-		}
-		if !strings.Contains(got, "[entire: log truncated") {
-			t.Errorf("buf must contain truncation marker; got %q", got)
-		}
-		// A second overflow write must not double-append the marker.
-		if _, err := w.Write([]byte("more")); err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		if got2 := buf.String(); strings.Count(got2, "[entire: log truncated") != 1 {
-			t.Errorf("marker emitted multiple times; got: %q", got2)
-		}
-	})
-
-	t.Run("partial write at boundary", func(t *testing.T) {
-		t.Parallel()
-		var buf bytes.Buffer
-		w := newBoundedFileWriter(&buf, 3)
-		// Single write exceeds the cap: take the first 3 bytes, drop the
-		// rest, append the marker once.
-		n, err := w.Write([]byte("hello world"))
-		if err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		if n != len("hello world") {
-			t.Errorf("n = %d, want %d", n, len("hello world"))
-		}
-		if got := buf.String(); !strings.HasPrefix(got, "hel") || !strings.Contains(got, "[entire: log truncated") {
-			t.Errorf("expected hel + marker; got %q", got)
-		}
-	})
-}
-
 // TestRunInvestigateLoop_MissingHeadingPausesAfterTwo verifies that an
 // agent that exits cleanly but writes no `## Turn N — <agent>` block
 // counts as a soft failure: two consecutive missing headings trip
@@ -497,7 +415,7 @@ func TestRunInvestigateLoop_MissingHeadingPausesAfterTwo(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "777777777777",
 		Topic:       "test",
@@ -512,8 +430,7 @@ func TestRunInvestigateLoop_MissingHeadingPausesAfterTwo(t *testing.T) {
 			"claude-code": noopScript, // exits 0, never writes timeline
 			"codex":       noopScript,
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -532,7 +449,7 @@ func TestRunInvestigateLoop_PersistsStateEachTurn(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	storeDir := t.TempDir()
 	in := LoopInput{
 		RunID:       "666666666666",
@@ -559,9 +476,8 @@ func TestRunInvestigateLoop_PersistsStateEachTurn(t *testing.T) {
 	}
 
 	deps := LoopDeps{
-		SpawnerFor:    spawnerFor,
-		States:        NewStateStoreWithDir(storeDir),
-		TranscriptDir: transcripts,
+		SpawnerFor: spawnerFor,
+		States:     NewStateStoreWithDir(storeDir),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -593,7 +509,7 @@ func TestRunInvestigateLoop_Resume(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	store := NewStateStoreWithDir(t.TempDir())
 
 	// Pre-existing state: agent[0] has already gone in turn 1 and approved.
@@ -639,9 +555,8 @@ func TestRunInvestigateLoop_Resume(t *testing.T) {
 	}
 
 	deps := LoopDeps{
-		SpawnerFor:    spawnerFor,
-		States:        store,
-		TranscriptDir: transcripts,
+		SpawnerFor: spawnerFor,
+		States:     store,
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -660,7 +575,7 @@ func TestRunInvestigateLoop_PlanAndTimelineChangedFlags(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "888888888888",
 		Topic:       "test",
@@ -676,8 +591,7 @@ func TestRunInvestigateLoop_PlanAndTimelineChangedFlags(t *testing.T) {
 			// Only modify the timeline; findings stays untouched.
 			"claude-code": appendTurnScript("claude-code", "approve"),
 		}),
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	res, err := RunInvestigateLoop(context.Background(), in, deps)
@@ -700,7 +614,7 @@ func TestRunInvestigateLoop_CancelledContext(t *testing.T) {
 	t.Parallel()
 	skipOnWindows(t)
 
-	findings, timeline, transcripts := makeLoopFiles(t)
+	findings, timeline := makeLoopFiles(t)
 	in := LoopInput{
 		RunID:       "999999999999",
 		Topic:       "test",
@@ -721,8 +635,7 @@ func TestRunInvestigateLoop_CancelledContext(t *testing.T) {
 				},
 			}
 		},
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
+		States: NewStateStoreWithDir(t.TempDir()),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -748,62 +661,12 @@ func TestRunInvestigateLoop_CancelledContext(t *testing.T) {
 	}
 }
 
-// TestRunInvestigateLoop_WritesPerTurnLogFile verifies that agent stdout is
-// captured to the per-turn log file on disk. The previous --verbose flag
-// (which also teed stdout to the terminal) was removed when the TUI became
-// the default user-facing surface; the on-disk log is now the canonical
-// place to inspect raw agent output.
-func TestRunInvestigateLoop_WritesPerTurnLogFile(t *testing.T) {
-	t.Parallel()
-	skipOnWindows(t)
-
-	findings, timeline, transcripts := makeLoopFiles(t)
-
-	in := LoopInput{
-		RunID:       "aaaaaaaaaaaa",
-		Topic:       "test",
-		Agents:      []string{"claude-code"},
-		MaxTurns:    1,
-		Quorum:      1,
-		FindingsDoc: findings,
-		TimelineDoc: timeline,
-		StartingSHA: "deadbeef",
-	}
-	deps := LoopDeps{
-		SpawnerFor: func(agent string) spawn.Spawner {
-			script := `echo SENTINEL_OUTPUT
-` + appendTurnScript(agent, "approve")
-			return &fakeSpawner{
-				name: agent,
-				onBuildCmd: func(ctx context.Context, env []string, _ string) *exec.Cmd {
-					return shellCmd(ctx, env, script)
-				},
-			}
-		},
-		States:        NewStateStoreWithDir(t.TempDir()),
-		TranscriptDir: transcripts,
-	}
-
-	if _, err := RunInvestigateLoop(context.Background(), in, deps); err != nil {
-		t.Fatalf("RunInvestigateLoop: %v", err)
-	}
-	logPath := filepath.Join(transcripts, in.RunID, "turn-1-claude-code.log")
-	body, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
-	}
-	if !strings.Contains(string(body), "SENTINEL_OUTPUT") {
-		t.Errorf("turn log file did not capture stdout: %q", string(body))
-	}
-}
-
 func TestRunInvestigateLoop_RejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 	store := NewStateStoreWithDir(t.TempDir())
 	deps := LoopDeps{
-		SpawnerFor:    func(string) spawn.Spawner { return nil },
-		States:        store,
-		TranscriptDir: t.TempDir(),
+		SpawnerFor: func(string) spawn.Spawner { return nil },
+		States:     store,
 	}
 	cases := []struct {
 		name string

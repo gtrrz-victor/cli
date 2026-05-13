@@ -9,7 +9,9 @@ package investigate
 //  2. Composes a prompt via ComposeInvestigatePrompt.
 //  3. Spawns the agent via Spawner.BuildCmd with ENTIRE_INVESTIGATE_* env
 //     populated by AppendInvestigateEnv.
-//  4. Tees the agent's stdout to a per-turn log file on disk.
+//  4. Discards the agent's stdout/stderr — the lifecycle hooks capture the
+//     full session transcript on the shadow branch and condense it onto
+//     entire/checkpoints/v1 on the next commit (same machinery as review).
 //  5. Waits for the agent to exit. Re-hashes the docs.
 //  6. Parses the timeline doc for the freshly-added "## Turn N — <agent>"
 //     block and reads its "**Stance:**" line.
@@ -24,8 +26,6 @@ package investigate
 //
 // Privacy note (per CLAUDE.md): operational metadata only is ever logged.
 // Prompts, file bodies, agent stdout, and commit messages are NEVER logged.
-// The per-turn log file is written to disk for the user's own debugging
-// but never touched by logging.
 
 import (
 	"context"
@@ -36,7 +36,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,10 +56,6 @@ type LoopDeps struct {
 	// real *StateStore rooted at <git-common-dir>/entire-investigations/state;
 	// tests pass NewStateStoreWithDir(t.TempDir()).
 	States *StateStore
-
-	// TranscriptDir is the directory where per-turn agent stdout logs are
-	// written. Layout: <TranscriptDir>/<run-id>/turn-<N>-<agent>.log
-	TranscriptDir string
 
 	// Progress receives turn lifecycle events. Production wires either a
 	// tuiProgressSink (TTY) or textProgressSink (non-TTY); tests typically
@@ -125,13 +120,6 @@ const pauseAfterConsecutiveFailures = 2
 // defaultMaxTurns is the per-agent turn budget when LoopInput.MaxTurns is 0.
 const defaultMaxTurns = 3
 
-// turnLogFileMode is the file mode for per-turn agent stdout log files.
-// Owner read/write, group read; matches the .entire/ permissions convention.
-const turnLogFileMode os.FileMode = 0o640
-
-// turnLogDirMode is the directory mode for the per-run transcript folder.
-const turnLogDirMode os.FileMode = 0o750
-
 // stanceApprove and friends pin the stance vocabulary so callers can compare
 // without typo risk. The timeline parser normalises to one of these or
 // "unknown".
@@ -163,9 +151,6 @@ func RunInvestigateLoop(ctx context.Context, in LoopInput, deps LoopDeps) (LoopR
 	if deps.SpawnerFor == nil {
 		return LoopResult{}, errors.New("LoopDeps.SpawnerFor is required")
 	}
-	if deps.TranscriptDir == "" {
-		return LoopResult{}, errors.New("LoopDeps.TranscriptDir is required")
-	}
 	if deps.Progress == nil {
 		deps.Progress = nullProgressSink{}
 	}
@@ -192,18 +177,12 @@ func RunInvestigateLoop(ctx context.Context, in LoopInput, deps LoopDeps) (LoopR
 		return LoopResult{State: state}, fmt.Errorf("save initial run state: %w", err)
 	}
 
-	transcriptRunDir := filepath.Join(deps.TranscriptDir, in.RunID)
-	if err := os.MkdirAll(transcriptRunDir, turnLogDirMode); err != nil {
-		return LoopResult{State: state}, fmt.Errorf("create transcript dir: %w", err)
-	}
-
 	cfg := turnConfig{
-		input:            in,
-		deps:             deps,
-		now:              now,
-		quorum:           quorum,
-		maxPerAgent:      maxTurnsPerAgent,
-		transcriptRunDir: transcriptRunDir,
+		input:       in,
+		deps:        deps,
+		now:         now,
+		quorum:      quorum,
+		maxPerAgent: maxTurnsPerAgent,
 	}
 	consecutiveFails := 0
 	var lastErr error
@@ -251,12 +230,11 @@ func RunInvestigateLoop(ctx context.Context, in LoopInput, deps LoopDeps) (LoopR
 // out from RunInvestigateLoop's call frame keeps the per-turn helper
 // signature tight without re-deriving values on every iteration.
 type turnConfig struct {
-	input            LoopInput
-	deps             LoopDeps
-	now              func() time.Time
-	quorum           int
-	maxPerAgent      int
-	transcriptRunDir string
+	input       LoopInput
+	deps        LoopDeps
+	now         func() time.Time
+	quorum      int
+	maxPerAgent int
 }
 
 // turnOutcome reports the post-turn state runOneTurn produces. The loop
@@ -315,21 +293,11 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 	})
 	cmd := spawner.BuildCmd(ctx, env, prompt)
 
-	logPath := filepath.Join(cfg.transcriptRunDir, fmt.Sprintf("turn-%d-%s.log", state.Turn, agentName))
-	logFile, err := openTurnLog(logPath)
-	if err != nil {
-		recordFailureStance(state, round, agentName, err, cfg.now)
-		deps.Progress.TurnFinished(agentName, state.Turn, stanceUnknown, 0, true, err, "")
-		return turnOutcome{round: round, failed: true, err: err}
-	}
-
-	// Wrap the log file in a size-capped writer so a hostile or
-	// misbehaving agent cannot fill the disk via runaway stdout. The TUI
-	// dashboard owns the user-facing live view; the per-turn log file is
-	// the canonical place for inspecting raw agent stdout/stderr.
-	cappedLog := newBoundedFileWriter(logFile, maxTurnLogBytes)
-	cmd.Stdout = cappedLog
-	cmd.Stderr = cappedLog
+	// Agent stdout/stderr are captured by the lifecycle hooks into the
+	// session transcript (full.jsonl) and condensed onto
+	// entire/checkpoints/v1 on commit. Discard the raw streams here.
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	logging.Info(ctx, "investigate: turn start",
 		sRun(in.RunID), sAgent(agentName), sTurn(state.Turn), sRound(round))
@@ -337,10 +305,6 @@ func runOneTurn(ctx context.Context, cfg turnConfig, state *RunState) turnOutcom
 	turnStart := cfg.now()
 	runErr := cmd.Run()
 	turnDuration := cfg.now().Sub(turnStart)
-	if closeErr := logFile.Close(); closeErr != nil {
-		logging.Debug(ctx, "investigate: close turn log",
-			sErr(closeErr), sRun(in.RunID), sAgent(agentName))
-	}
 
 	postFindings := hashFile(ctx, in.FindingsDoc)
 	postTimeline := hashFile(ctx, in.TimelineDoc)
@@ -502,97 +466,6 @@ func recordFailureStance(state *RunState, round int, agent string, err error, no
 	})
 	updateRoundCounter(state)
 	state.UpdatedAt = now()
-}
-
-// openTurnLog opens (or truncates) the per-turn log file. We always
-// truncate so re-runs of the same turn (e.g. after a crash and resume that
-// re-uses the turn number) overwrite cleanly rather than concatenating.
-//
-// Concurrency note: running two `entire investigate --continue <run-id>`
-// invocations against the same run from different shells is not supported.
-// The state file (`.git/entire-investigations/state/<run-id>.json`) uses
-// atomic temp+rename writes, but per-turn logs use O_TRUNC without file
-// locking, so concurrent writers would race here. Single-shell continue is
-// the supported path; concurrent runs must use distinct run IDs.
-func openTurnLog(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, turnLogFileMode) //nolint:gosec // path is composed from validated runID + turn + agent
-	if err != nil {
-		return nil, fmt.Errorf("open turn log %s: %w", path, err)
-	}
-	return f, nil
-}
-
-// maxTurnLogBytes caps how much agent stdout/stderr we persist to a
-// per-turn log file. A misbehaving or hostile agent (looping `yes`-style
-// output, runaway tool calls, prompt-injected verbose echo) can otherwise
-// fill the user's disk before the loop notices, since `cmd.Stdout` is
-// io.MultiWriter'd into an uncapped *os.File. 16 MiB is comfortably more
-// than any realistic per-turn agent transcript and small enough to stay
-// well under disk-pressure thresholds even if every concurrent worktree
-// hits the cap simultaneously.
-const maxTurnLogBytes = 16 * 1024 * 1024
-
-// boundedFileWriter wraps an io.Writer (the per-turn log file plus
-// optional verbose tee) with a hard byte cap. Writes past the cap are
-// silently discarded; on the first overflow a single "[entire: log
-// truncated at N bytes]" marker is emitted so a reader can tell that
-// truncation happened. Errors from the underlying writer are returned
-// (caller controls behaviour); we do not return io.ErrShortWrite when
-// dropping bytes because exec.Cmd treats short writes as I/O failures
-// and would tear down the agent process on every stdout write past the
-// cap. The contract is: report len(p) bytes consumed, drop the
-// out-of-budget tail.
-type boundedFileWriter struct {
-	w         io.Writer
-	limit     int
-	written   int
-	truncated bool
-}
-
-func newBoundedFileWriter(w io.Writer, limit int) *boundedFileWriter {
-	return &boundedFileWriter{w: w, limit: limit}
-}
-
-func (b *boundedFileWriter) Write(p []byte) (int, error) {
-	if b.limit <= 0 {
-		return len(p), nil
-	}
-	remaining := b.limit - b.written
-	if remaining <= 0 {
-		// Cap already hit; emit marker on the first such call, then drop.
-		b.emitTruncationMarker()
-		return len(p), nil
-	}
-	if len(p) <= remaining {
-		n, err := b.w.Write(p)
-		b.written += n
-		if err != nil {
-			return n, fmt.Errorf("write turn log: %w", err)
-		}
-		return n, nil
-	}
-	// Partial write: take what fits, then emit the truncation marker once.
-	n, err := b.w.Write(p[:remaining])
-	b.written += n
-	if err != nil {
-		return n, fmt.Errorf("write turn log: %w", err)
-	}
-	b.emitTruncationMarker()
-	// Report full p consumed so the agent process never sees a short-write
-	// signal. The tail is intentionally dropped.
-	return len(p), nil
-}
-
-// emitTruncationMarker appends the "[entire: log truncated at N bytes]"
-// marker exactly once. Subsequent calls are no-ops, keeping the marker
-// from drowning out the actual truncated content.
-func (b *boundedFileWriter) emitTruncationMarker() {
-	if b.truncated {
-		return
-	}
-	b.truncated = true
-	marker := fmt.Sprintf("\n[entire: log truncated at %d bytes]\n", b.limit)
-	_, _ = b.w.Write([]byte(marker)) //nolint:errcheck // best-effort marker; primary write already succeeded
 }
 
 // hashFile returns the SHA-256 of the file at path as a hex string. Returns
