@@ -565,7 +565,7 @@ func runFresh(ctx context.Context, cmd *cobra.Command, args []string, f runFlags
 		return wrapSilent(silentErr, err)
 	}
 
-	findingsDoc, timelineDoc := resolveDocPaths(worktreeRoot, topic, f.output)
+	findingsDoc, timelineDoc := resolveDocPaths(worktreeRoot, runID, topic, f.output)
 
 	priorContext := ""
 	if deps.PriorEntireContextFn != nil {
@@ -723,21 +723,32 @@ func topicForBootstrap(topic, seedDoc string, issueSeed []byte) string {
 	return topic
 }
 
-// resolveDocPaths returns the absolute findings + timeline paths. When
-// override is set, the findings doc is placed there (with -timeline.md
-// appended for the timeline). Otherwise both go under
-// .entire/investigations/.
-func resolveDocPaths(worktreeRoot, topic, override string) (findings, timeline string) {
-	slug := SlugifyTopic(topic)
+// resolveDocPaths returns the absolute findings + timeline paths for a
+// run. Each run gets its own subdirectory under .entire/investigations/
+// so two runs on the same topic don't share docs.
+//
+// Layout:
+//
+//	.entire/investigations/<run-id>-<slug>/findings.md
+//	.entire/investigations/<run-id>-<slug>/timeline.md
+//
+// When --output is set, that override path is used as the findings doc
+// verbatim (relative paths are anchored at worktreeRoot). The timeline
+// is derived as <findings-without-ext>-timeline.md, parallel to the
+// override semantics from before this change.
+func resolveDocPaths(worktreeRoot, runID, topic, override string) (findings, timeline string) {
 	if strings.TrimSpace(override) != "" {
 		findings = override
 		if !filepath.IsAbs(findings) {
 			findings = filepath.Join(worktreeRoot, findings)
 		}
-	} else {
-		findings = filepath.Join(worktreeRoot, ".entire", "investigations", slug+".md")
+		timeline = strings.TrimSuffix(findings, filepath.Ext(findings)) + "-timeline.md"
+		return findings, timeline
 	}
-	timeline = strings.TrimSuffix(findings, filepath.Ext(findings)) + "-timeline.md"
+	slug := SlugifyTopic(topic)
+	dir := filepath.Join(worktreeRoot, ".entire", "investigations", runID+"-"+slug)
+	findings = filepath.Join(dir, "findings.md")
+	timeline = filepath.Join(dir, "timeline.md")
 	return findings, timeline
 }
 
