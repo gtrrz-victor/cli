@@ -9,14 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
-	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
@@ -42,41 +39,13 @@ func runInvestigateFindings(ctx context.Context, cmd *cobra.Command, silentErr f
 		fmt.Fprintln(cmd.OutOrStdout(), "No local investigations found.")
 		return nil
 	}
-	if interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively() {
-		picked, pickErr := promptForInvestigateManifest(ctx, manifests)
-		if pickErr != nil {
-			return pickErr
-		}
-		printInvestigateManifestDetail(cmd.OutOrStdout(), picked)
-		return nil
-	}
+	// Always print the full list. The previous TTY behaviour opened a
+	// single-select picker that surfaced just one manifest's detail,
+	// which hid the rest of the run history from users who reached for
+	// --findings precisely BECAUSE they wanted to see all runs. The
+	// `fix:` hint per row gives them the next step.
 	printInvestigateFindingsList(cmd.OutOrStdout(), manifests)
 	return nil
-}
-
-// promptForInvestigateManifest renders a single-select picker over
-// manifests sorted newest-first. Returns the selected manifest.
-func promptForInvestigateManifest(ctx context.Context, manifests []LocalManifest) (LocalManifest, error) {
-	sorted := append([]LocalManifest(nil), manifests...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].StartedAt.After(sorted[j].StartedAt)
-	})
-	options := make([]huh.Option[int], len(sorted))
-	for i, m := range sorted {
-		options[i] = huh.NewOption(investigateManifestListLabel(m), i)
-	}
-	picked := 0
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[int]().
-			Title("Select an investigation").
-			Options(options...).
-			Height(min(len(options)+1, 10)).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return LocalManifest{}, fmt.Errorf("investigation picker: %w", err)
-	}
-	return sorted[picked], nil
 }
 
 // PrintInvestigateFindingsListForTest exposes printInvestigateFindingsList
@@ -101,40 +70,6 @@ func printInvestigateFindingsList(w io.Writer, manifests []LocalManifest) {
 			fmt.Fprintf(w, "  timeline: %s\n", m.TimelineDoc)
 		}
 	}
-}
-
-// printInvestigateManifestDetail prints the per-manifest detail view
-// shown after a TTY pick. Includes agent stances and doc paths.
-func printInvestigateManifestDetail(w io.Writer, m LocalManifest) {
-	fmt.Fprintf(w, "Investigation findings from %s\n\n", investigateManifestListLabel(m))
-	if m.FindingsDoc != "" {
-		fmt.Fprintf(w, "Findings: %s\n", m.FindingsDoc)
-	}
-	if m.TimelineDoc != "" {
-		fmt.Fprintf(w, "Timeline: %s\n", m.TimelineDoc)
-	}
-	if len(m.Agents) > 0 {
-		fmt.Fprintf(w, "Agents:   %s\n", strings.Join(m.Agents, ", "))
-	}
-	if m.Outcome != "" {
-		fmt.Fprintf(w, "Outcome:  %s\n", m.Outcome)
-	}
-	if len(m.StancesByAgent) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Last stance per agent:")
-		// Sort for deterministic output.
-		keys := make([]string, 0, len(m.StancesByAgent))
-		for k := range m.StancesByAgent {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(w, "  %s: %s\n", k, m.StancesByAgent[k])
-		}
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "To apply these findings:")
-	fmt.Fprintf(w, "  entire investigate fix %s\n", m.RunID)
 }
 
 // investigateManifestListLabel formats one manifest for picker / list
