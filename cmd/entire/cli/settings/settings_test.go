@@ -1051,6 +1051,118 @@ func TestLoadFromBytes_CustomRedactions(t *testing.T) {
 	}
 }
 
+func TestLoadFromBytes_OPFSettings_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{
+  "redaction": {
+    "openai_privacy_filter": {
+      "enabled": true,
+      "categories": {"private_person": true, "secret": false},
+      "command": "/usr/local/bin/opf",
+      "timeout_seconds": 45
+    }
+  }
+}`)
+	got, err := LoadFromBytes(data)
+	if err != nil {
+		t.Fatalf("LoadFromBytes: %v", err)
+	}
+	opf := got.Redaction.OpenAIPrivacyFilter
+	if opf == nil {
+		t.Fatal("OpenAIPrivacyFilter is nil")
+	}
+	if !opf.Enabled {
+		t.Error("Enabled: want true")
+	}
+	if !opf.Categories["private_person"] {
+		t.Error("Categories[private_person]: want true")
+	}
+	if opf.Categories["secret"] {
+		t.Error("Categories[secret]: want false")
+	}
+	if opf.Command != "/usr/local/bin/opf" {
+		t.Errorf("Command: want /usr/local/bin/opf, got %q", opf.Command)
+	}
+	if opf.TimeoutSeconds != 45 {
+		t.Errorf("TimeoutSeconds: want 45, got %d", opf.TimeoutSeconds)
+	}
+}
+
+// TestLoadFromBytes_OPFSettings_RejectsUnknownCategory pins down that
+// category-name typos fail at parse time. Silent zero-detection of a
+// privacy category is effectively a correctness bug — the user thinks
+// they're protected but they're not. Runs on both load paths.
+func TestLoadFromBytes_OPFSettings_RejectsUnknownCategory(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"known_person", "private_person", false},
+		{"known_email", "private_email", false},
+		{"known_secret", "secret", false},
+		{"typo_peerson", "private_peerson", true},
+		{"unknown", "social_security_number", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"redaction":{"openai_privacy_filter":{"categories":{"` + tc.key + `":true}}}}`
+			_, err := LoadFromBytes([]byte(body))
+			if tc.wantErr && err == nil {
+				t.Errorf("LoadFromBytes(%q): want error, got nil", tc.key)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("LoadFromBytes(%q): want nil, got %v", tc.key, err)
+			}
+		})
+	}
+}
+
+// TestLoadFromBytes_OPFSettings_RejectsOnFailureField pins down that the
+// dropped on_failure field is rejected by DisallowUnknownFields — there is
+// no warn-only fallback masquerading as fail-closed.
+func TestLoadFromBytes_OPFSettings_RejectsOnFailureField(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"redaction":{"openai_privacy_filter":{"enabled":true,"on_failure":"block"}}}`)
+	if _, err := LoadFromBytes(body); err == nil {
+		t.Error("LoadFromBytes with on_failure: want error from DisallowUnknownFields, got nil")
+	}
+}
+
+// TestLoadFromBytes_OPFSettings_Merge verifies override semantics for the
+// merge path (settings.local.json on top of settings.json): present fields
+// override, omitted fields preserve, categories merge per-key.
+func TestLoadFromBytes_OPFSettings_Merge(t *testing.T) {
+	t.Parallel()
+	base := []byte(`{"redaction":{"openai_privacy_filter":{"enabled":true,"categories":{"private_person":true,"secret":false}}}}`)
+	override := []byte(`{"redaction":{"openai_privacy_filter":{"categories":{"secret":true},"command":"/opt/opf"}}}`)
+
+	s, err := LoadFromBytes(base)
+	if err != nil {
+		t.Fatalf("base load: %v", err)
+	}
+	if err := mergeJSON(s, override); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	opf := s.Redaction.OpenAIPrivacyFilter
+	if !opf.Enabled {
+		t.Error("Enabled: want preserved=true")
+	}
+	if !opf.Categories["private_person"] {
+		t.Error("Categories[private_person]: want preserved=true")
+	}
+	if !opf.Categories["secret"] {
+		t.Error("Categories[secret]: want override=true")
+	}
+	if opf.Command != "/opt/opf" {
+		t.Errorf("Command: want override /opt/opf, got %q", opf.Command)
+	}
+}
+
 func TestEntireSettings_ReviewRoundTrip(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{

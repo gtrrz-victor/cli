@@ -20,6 +20,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/redact"
 )
 
 const (
@@ -190,6 +191,10 @@ type RedactionSettings struct {
 	// "[REDACTED_<LABEL>]" token used by PII. Failed regex compilations are
 	// logged via slog.Warn and the rule is skipped.
 	CustomRedactions map[string]string `json:"custom_redactions,omitempty"`
+
+	// OpenAIPrivacyFilter is the optional 8th redaction layer (opt-in).
+	// See docs/security-and-privacy.md.
+	OpenAIPrivacyFilter *OPFSettings `json:"openai_privacy_filter,omitempty"`
 }
 
 // PIISettings configures PII detection categories.
@@ -200,6 +205,21 @@ type PIISettings struct {
 	Phone          *bool             `json:"phone,omitempty"`
 	Address        *bool             `json:"address,omitempty"`
 	CustomPatterns map[string]string `json:"custom_patterns,omitempty"`
+}
+
+// OPFSettings configures the optional OpenAI Privacy Filter detection layer.
+// Disabled by default. Runs only at condensation/export boundaries — see
+// docs/security-and-privacy.md.
+//
+// There is intentionally no "on_failure" field: warn-only is the only mode
+// the runtime currently supports, and DisallowUnknownFields will reject any
+// future user who tries to set it. Adding the field again should land in
+// lockstep with the runtime enforcement.
+type OPFSettings struct {
+	Enabled        bool            `json:"enabled,omitempty"`
+	Categories     map[string]bool `json:"categories,omitempty"`
+	Command        string          `json:"command,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
 }
 
 // GetCommitLinking returns the effective commit linking mode.
@@ -448,6 +468,11 @@ func LoadFromBytes(data []byte) (*EntireSettings, error) {
 	if err := dec.Decode(s); err != nil {
 		return nil, fmt.Errorf("parsing settings: %w", err)
 	}
+	if s.Redaction != nil {
+		if err := validateOPFSettings(s.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -480,6 +505,12 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 	// SummaryGeneration is NOT validated here — individual files may
 	// legitimately contain only a model (provider comes from another file).
 	// Validation happens after merge in Load().
+
+	if settings.Redaction != nil {
+		if err := validateOPFSettings(settings.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
+	}
 
 	return settings, nil
 }
@@ -792,7 +823,68 @@ func mergeRedaction(dst *RedactionSettings, data json.RawMessage) error {
 			}
 		}
 	}
+	if opfRaw, ok := raw["openai_privacy_filter"]; ok {
+		if dst.OpenAIPrivacyFilter == nil {
+			dst.OpenAIPrivacyFilter = &OPFSettings{}
+		}
+		if err := mergeOPFSettings(dst.OpenAIPrivacyFilter, opfRaw); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateOPFSettings rejects unknown category names so typos surface at
+// parse time. Silent zero-detection of a privacy category is effectively
+// a correctness bug — the user thinks they're protected but they're not.
+func validateOPFSettings(opf *OPFSettings) error {
+	if opf == nil {
+		return nil
+	}
+	for name := range opf.Categories {
+		if !redact.IsKnownOPFCategory(name) {
+			return fmt.Errorf("openai_privacy_filter.categories has unknown key %q (see docs/security-and-privacy.md for the supported set)", name)
+		}
+	}
+	return nil
+}
+
+// mergeOPFSettings merges OPF overrides into existing OPFSettings. Only
+// fields present in the override JSON are applied; missing fields preserve
+// the base value.
+func mergeOPFSettings(dst *OPFSettings, data json.RawMessage) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing openai_privacy_filter: %w", err)
+	}
+	if v, ok := raw["enabled"]; ok {
+		if err := json.Unmarshal(v, &dst.Enabled); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.enabled: %w", err)
+		}
+	}
+	if v, ok := raw["categories"]; ok {
+		var cats map[string]bool
+		if err := json.Unmarshal(v, &cats); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.categories: %w", err)
+		}
+		if dst.Categories == nil {
+			dst.Categories = make(map[string]bool, len(cats))
+		}
+		for k, b := range cats {
+			dst.Categories[k] = b
+		}
+	}
+	if v, ok := raw["command"]; ok {
+		if err := json.Unmarshal(v, &dst.Command); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.command: %w", err)
+		}
+	}
+	if v, ok := raw["timeout_seconds"]; ok {
+		if err := json.Unmarshal(v, &dst.TimeoutSeconds); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.timeout_seconds: %w", err)
+		}
+	}
+	return validateOPFSettings(dst)
 }
 
 // mergePIISettings merges PII overrides into existing PIISettings.
