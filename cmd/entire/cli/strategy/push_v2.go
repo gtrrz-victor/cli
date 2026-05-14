@@ -854,7 +854,9 @@ func pushV2Refs(ctx context.Context, target string) {
 			slog.String("error", pendingPublishErr.Error()),
 		)
 		skipped := append([]plumbing.ReferenceName{}, pendingPublicationResult.failedRefs...)
-		skipped = append(skipped, refs...)
+		for _, ref := range refs {
+			skipped = appendUniqueRef(skipped, ref)
+		}
 		if len(skipped) > 0 {
 			verb := "were"
 			if len(skipped) == 1 {
