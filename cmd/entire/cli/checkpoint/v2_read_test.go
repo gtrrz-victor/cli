@@ -250,7 +250,6 @@ func TestV2ReadSessionMetadata_FetchesMissingMetadataBlob(t *testing.T) {
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
 	repoRoot := wt.Filesystem().Root()
-	// No t.Parallel: this verifies a git CLI fallback that resolves from cwd.
 	t.Chdir(repoRoot)
 
 	mainTree := v2MainTree(t, repo)
