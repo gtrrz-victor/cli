@@ -81,7 +81,7 @@ func TestCopyMetadataDir_SkipsSymlinks(t *testing.T) {
 	store := NewGitStore(repo)
 	entries := make(map[string]object.TreeEntry)
 
-	err = store.copyMetadataDir(metadataDir, "checkpoint/", entries)
+	err = store.copyMetadataDir(context.Background(), metadataDir, "checkpoint/", entries)
 	if err != nil {
 		t.Fatalf("copyMetadataDir failed: %v", err)
 	}
@@ -3406,7 +3406,7 @@ func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 	store := NewGitStore(repo)
 	entries := make(map[string]object.TreeEntry)
 
-	if err := store.copyMetadataDir(metadataDir, "cp/", entries); err != nil {
+	if err := store.copyMetadataDir(context.Background(), metadataDir, "cp/", entries); err != nil {
 		t.Fatalf("copyMetadataDir() error = %v", err)
 	}
 

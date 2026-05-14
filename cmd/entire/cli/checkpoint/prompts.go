@@ -1,6 +1,11 @@
 package checkpoint
 
-import "strings"
+import (
+	"context"
+	"strings"
+
+	"github.com/entireio/cli/redact"
+)
 
 // PromptSeparator is the canonical separator used in prompt.txt when multiple
 // prompts are stored in a single file.
@@ -22,4 +27,18 @@ func SplitPromptContent(content string) []string {
 		prompts = prompts[:len(prompts)-1]
 	}
 	return prompts
+}
+
+// redactedJoinedPrompts returns the redacted prompt-blob content for the
+// supplied prompts. When preRedacted is non-empty it is trusted and returned
+// verbatim; otherwise the prompts are joined and run through the full
+// 8-layer pipeline as a safety net. Callers that share the same prompts
+// across multiple checkpoint writes (finalizeAllTurnCheckpoints) should
+// compute the redacted content once and pass it via preRedacted to avoid
+// running OPF repeatedly over identical input.
+func redactedJoinedPrompts(ctx context.Context, prompts []string, preRedacted string) string {
+	if preRedacted != "" {
+		return preRedacted
+	}
+	return redact.StringWithPrivacyFilter(ctx, JoinPrompts(prompts))
 }

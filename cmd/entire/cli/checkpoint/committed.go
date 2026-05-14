@@ -354,7 +354,7 @@ func (s *GitStore) writeStandardCheckpointEntries(ctx context.Context, opts Writ
 
 	// Copy additional metadata files from directory if specified (to session subdirectory)
 	if opts.MetadataDir != "" {
-		if err := s.copyMetadataDir(opts.MetadataDir, sessionPath, entries); err != nil {
+		if err := s.copyMetadataDir(ctx, opts.MetadataDir, sessionPath, entries); err != nil {
 			return fmt.Errorf("failed to copy metadata directory: %w", err)
 		}
 	}
@@ -417,9 +417,12 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 		filePaths.ContentHash = "/" + sessionPath + paths.ContentHashFileName
 	}
 
-	// Write prompts
+	// Write prompts. Uses the full 8-layer pipeline (including OPF) via
+	// redactedJoinedPrompts; the helper trusts opts.PromptsRedactedContent
+	// when present so callers (finalizeAllTurnCheckpoints) that pre-redact
+	// once across multiple checkpoint writes don't pay OPF per checkpoint.
 	if len(opts.Prompts) > 0 {
-		promptContent := redact.String(JoinPrompts(opts.Prompts))
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err
@@ -1400,9 +1403,10 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 		}
 	}
 
-	// Replace prompts (apply redaction as safety net)
+	// Replace prompts (apply redaction as safety net; trusts
+	// opts.PromptsRedactedContent verbatim when set).
 	if len(opts.Prompts) > 0 {
-		promptContent := redact.String(JoinPrompts(opts.Prompts))
+		promptContent := redactedJoinedPrompts(ctx, opts.Prompts, opts.PromptsRedactedContent)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return fmt.Errorf("failed to create prompt blob: %w", err)
@@ -1682,7 +1686,7 @@ func CreateBlobFromContent(repo *git.Repository, content []byte) (plumbing.Hash,
 
 // copyMetadataDir copies all files from a directory to the checkpoint path.
 // Used to include additional metadata files like task checkpoints, subagent transcripts, etc.
-func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[string]object.TreeEntry) error {
+func (s *GitStore) copyMetadataDir(ctx context.Context, metadataDir, basePath string, entries map[string]object.TreeEntry) error {
 	err := filepath.Walk(metadataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -1722,7 +1726,10 @@ func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[str
 		}
 
 		// Create blob from file with secrets redaction
-		blobHash, mode, err := createRedactedBlobFromFile(s.repo, path, relPath)
+		// Committed-checkpoint write — run the full 8-layer pipeline
+		// including OPF. The per-turn temp-write path stays on plain
+		// redactors via the sibling createRedactedBlobFromFile.
+		blobHash, mode, err := createRedactedBlobFromFileWithPrivacyFilter(ctx, s.repo, path, relPath)
 		if err != nil {
 			return fmt.Errorf("failed to create blob for %s: %w", path, err)
 		}
@@ -1743,9 +1750,23 @@ func (s *GitStore) copyMetadataDir(metadataDir, basePath string, entries map[str
 	return nil
 }
 
-// createRedactedBlobFromFile reads a file, applies secrets redaction, and creates a git blob.
-// JSONL files get JSONL-aware redaction; all other files get plain string redaction.
+// createRedactedBlobFromFile reads a file, applies the 7-layer redaction
+// pipeline, and creates a git blob. Used by per-turn temporary-checkpoint
+// writes — the OpenAI Privacy Filter is intentionally NOT run here to
+// keep per-turn latency inside the agent loop's budget.
+// JSONL files get JSONL-aware redaction; all other files get plain byte redaction.
 func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
+	return createRedactedBlobFromFileImpl(context.Background(), repo, filePath, treePath, false)
+}
+
+// createRedactedBlobFromFileWithPrivacyFilter reads a file, applies the full
+// 8-layer pipeline (including the OpenAI Privacy Filter), and creates a git
+// blob. Used by committed-checkpoint writes — slower but more thorough.
+func createRedactedBlobFromFileWithPrivacyFilter(ctx context.Context, repo *git.Repository, filePath, treePath string) (plumbing.Hash, filemode.FileMode, error) {
+	return createRedactedBlobFromFileImpl(ctx, repo, filePath, treePath, true)
+}
+
+func createRedactedBlobFromFileImpl(ctx context.Context, repo *git.Repository, filePath, treePath string, usePrivacyFilter bool) (plumbing.Hash, filemode.FileMode, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to stat file: %w", err)
@@ -1772,22 +1793,43 @@ func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string)
 		return hash, mode, nil
 	}
 
-	if strings.HasSuffix(treePath, ".jsonl") {
-		redacted, jsonlErr := redact.JSONLBytes(content)
-		if jsonlErr != nil {
-			content = redact.Bytes(content)
-		} else {
-			content = redacted.Bytes()
-		}
-	} else {
-		content = redact.Bytes(content)
-	}
+	content = redactBytesForBlob(ctx, content, treePath, usePrivacyFilter)
 
 	hash, err := CreateBlobFromContent(repo, content)
 	if err != nil {
 		return plumbing.ZeroHash, 0, fmt.Errorf("failed to create blob: %w", err)
 	}
 	return hash, mode, nil
+}
+
+// redactBytesForBlob applies the appropriate redaction pipeline to file
+// content for a checkpoint blob. JSONL files get JSONL-aware redaction
+// (falling back to plain byte redaction on parse failure so the regex
+// layers still apply); other files get plain byte redaction.
+// usePrivacyFilter selects the lighter 7-layer pipeline (per-turn temp
+// writes) versus the full 8-layer pipeline including OPF (committed
+// writes).
+func redactBytesForBlob(ctx context.Context, content []byte, treePath string, usePrivacyFilter bool) []byte {
+	if strings.HasSuffix(treePath, ".jsonl") {
+		var (
+			redacted redact.RedactedBytes
+			err      error
+		)
+		if usePrivacyFilter {
+			redacted, err = redact.JSONLBytesWithPrivacyFilter(ctx, content)
+		} else {
+			redacted, err = redact.JSONLBytes(content)
+		}
+		if err == nil {
+			return redacted.Bytes()
+		}
+		// JSONL parse failed — fall through so regex/credential layers
+		// still apply via the plain byte path.
+	}
+	if usePrivacyFilter {
+		return redact.BytesWithPrivacyFilter(ctx, content)
+	}
+	return redact.Bytes(content)
 }
 
 // GetGitAuthorFromRepo retrieves the git user.name and user.email,

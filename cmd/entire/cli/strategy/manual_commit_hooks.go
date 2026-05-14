@@ -2745,8 +2745,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// (attribution, files touched, prompts). Hooks run without user interaction
 	// so there is no retry path — preserving partial metadata is better than
 	// losing everything. Persisting an unredacted transcript would be worse.
+	// Run the full 8-layer pipeline (including OPF when configured) over
+	// the transcript — this is the condensation boundary where bytes are
+	// about to leave the local machine via push to entire/checkpoints/v1.
 	_, redactSpan := perf.Start(logCtx, "redact_transcript")
-	redactedTranscript, redactErr := redact.JSONLBytes(fullTranscript)
+	redactedTranscript, redactErr := redact.JSONLBytesWithPrivacyFilter(logCtx, fullTranscript)
 	redactSpan.End()
 	if redactErr != nil {
 		logging.Warn(logCtx, "finalize: transcript redaction failed, dropping transcript",
@@ -2755,8 +2758,16 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 		redactedTranscript = redact.RedactedBytes{}
 	}
-	for i, p := range prompts {
-		prompts[i] = redact.String(p)
+
+	// Pre-redact joined prompts ONCE so the checkpoint loop reuses the
+	// result instead of each iteration re-running the 8-layer pipeline
+	// (including OPF shell-out) over identical input. The original code
+	// here ran redact.String per prompt, which produced a per-prompt
+	// OPF call once OPF was wired up; pre-joining + one call collapses
+	// that to a single OPF invocation per finalize.
+	var redactedJoinedPromptContent string
+	if len(prompts) > 0 {
+		redactedJoinedPromptContent = redact.StringWithPrivacyFilter(logCtx, checkpoint.JoinPrompts(prompts))
 	}
 
 	store := checkpoint.NewGitStore(repo)
@@ -2810,12 +2821,13 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		}
 
 		updateOpts := checkpoint.UpdateCommittedOptions{
-			CheckpointID:     cpID,
-			SessionID:        state.SessionID,
-			Transcript:       redactedTranscript,
-			Prompts:          prompts,
-			Agent:            state.AgentType,
-			PrecomputedBlobs: precomputed,
+			CheckpointID:           cpID,
+			SessionID:              state.SessionID,
+			Transcript:             redactedTranscript,
+			Prompts:                prompts,
+			PromptsRedactedContent: redactedJoinedPromptContent,
+			Agent:                  state.AgentType,
+			PrecomputedBlobs:       precomputed,
 		}
 
 		// Generate compact transcript for v2 /main
