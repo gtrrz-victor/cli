@@ -916,7 +916,9 @@ func printV2PartialPushResult(w io.Writer, successfulRefs []plumbing.ReferenceNa
 
 func printV2PushFailures(ctx context.Context, target string, successfulRefs []plumbing.ReferenceName, failures []error, pushedContent bool) {
 	printV2PartialPushResult(os.Stderr, successfulRefs, failures)
-	printCheckpointRemoteHint(target)
+	if len(successfulRefs) == 0 {
+		printCheckpointRemoteHint(target)
+	}
 	if pushedContent {
 		printSettingsCommitHint(ctx, target)
 	}
