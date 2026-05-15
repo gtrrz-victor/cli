@@ -2362,6 +2362,66 @@ func TestRunExplainCheckpoint_V2FallsBackToFullWhenCompactMissing(t *testing.T) 
 		"should use raw transcript from /full/current when compact is missing")
 }
 
+func TestRunExplainCheckpoint_FullFallsBackToV1WhenV2FullMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("test"), 0o644))
+	_, err = wt.Add("test.txt")
+	require.NoError(t, err)
+	_, err = wt.Commit("initial commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, ".entire", "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`),
+		0o644,
+	))
+
+	v1Store := checkpoint.NewGitStore(repo)
+	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	cpID := id.MustCheckpointID("e2e3e4e5e6e7")
+	ctx := context.Background()
+
+	rawTranscript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"v1 raw fallback prompt"}]}}` + "\n" +
+		`{"type":"assistant","message":{"content":"v1 raw reply"}}` + "\n")
+	compactTranscript := []byte(`{"v":1,"type":"user","content":[{"text":"v2 compact prompt"}]}` + "\n")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-v1-fallback",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted(rawTranscript),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}))
+	require.NoError(t, v2Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+		CheckpointID:      cpID,
+		SessionID:         "session-v1-fallback",
+		Strategy:          "manual-commit",
+		CompactTranscript: compactTranscript,
+		AuthorName:        "Test",
+		AuthorEmail:       "test@example.com",
+	}))
+
+	var buf, errBuf bytes.Buffer
+	err = runExplainCheckpoint(ctx, &buf, &errBuf, "e2e3e4", false, false, true, false, false, false, false, 0)
+	require.NoError(t, err)
+
+	output := buf.String()
+	require.Contains(t, output, "v1 raw fallback prompt")
+	require.NotContains(t, output, "v2 compact prompt")
+}
+
 func TestRunExplainCheckpoint_V2CompactTranscriptNotUsedForGenerate(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

@@ -37,7 +37,96 @@ func TestResolveCommittedReaderForCheckpoint_UsesV2WhenFound(t *testing.T) {
 	reader, summary, err := ResolveCommittedReaderForCheckpoint(ctx, cpID, v1Store, v2Store, true)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
-	require.IsType(t, &V2GitStore{}, reader)
+
+	content, err := reader.ReadSessionContent(ctx, cpID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "session-v2", content.Metadata.SessionID)
+}
+
+func TestResolveCommittedReaderForCheckpoint_V2ReaderFallsBackToV1RawTranscriptBySessionID(t *testing.T) {
+	t.Parallel()
+
+	repo := initTestRepo(t)
+	v1Store := NewGitStore(repo)
+	v2Store := NewV2GitStore(repo, "origin")
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("121212121212")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-a",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-a"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-b",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-b"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID:      cpID,
+		SessionID:         "session-b",
+		Strategy:          "manual-commit",
+		CompactTranscript: []byte(`{"text":"compact-session-b"}` + "\n"),
+		AuthorName:        "Test",
+		AuthorEmail:       "test@test.com",
+	}))
+
+	reader, summary, err := ResolveCommittedReaderForCheckpoint(ctx, cpID, v1Store, v2Store, true)
+	require.NoError(t, err)
+	require.Len(t, summary.Sessions, 1)
+
+	content, err := reader.ReadSessionContent(ctx, cpID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "session-b", content.Metadata.SessionID)
+	require.Contains(t, string(content.Transcript), "from-v1-session-b")
+	require.NotContains(t, string(content.Transcript), "from-v1-session-a")
+}
+
+func TestResolveRawSessionLogForCheckpoint_FallsBackToV1RawTranscriptByV2SessionID(t *testing.T) {
+	t.Parallel()
+
+	repo := initTestRepo(t)
+	v1Store := NewGitStore(repo)
+	v2Store := NewV2GitStore(repo, "origin")
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("343434343434")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-b",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-b"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-a",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-a"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID:      cpID,
+		SessionID:         "session-b",
+		Strategy:          "manual-commit",
+		CompactTranscript: []byte(`{"text":"compact-session-b"}` + "\n"),
+		AuthorName:        "Test",
+		AuthorEmail:       "test@test.com",
+	}))
+
+	logContent, sessionID, err := ResolveRawSessionLogForCheckpoint(ctx, cpID, v1Store, v2Store, true)
+	require.NoError(t, err)
+	require.Equal(t, "session-b", sessionID)
+	require.Contains(t, string(logContent), "from-v1-session-b")
+	require.NotContains(t, string(logContent), "from-v1-session-a")
 }
 
 func TestResolveCommittedReaderForCheckpoint_FallsBackToV1WhenMissingInV2(t *testing.T) {
