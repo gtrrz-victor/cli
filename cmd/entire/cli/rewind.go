@@ -18,11 +18,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
 
@@ -693,21 +691,13 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 		return "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 
-	v1Store := checkpoint.NewGitStore(repo)
-	var v2Store *checkpoint.V2GitStore
-	preferCheckpointsV2 := settings.IsCheckpointsV2Enabled(ctx)
-	if preferCheckpointsV2 {
-		v2URL, fetchRemoteErr := remote.FetchURL(ctx)
-		if fetchRemoteErr != nil {
-			logging.Debug(ctx, "rewind: using origin for v2 session log fetch remote",
-				slog.String("error", fetchRemoteErr.Error()),
-			)
-			v2URL = ""
-		}
-		v2Store = checkpoint.NewV2GitStore(repo, v2URL)
+	checkpointReader, err := newCommittedCheckpointReader(ctx, repo, committedCheckpointReaderOptions{
+		fetchRemoteLog: "rewind: using origin for v2 session log fetch remote",
+	})
+	if err != nil {
+		return "", fmt.Errorf("prepare checkpoint reader: %w", err)
 	}
-
-	content, returnedSessionID, err := checkpoint.ResolveRawSessionLogForCheckpoint(ctx, cpID, v1Store, v2Store, preferCheckpointsV2)
+	content, returnedSessionID, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, checkpointReader.reader, cpID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get session log: %w", err)
 	}

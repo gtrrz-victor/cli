@@ -631,11 +631,14 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 	}
 
 	var v2Store *cpkg.V2GitStore
-	preferCheckpointsV2 := settings.IsCheckpointsV2Enabled(ctx)
-	if preferCheckpointsV2 {
+	readMode := cpkg.CommittedReadModeForOptions(settings.IsCheckpointsV2Enabled(ctx), settings.CheckpointsVersion(ctx))
+	if readMode != cpkg.CommittedReadV1 {
 		var v2Err error
 		v2Store, v2Err = s.getV2CheckpointStore(ctx)
 		if v2Err != nil {
+			if readMode == cpkg.CommittedReadV2 {
+				return nil, fmt.Errorf("failed to get v2 checkpoint store: %w", v2Err)
+			}
 			logging.Debug(ctx, "failed to get v2 checkpoint store, using v1 only",
 				slog.String("checkpoint_id", string(point.CheckpointID)),
 				slog.String("error", v2Err.Error()),
@@ -643,12 +646,13 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 		}
 	}
 
-	reader, summary, err := cpkg.ResolveCommittedReaderForCheckpoint(ctx, point.CheckpointID, v1Store, v2Store, preferCheckpointsV2)
+	reader, err := cpkg.NewCommittedReader(v1Store, v2Store, readMode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare checkpoint reader: %w", err)
+	}
+	summary, err := cpkg.ReadCommittedCheckpoint(ctx, reader, point.CheckpointID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
-	}
-	if summary == nil {
-		return nil, fmt.Errorf("checkpoint not found: %s", point.CheckpointID)
 	}
 
 	// Get worktree root for agent session directory lookup

@@ -196,7 +196,7 @@ func matchCheckpointPrefixWithRemoteFallback(ctx context.Context, errW io.Writer
 	stop := startSpinner(errW, "Fetching checkpoint metadata from remote")
 	_, _, v1Err := getMetadataTree(ctx)
 	v2OK := false
-	if lookup.preferCheckpointsV2 {
+	if committedCheckpointReadUsesV2(lookup.readMode) {
 		if _, _, v2Err := getV2MetadataTree(ctx); v2Err == nil {
 			v2OK = true
 		}
@@ -259,7 +259,8 @@ func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts exp
 		return err
 	}
 
-	reader, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, cpID, lookup.v1Store, lookup.v2Store, lookup.preferCheckpointsV2)
+	reader := lookup.reader
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, reader, cpID)
 	if err != nil {
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}
@@ -292,6 +293,17 @@ func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts exp
 
 	compact, err := compactReader.ReadSessionCompactTranscript(ctx, cpID, idx)
 	if err != nil {
+		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
+			fmt.Fprintln(errW, "note: compact transcript unavailable, falling back to raw transcript")
+			content, readErr := reader.ReadSessionContent(ctx, cpID, idx)
+			if readErr != nil {
+				return fmt.Errorf("failed to read session content: %w", readErr)
+			}
+			if _, writeErr := w.Write(content.Transcript); writeErr != nil {
+				return fmt.Errorf("failed to write transcript: %w", writeErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("failed to read compact transcript: %w", err)
 	}
 	if _, err := w.Write(compact); err != nil {
@@ -363,7 +375,8 @@ func runExplainCheckpointJSON(ctx context.Context, w, errW io.Writer, opts expla
 		return err
 	}
 
-	reader, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, cpID, lookup.v1Store, lookup.v2Store, lookup.preferCheckpointsV2)
+	reader := lookup.reader
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, reader, cpID)
 	if err != nil {
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}

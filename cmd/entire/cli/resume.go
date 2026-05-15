@@ -910,20 +910,14 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 	if repoErr != nil {
 		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
 	} else {
-		v1Store := checkpoint.NewGitStore(repo)
-		var v2Store *checkpoint.V2GitStore
-		preferCheckpointsV2 := settings.IsCheckpointsV2Enabled(ctx)
-		if preferCheckpointsV2 {
-			v2URL, fetchRemoteErr := remote.FetchURL(ctx)
-			if fetchRemoteErr != nil {
-				logging.Debug(ctx, "resume: using origin for v2 session log fetch remote",
-					slog.String("error", fetchRemoteErr.Error()),
-				)
-				v2URL = ""
-			}
-			v2Store = checkpoint.NewV2GitStore(repo, v2URL)
+		checkpointReader, readerErr := newCommittedCheckpointReader(ctx, repo, committedCheckpointReaderOptions{
+			fetchRemoteLog: "resume: using origin for v2 session log fetch remote",
+		})
+		if readerErr != nil {
+			err = readerErr
+		} else {
+			logContent, _, err = checkpoint.ReadRawSessionLogForCheckpoint(ctx, checkpointReader.reader, checkpointID)
 		}
-		logContent, _, err = checkpoint.ResolveRawSessionLogForCheckpoint(ctx, checkpointID, v1Store, v2Store, preferCheckpointsV2)
 	}
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {

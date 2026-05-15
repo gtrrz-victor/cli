@@ -2538,8 +2538,11 @@ func TestListCommittedForExplain_MergesV1AndV2(t *testing.T) {
 		AuthorEmail:  "t@t.com",
 	}))
 
-	// With v2 preferred: should return both the dual-write AND the v1-only checkpoint.
-	results, err := listCommittedForExplain(ctx, v1Store, v2Store, true)
+	reader, err := checkpoint.NewCommittedReader(v1Store, v2Store, checkpoint.CommittedReadDual)
+	require.NoError(t, err)
+
+	// In dual-read mode: should return both the dual-write AND the v1-only checkpoint.
+	results, err := reader.ListCommitted(ctx)
 	require.NoError(t, err)
 
 	foundIDs := make(map[id.CheckpointID]bool)
@@ -2604,7 +2607,10 @@ func TestListCommittedForExplain_V2Disabled_ReturnsV1Only(t *testing.T) {
 		AuthorEmail:  "t@t.com",
 	}))
 
-	results, err := listCommittedForExplain(ctx, v1Store, v2Store, false)
+	reader, err := checkpoint.NewCommittedReader(v1Store, v2Store, checkpoint.CommittedReadV1)
+	require.NoError(t, err)
+
+	results, err := reader.ListCommitted(ctx)
 	require.NoError(t, err)
 
 	foundIDs := make(map[id.CheckpointID]bool)
