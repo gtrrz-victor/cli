@@ -15,8 +15,8 @@ func newMigrateCmd() *cobra.Command {
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			fmt.Fprintln(cmd.ErrOrStderr(), "v2 has been deprecated.")
-			return NewSilentError(errors.New("v2 has been deprecated"))
+			fmt.Fprintln(cmd.ErrOrStderr(), "Migration to checkpoints v2 has been halted for now.")
+			return NewSilentError(errors.New("Migration to checkpoints v2 has been halted for now."))
 		},
 	}
 }
