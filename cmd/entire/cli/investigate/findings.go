@@ -56,14 +56,21 @@ func PrintInvestigateFindingsListForTest(w io.Writer, manifests []LocalManifest)
 }
 
 // printInvestigateFindingsList renders the non-TTY list view. Each
-// manifest gets a header row plus a "fix" command hint.
+// manifest gets a header row plus a "fix" command hint. When the run's
+// findings have been captured into the manifest (terminal outcome) we
+// print "<captured in manifest>" instead of the now-stale on-disk path
+// so users know the content is still accessible — just not at that
+// path.
 func printInvestigateFindingsList(w io.Writer, manifests []LocalManifest) {
 	fmt.Fprintln(w, "Investigations")
 	fmt.Fprintln(w)
 	for _, m := range manifests {
 		fmt.Fprintln(w, investigateManifestListLabel(m))
 		fmt.Fprintf(w, "  fix:     entire investigate fix %s\n", m.RunID)
-		if m.FindingsDoc != "" {
+		switch {
+		case m.FindingsContent != "":
+			fmt.Fprintln(w, "  findings: <captured in manifest>")
+		case m.FindingsDoc != "":
 			fmt.Fprintf(w, "  findings: %s\n", m.FindingsDoc)
 		}
 	}

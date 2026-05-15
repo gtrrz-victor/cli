@@ -159,6 +159,38 @@ func TestLocalManifestStore_FindByRunID(t *testing.T) {
 	})
 }
 
+func TestLocalManifestStore_FindingsContentRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewLocalManifestStoreWithDir(dir)
+
+	now := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	m := newManifest("abcdef012345", "Why is checkout flaky?", now, "quorum")
+	m.FindingsContent = "# Findings\n\nThe checkout race only fires on macOS.\n"
+
+	if err := store.Write(context.Background(), m); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	got, ok, err := store.FindByRunID(context.Background(), m.RunID)
+	if err != nil {
+		t.Fatalf("FindByRunID: %v", err)
+	}
+	if !ok {
+		t.Fatal("FindByRunID returned ok=false for an existing manifest")
+	}
+	if got.FindingsContent != m.FindingsContent {
+		t.Errorf("FindingsContent = %q, want %q", got.FindingsContent, m.FindingsContent)
+	}
+	// The on-disk path should still be carried alongside the embedded
+	// content — readers may want to display it for context, and runs
+	// that did NOT terminate would store the path with empty content.
+	if got.FindingsDoc != m.FindingsDoc {
+		t.Errorf("FindingsDoc = %q, want %q", got.FindingsDoc, m.FindingsDoc)
+	}
+}
+
 func TestLocalManifestStore_MissingDirReturnsEmpty(t *testing.T) {
 	t.Parallel()
 

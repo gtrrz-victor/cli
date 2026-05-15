@@ -82,3 +82,51 @@ func TestRunInvestigateFindings_PrintsListNonTTY(t *testing.T) {
 		}
 	}
 }
+
+// TestRunInvestigateFindings_PrintsCapturedMarker verifies that
+// manifests whose findings have been embedded into FindingsContent
+// (terminal outcomes) advertise the capture rather than a now-stale
+// file path. Manifests with only a FindingsDoc fall back to printing
+// the path.
+func TestRunInvestigateFindings_PrintsCapturedMarker(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	manifests := []investigate.LocalManifest{
+		{
+			RunID:           "aaaaaaaaaaaa",
+			Topic:           "captured run",
+			Slug:            "captured-run",
+			Agents:          []string{"a"},
+			Outcome:         "quorum",
+			FindingsDoc:     "/stale/path/findings.md",
+			FindingsContent: "# Findings\n\nbody\n",
+			StartedAt:       now,
+			EndedAt:         now,
+		},
+		{
+			RunID:       "bbbbbbbbbbbb",
+			Topic:       "paused run",
+			Slug:        "paused-run",
+			Agents:      []string{"b"},
+			Outcome:     "paused",
+			FindingsDoc: "/live/path/findings.md",
+			StartedAt:   now,
+			EndedAt:     now,
+		},
+	}
+
+	out := &bytes.Buffer{}
+	investigate.PrintInvestigateFindingsListForTest(out, manifests)
+	got := out.String()
+
+	if !strings.Contains(got, "  findings: <captured in manifest>") {
+		t.Errorf("expected captured-marker for terminal run, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  findings: /live/path/findings.md") {
+		t.Errorf("expected file path for paused run, got:\n%s", got)
+	}
+	if strings.Contains(got, "/stale/path/findings.md") {
+		t.Errorf("should NOT print stale path when findings are captured, got:\n%s", got)
+	}
+}

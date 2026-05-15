@@ -806,6 +806,12 @@ func buildProgressSink(ctx context.Context, in LoopInput, out io.Writer) (Progre
 // writeRunManifest builds a LocalManifest from the loop result and
 // persists it. Failures are logged but do not error — the docs themselves
 // are the deliverable.
+//
+// On terminal outcomes (Quorum/Stalled) the manifest captures the final
+// findings.md content into FindingsContent and the per-run directory is
+// removed — the manifest becomes the durable record of the run. On
+// Paused/Cancelled the per-run directory is left in place so `--continue`
+// can pick up where the run left off.
 func writeRunManifest(
 	ctx context.Context,
 	out io.Writer,
@@ -833,36 +839,78 @@ func writeRunManifest(
 	if endedAt.IsZero() {
 		endedAt = time.Now().UTC()
 	}
+
+	// Capture findings into the manifest on terminal outcomes so the
+	// content survives even after we delete the per-run dir. Failure to
+	// read is logged but non-fatal — the manifest still records that
+	// the run happened, just without the findings body. We intentionally
+	// do NOT clean up the per-run dir if the read fails: leaving the
+	// file behind gives the user a chance to recover it manually.
+	terminal := result.Outcome == OutcomeQuorum || result.Outcome == OutcomeStalled
+	findingsContent := ""
+	captured := false
+	if terminal && findingsDoc != "" {
+		data, readErr := os.ReadFile(findingsDoc) //nolint:gosec // path computed from runID + git common dir
+		if readErr != nil {
+			logging.Debug(ctx, "investigate: read findings for manifest capture",
+				slog.String("err", readErr.Error()), slog.String("run_id", runID))
+		} else {
+			findingsContent = string(data)
+			captured = true
+		}
+	}
+
 	m := LocalManifest{
-		RunID:          runID,
-		Topic:          topic,
-		Slug:           SlugifyTopic(topic),
-		StartingSHA:    startingSHA,
-		WorktreePath:   worktreePath,
-		FindingsDoc:    findingsDoc,
-		Agents:         append([]string(nil), agents...),
-		Outcome:        string(result.Outcome),
-		StancesByAgent: stancesByAgent,
-		StartedAt:      startedAt,
-		EndedAt:        endedAt,
+		RunID:           runID,
+		Topic:           topic,
+		Slug:            SlugifyTopic(topic),
+		StartingSHA:     startingSHA,
+		WorktreePath:    worktreePath,
+		FindingsDoc:     findingsDoc,
+		FindingsContent: findingsContent,
+		Agents:          append([]string(nil), agents...),
+		Outcome:         string(result.Outcome),
+		StancesByAgent:  stancesByAgent,
+		StartedAt:       startedAt,
+		EndedAt:         endedAt,
 	}
 	if writeErr := manifestStore.Write(ctx, m); writeErr != nil {
 		logging.Debug(ctx, "investigate: manifest write failed",
 			slog.String("err", writeErr.Error()), slog.String("run_id", runID))
 		return
 	}
+
+	// Clean up the per-run dir only AFTER the manifest write succeeds
+	// and only when we successfully captured the findings body. This
+	// keeps the failure modes safe: a manifest write failure leaves the
+	// per-run dir intact (for retry/inspection), and a read failure
+	// leaves the file on disk so the user can recover it.
+	if terminal && captured && findingsDoc != "" {
+		runDir := filepath.Dir(findingsDoc)
+		if rmErr := os.RemoveAll(runDir); rmErr != nil {
+			logging.Debug(ctx, "investigate: cleanup per-run dir",
+				slog.String("err", rmErr.Error()), slog.String("run_id", runID))
+		}
+	}
+
 	writeInvestigateFooter(out, m)
 }
 
 // writeInvestigateFooter prints the post-run summary + how to run
-// `entire investigate fix`.
+// `entire investigate fix`. When the per-run dir has been cleaned up
+// (terminal outcome with captured findings) the file path is no longer
+// valid, so we report the manifest as the source of truth instead.
 func writeInvestigateFooter(w io.Writer, m LocalManifest) {
 	fmt.Fprintln(w)
 	if m.Outcome != "" {
 		fmt.Fprintf(w, "Outcome: %s\n", m.Outcome)
 	}
 	fmt.Fprintln(w, "Investigation complete.")
-	fmt.Fprintln(w, "Findings: "+m.FindingsDoc)
+	if m.FindingsContent != "" {
+		fmt.Fprintln(w, "Findings: <captured in manifest>")
+	} else if m.FindingsDoc != "" {
+		fmt.Fprintln(w, "Findings: "+m.FindingsDoc)
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "To apply these findings:")
 	fmt.Fprintf(w, "  entire investigate fix %s\n", m.RunID)

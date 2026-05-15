@@ -45,8 +45,18 @@ type LocalManifest struct {
 
 	// FindingsDoc is the absolute path to the findings document the run
 	// produced. May also be a repo-relative path when the caller chose
-	// to record it that way.
+	// to record it that way. The on-disk file is removed for terminal
+	// outcomes (Quorum/Stalled) once FindingsContent has been captured —
+	// the path remains here for resumable runs (Paused/Cancelled) where
+	// the file still lives in the per-run directory.
 	FindingsDoc string `json:"findings_doc,omitempty"`
+
+	// FindingsContent embeds the final findings.md content as of run
+	// end. Populated on terminal outcomes (Quorum/Stalled) so the
+	// findings survive after the per-run directory is cleaned up. Empty
+	// on Paused/Cancelled — those runs are resumable and the file lives
+	// on disk in the per-run directory at FindingsDoc.
+	FindingsContent string `json:"findings_content,omitempty"`
 
 	// Agents is the ordered list of agent names that participated in
 	// the run.

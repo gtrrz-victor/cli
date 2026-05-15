@@ -53,11 +53,19 @@ func setupInvestigateRepo(t *testing.T) string {
 // given. Useful for tests that want to assert flag plumbing without
 // spawning real agents.
 func captureLoopRun() (capture *investigate.LoopInput, fn func(ctx context.Context, in investigate.LoopInput, ldeps investigate.LoopDeps) (investigate.LoopResult, error)) {
+	return captureLoopRunWithOutcome(investigate.OutcomeQuorum)
+}
+
+// captureLoopRunWithOutcome is captureLoopRun parameterised by the
+// terminal outcome the stub returns. Used by the manifest-capture /
+// per-run-dir cleanup tests which need to exercise both terminal
+// (Quorum/Stalled) and resumable (Paused/Cancelled) branches.
+func captureLoopRunWithOutcome(outcome investigate.LoopOutcome) (capture *investigate.LoopInput, fn func(ctx context.Context, in investigate.LoopInput, ldeps investigate.LoopDeps) (investigate.LoopResult, error)) {
 	captured := &investigate.LoopInput{}
 	return captured, func(_ context.Context, in investigate.LoopInput, _ investigate.LoopDeps) (investigate.LoopResult, error) {
 		*captured = in
 		return investigate.LoopResult{
-			Outcome: investigate.OutcomeQuorum,
+			Outcome: outcome,
 			State:   nil,
 		}, nil
 	}
@@ -233,10 +241,13 @@ func TestNewCommand_FindingsBranchListsManifests(t *testing.T) {
 }
 
 // TestNewCommand_FreshRunWritesManifest exercises the end-to-end fresh-run
-// path with a stub LoopRun. Verifies the manifest file is written and the
-// footer hint is printed.
+// path with a stub LoopRun. On the default OutcomeQuorum branch it
+// verifies:
+//   - the manifest file is written and the footer hint is printed
+//   - findings.md content is embedded into the manifest's FindingsContent
+//   - the per-run directory is cleaned up after capture
 func TestNewCommand_FreshRunWritesManifest(t *testing.T) {
-	setupInvestigateRepo(t)
+	tmp := setupInvestigateRepo(t)
 
 	if err := saveInvestigateSettings(&settings.InvestigateConfig{
 		Agents:   []string{"stub-agent"},
@@ -264,6 +275,96 @@ func TestNewCommand_FreshRunWritesManifest(t *testing.T) {
 	// Manifest should mention how to run fix.
 	if !strings.Contains(out.String(), "entire investigate fix") {
 		t.Errorf("expected fix hint in output, got:\n%s", out.String())
+	}
+	// On Quorum the footer should advertise the capture, not a file
+	// path — the file no longer exists.
+	if !strings.Contains(out.String(), "Findings: <captured in manifest>") {
+		t.Errorf("expected footer to advertise captured findings, got:\n%s", out.String())
+	}
+
+	// Manifest should have captured the findings body.
+	manifestStore := investigate.NewLocalManifestStoreWithDir(
+		filepath.Join(tmp, ".git", "entire-investigations", "manifests"),
+	)
+	m, ok, err := manifestStore.FindByRunID(context.Background(), captured.RunID)
+	if err != nil {
+		t.Fatalf("FindByRunID: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest not written for run")
+	}
+	if m.FindingsContent == "" {
+		t.Error("FindingsContent should be populated on Quorum outcome")
+	}
+	if !strings.Contains(m.FindingsContent, "# Investigation: test investigation") {
+		t.Errorf("FindingsContent should embed the scaffold body, got: %q", m.FindingsContent)
+	}
+
+	// Per-run dir should be cleaned up.
+	runDir := filepath.Join(tmp, ".git", "entire-investigations", captured.RunID)
+	if _, statErr := os.Stat(runDir); !os.IsNotExist(statErr) {
+		t.Errorf("per-run dir should be cleaned up on Quorum, but exists: %s (err=%v)", runDir, statErr)
+	}
+}
+
+// TestNewCommand_FreshRunPausedKeepsPerRunDir verifies that resumable
+// outcomes (Paused/Cancelled) leave the per-run directory in place so
+// `entire investigate --continue` has files to read, and the manifest
+// records the path with empty FindingsContent.
+func TestNewCommand_FreshRunPausedKeepsPerRunDir(t *testing.T) {
+	tmp := setupInvestigateRepo(t)
+
+	if err := saveInvestigateSettings(&settings.InvestigateConfig{
+		Agents:   []string{"stub-agent"},
+		MaxTurns: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	captured, runFn := captureLoopRunWithOutcome(investigate.OutcomePaused)
+	deps := newTestDeps(t, []types.AgentName{"stub-agent"}, []string{"stub-agent"})
+	deps.LoopRun = runFn
+
+	cmd := investigate.NewCommand(deps)
+	out := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(errBuf)
+	cmd.SetArgs([]string{"--topic=paused investigation"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v\nstderr: %s", err, errBuf.String())
+	}
+
+	manifestStore := investigate.NewLocalManifestStoreWithDir(
+		filepath.Join(tmp, ".git", "entire-investigations", "manifests"),
+	)
+	m, ok, err := manifestStore.FindByRunID(context.Background(), captured.RunID)
+	if err != nil {
+		t.Fatalf("FindByRunID: %v", err)
+	}
+	if !ok {
+		t.Fatal("manifest not written for paused run")
+	}
+	if m.FindingsContent != "" {
+		t.Errorf("FindingsContent should be empty on Paused, got %q", m.FindingsContent)
+	}
+	if m.FindingsDoc == "" {
+		t.Error("FindingsDoc should still be recorded on Paused")
+	}
+
+	// Per-run dir must remain so --continue can resume.
+	runDir := filepath.Join(tmp, ".git", "entire-investigations", captured.RunID)
+	if _, statErr := os.Stat(runDir); statErr != nil {
+		t.Errorf("per-run dir should remain on Paused, but stat failed: %v", statErr)
+	}
+	if _, statErr := os.Stat(m.FindingsDoc); statErr != nil {
+		t.Errorf("findings.md should remain on Paused, but stat failed: %v", statErr)
+	}
+
+	// Footer should print the file path (file is still there), not the
+	// "captured in manifest" marker.
+	if !strings.Contains(out.String(), "Findings: "+m.FindingsDoc) {
+		t.Errorf("expected footer to print findings path on Paused, got:\n%s", out.String())
 	}
 }
 
