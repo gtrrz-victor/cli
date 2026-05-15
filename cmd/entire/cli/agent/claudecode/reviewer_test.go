@@ -81,8 +81,8 @@ func TestReviewer_ArgvShape(t *testing.T) {
 	}
 	cmd := buildReviewCmd(context.Background(), cfg)
 
-	// Expect: claude -p --permission-mode acceptEdits <prompt>
-	// (the shared spawner adds --permission-mode acceptEdits so writes
+	// Expect: claude -p --permission-mode bypassPermissions <prompt>
+	// (the shared spawner adds --permission-mode bypassPermissions so writes
 	// don't silently fail in non-interactive mode; harmless for review).
 	if len(cmd.Args) < 5 {
 		t.Fatalf("expected at least 5 args, got %d: %v", len(cmd.Args), cmd.Args)
@@ -93,8 +93,8 @@ func TestReviewer_ArgvShape(t *testing.T) {
 	if cmd.Args[1] != "-p" {
 		t.Errorf("Args[1] = %q, want %q", cmd.Args[1], "-p")
 	}
-	if cmd.Args[2] != "--permission-mode" || cmd.Args[3] != "acceptEdits" {
-		t.Errorf("Args[2:4] = %v, want [--permission-mode acceptEdits]", cmd.Args[2:4])
+	if cmd.Args[2] != "--permission-mode" || cmd.Args[3] != "bypassPermissions" {
+		t.Errorf("Args[2:4] = %v, want [--permission-mode bypassPermissions]", cmd.Args[2:4])
 	}
 	// Args[4] is the composed prompt — must be non-empty.
 	if cmd.Args[4] == "" {

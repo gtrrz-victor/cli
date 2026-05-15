@@ -18,14 +18,18 @@ func NewSpawner() spawn.Spawner { return claudeCodeSpawner{} }
 func (claudeCodeSpawner) Name() string { return "claude-code" }
 
 func (claudeCodeSpawner) BuildCmd(ctx context.Context, env []string, prompt string) *exec.Cmd {
-	// --permission-mode acceptEdits enables file writes in non-interactive
-	// mode. Without it, Write/Edit tool calls in `-p` (print) mode are
-	// silently denied because there's no UI to answer the permission
-	// prompt — which breaks `entire investigate` (the agent can't write
-	// the findings/timeline doc) and would break any future shared use
-	// that needs writes. Review doesn't write files in practice, so the
-	// flag is a no-op for that path.
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--permission-mode", "acceptEdits", prompt)
+	// --permission-mode bypassPermissions auto-accepts every tool call.
+	// `-p` (print) mode has no UI to answer permission prompts, so the
+	// default mode silently denies anything that isn't pre-approved —
+	// not just Write/Edit but also Bash (the previous `acceptEdits`
+	// fix only unblocked file writes; `entire investigate` agents still
+	// had their `git`, `grep`, `ls` invocations denied and gave up
+	// without writing pending_turn to state.json). The prompt sent by
+	// the CLI instructs the agent not to run destructive commands, so
+	// we rely on prompt-level discipline rather than tool-level prompts.
+	// Review doesn't issue any tool calls that would otherwise be
+	// blocked, so the flag is a no-op for that path.
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--permission-mode", "bypassPermissions", prompt)
 	cmd.Env = env
 	return cmd
 }

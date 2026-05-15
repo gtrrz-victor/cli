@@ -17,9 +17,9 @@ func TestClaudeCodeSpawner_Name(t *testing.T) {
 
 // TestClaudeCodeSpawner_Argv pins the argv contract:
 //
-//	claude -p --permission-mode acceptEdits <prompt>
+//	claude -p --permission-mode bypassPermissions <prompt>
 //
-// The prompt is the last positional. --permission-mode acceptEdits is
+// The prompt is the last positional. --permission-mode bypassPermissions is
 // required so file writes succeed in non-interactive mode (see
 // spawner.go); stdin is unused.
 func TestClaudeCodeSpawner_Argv(t *testing.T) {
@@ -27,7 +27,7 @@ func TestClaudeCodeSpawner_Argv(t *testing.T) {
 	env := []string{"FOO=bar", "BAZ=qux"}
 	cmd := NewSpawner().BuildCmd(context.Background(), env, "the-prompt")
 
-	wantArgs := []string{"claude", "-p", "--permission-mode", "acceptEdits", "the-prompt"}
+	wantArgs := []string{"claude", "-p", "--permission-mode", "bypassPermissions", "the-prompt"}
 	if !reflect.DeepEqual(cmd.Args, wantArgs) {
 		t.Errorf("Args = %v, want %v", cmd.Args, wantArgs)
 	}
