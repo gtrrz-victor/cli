@@ -442,13 +442,9 @@ func writeReviewContextSettings(t *testing.T, repoRoot string) {
 
 func writeReviewContextClaudeStub(t *testing.T, stubDir string) {
 	t.Helper()
-	// The prompt is always the LAST positional argument. The intervening
-	// flags (e.g. -p, --permission-mode acceptEdits) shift over time, so
-	// capture by iterating rather than indexing.
 	script := `#!/bin/sh
-for arg do prompt="$arg"; done
-printf '%s' "$prompt" > "$ENTIRE_SMOKE_PROMPT_FILE"
-printf 'smoke review ok\n'
+printf '%s' "$2" > "$ENTIRE_SMOKE_PROMPT_FILE"
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":0,"output_tokens":0}}'
 `
 	if err := os.WriteFile(filepath.Join(stubDir, "claude"), []byte(script), 0o700); err != nil {
 		t.Fatalf("write claude stub: %v", err)

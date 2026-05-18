@@ -2,7 +2,7 @@
 //
 // cmd.go provides NewCommand(), the cobra entry point for `entire review`.
 // It routes through the new AgentReviewer / Sink / Run architecture for
-// launchable agents (claude-code, codex, gemini-cli) and falls back to
+// launchable agents (claude-code, codex, gemini) and falls back to
 // RunMarkerFallback for non-launchable agents (cursor, opencode,
 // factoryai-droid, copilot-cli).
 package review
@@ -110,8 +110,9 @@ func NewCommand(deps Deps) *cobra.Command {
 		// review --help` and the command works normally.
 		Hidden: true,
 		Short:  "Run configured review skills against the current branch",
-		Long: `Run the review skills configured in .entire/settings.json against
-the current branch. On first run, an interactive picker writes the config.
+		Long: `Run configured review skills against the current branch. Review
+preferences are loaded from Entire settings and clone-local preferences. On
+first run, an interactive picker writes clone-local preferences.
 
 Labs entry: review is experimental. We are actively refining it based on user
 feedback.
@@ -161,6 +162,22 @@ Subcommands:
 			}
 			if modes > 1 {
 				return errors.New("--edit, --findings, and --fix are mutually exclusive")
+			}
+			// The migration prompt is only relevant for flows that write or
+			// read picker config (--edit and the default review run).
+			// --findings (read-only browsing) and --fix (uses
+			// ReviewFixAgent only) don't interact with the picker, so
+			// prompting in those paths interrupts the user for no reason.
+			if !findings && !fix {
+				if err := maybePromptReviewSettingsMigration(
+					ctx,
+					cmd.OutOrStdout(),
+					cmd.ErrOrStderr(),
+					interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively(),
+					deps.PromptYN,
+				); err != nil {
+					return err
+				}
 			}
 			if edit {
 				_, err := RunReviewConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled)
@@ -216,7 +233,8 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	if err != nil {
 		cmd.SilenceUsage = true
 		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
-		fmt.Fprintln(cmd.ErrOrStderr(), "Fix `.entire/settings.json` and re-run `entire review`.")
+		fmt.Fprintln(cmd.ErrOrStderr(),
+			"Fix your Entire settings or clone-local review preferences and re-run `entire review`.")
 		return silentErr(err)
 	}
 	if s == nil || len(s.Review) == 0 {
@@ -403,6 +421,7 @@ func runSingleAgentPath(
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	runCfg.EnrichSummary = reviewSummaryTokenEnricher(worktreeRoot, headSHA)
 	canPrompt := interactive.CanPromptInteractively()
 	sinks := composeSingleAgentSinks(singleAgentSinkInputs{
 		out:       out,
@@ -587,7 +606,14 @@ func runMultiAgentPath(
 		defer tuiSink.Wait()
 	}
 
-	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{}, sinks)
+	// Multi-agent only wires EnrichAgentRun. The per-agent enricher emits a
+	// synthetic Tokens event as each agent finishes, which the dispatch loop
+	// overwrites onto st.tokens (run_multi.go:168). That value flows into
+	// agentRuns[i].Tokens in the final summary, so a summary-level pass would
+	// redo the same store.List + token hydration once per run.
+	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{
+		EnrichAgentRun: reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
+	}, sinks)
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
 	if waitErr != nil && runCtx.Err() == nil && ctx.Err() == nil {
 		return fmt.Errorf("review run: %w", waitErr)
@@ -684,15 +710,28 @@ func writePostReviewManifest(
 	if summary.Cancelled || len(summary.AgentRuns) == 0 {
 		return
 	}
-	manifest, err := localReviewManifestFromCurrentState(ctx, worktreeRoot, headSHA, summary, aggregateOutput)
+	manifest, states, err := localReviewManifestFromCurrentState(ctx, worktreeRoot, headSHA, summary, aggregateOutput)
 	if err != nil {
 		logging.Debug(ctx, "review manifest not written", slog.String("error", err.Error()))
 		warnManifestNotWritten(out, "could not load session state: "+err.Error())
 		return
 	}
 	if len(manifest.Sources) == 0 {
-		logging.Debug(ctx, "review manifest not written: no matching review sessions")
-		warnManifestNotWritten(out, "review session was not tagged as a review (env-var handshake did not reach the hook)")
+		reason, sentinel := explainEmptyManifest(worktreeRoot, headSHA, summary, states)
+		if sentinel {
+			// Matcher and explainer have drifted — the matcher rejected
+			// every tagged session for a reason none of the explainer's
+			// filters cover. Surface at Warn so this gets noticed without
+			// requiring debug logging.
+			logging.Warn(ctx, "review manifest matcher/explainer drift detected",
+				slog.String("reason", reason),
+				slog.Int("tagged_state_count", len(states)),
+				slog.Int("agent_run_count", len(summary.AgentRuns)))
+		} else {
+			logging.Debug(ctx, "review manifest not written: no matching review sessions",
+				slog.String("reason", reason))
+		}
+		warnManifestNotWritten(out, reason)
 		return
 	}
 	if err := writeLocalReviewManifest(ctx, manifest); err != nil {
@@ -714,6 +753,28 @@ func warnManifestNotWritten(out io.Writer, reason string) {
 	fmt.Fprintf(out, "  Reason: %s\n", reason)
 	fmt.Fprintln(out, "  `entire review --findings` and `entire review --fix` will not see this run.")
 	fmt.Fprintln(out, "  Re-run with `ENTIRE_LOG_LEVEL=debug` for diagnostic detail.")
+}
+
+func reviewSummaryTokenEnricher(worktreeRoot, headSHA string) func(context.Context, reviewtypes.RunSummary) reviewtypes.RunSummary {
+	return func(ctx context.Context, summary reviewtypes.RunSummary) reviewtypes.RunSummary {
+		enriched, err := hydrateReviewSummaryTokensFromCurrentState(ctx, worktreeRoot, headSHA, summary, agent.GetByAgentType)
+		if err != nil {
+			logging.Debug(ctx, "review token hydration skipped", slog.String("error", err.Error()))
+			return summary
+		}
+		return enriched
+	}
+}
+
+func reviewAgentRunTokenEnricher(worktreeRoot, headSHA string) func(context.Context, reviewtypes.AgentRun) reviewtypes.AgentRun {
+	return func(ctx context.Context, run reviewtypes.AgentRun) reviewtypes.AgentRun {
+		enriched, err := hydrateReviewAgentRunTokensFromCurrentState(ctx, worktreeRoot, headSHA, run, agent.GetByAgentType)
+		if err != nil {
+			logging.Debug(ctx, "review agent token hydration skipped", slog.String("error", err.Error()))
+			return run
+		}
+		return enriched
+	}
 }
 
 func composeSingleAgentSinks(in singleAgentSinkInputs) []reviewtypes.Sink {
