@@ -76,6 +76,13 @@ type DualCheckpointReader struct {
 	v1 *GitStore
 }
 
+type v2CheckpointAvailability int
+
+const (
+	v2CheckpointAvailable v2CheckpointAvailability = iota
+	v2CheckpointMissing
+)
+
 func (r *DualCheckpointReader) ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error) {
 	summary, err := r.v2.ReadCommitted(ctx, checkpointID)
 	if err == nil && summary != nil {
@@ -98,17 +105,36 @@ func (r *DualCheckpointReader) ReadSessionContent(ctx context.Context, checkpoin
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
 	}
-	if errors.Is(err, ErrNoTranscript) {
-		fallbackContent, fallbackErr := r.readFallbackSessionContent(ctx, checkpointID, sessionIndex)
-		if fallbackErr == nil {
-			return fallbackContent, nil
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
-		}
-		return nil, fallbackReadError(err, "read v1 fallback session content", fallbackErr)
+	availability, availabilityErr := r.classifyV2CheckpointAvailability(ctx, checkpointID, err)
+	if availabilityErr != nil {
+		return nil, availabilityErr
 	}
-	return r.readV1SessionContentByIndex(ctx, checkpointID, sessionIndex, err)
+
+	if availability == v2CheckpointMissing {
+		return r.readV1SessionContentByIndex(ctx, checkpointID, sessionIndex, err)
+	}
+
+	return r.readV1SessionContentMatchingV2Session(ctx, checkpointID, sessionIndex, err)
+}
+
+func (r *DualCheckpointReader) classifyV2CheckpointAvailability(ctx context.Context, checkpointID id.CheckpointID, v2SessionReadErr error) (v2CheckpointAvailability, error) {
+	if err := ctx.Err(); err != nil {
+		return v2CheckpointMissing, err //nolint:wrapcheck // Propagating context cancellation
+	}
+	if errors.Is(v2SessionReadErr, ErrNoTranscript) {
+		return v2CheckpointAvailable, nil
+	}
+	summary, err := r.v2.ReadCommitted(ctx, checkpointID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return v2CheckpointMissing, ctxErr //nolint:wrapcheck // Propagating context cancellation
+		}
+		return v2CheckpointMissing, errors.Join(v2SessionReadErr, fmt.Errorf("read v2 checkpoint summary: %w", err))
+	}
+	if summary == nil {
+		return v2CheckpointMissing, nil
+	}
+	return v2CheckpointAvailable, nil
 }
 
 func (r *DualCheckpointReader) ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*CommittedMetadata, error) {
@@ -119,7 +145,14 @@ func (r *DualCheckpointReader) ReadSessionMetadata(ctx context.Context, checkpoi
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
 	}
-	return r.readV1SessionMetadataByIndex(ctx, checkpointID, sessionIndex, err)
+	availability, availabilityErr := r.classifyV2CheckpointAvailability(ctx, checkpointID, err)
+	if availabilityErr != nil {
+		return nil, availabilityErr
+	}
+	if availability == v2CheckpointMissing {
+		return r.readV1SessionMetadataByIndex(ctx, checkpointID, sessionIndex, err)
+	}
+	return nil, err
 }
 
 // ReadSessionMetadataAndPrompts is intentionally v2-only because callers pair
@@ -168,18 +201,25 @@ func (r *DualCheckpointReader) ListCommitted(ctx context.Context) ([]CommittedIn
 	return committed, nil
 }
 
-func (r *DualCheckpointReader) readFallbackSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
+func (r *DualCheckpointReader) readV1SessionContentMatchingV2Session(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, v2SessionReadErr error) (*SessionContent, error) {
 	metadata, err := r.v2.ReadSessionMetadata(ctx, checkpointID, sessionIndex)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
 		}
-		return nil, err
+		return nil, fallbackReadError(v2SessionReadErr, "read v2 session metadata for v1 fallback", err)
 	}
 	if metadata == nil || metadata.SessionID == "" {
-		return nil, ErrNoTranscript
+		return nil, fallbackReadError(v2SessionReadErr, "read v2 session metadata for v1 fallback", ErrNoTranscript)
 	}
-	return r.v1.ReadSessionContentByID(ctx, checkpointID, metadata.SessionID)
+	content, fallbackErr := r.v1.ReadSessionContentByID(ctx, checkpointID, metadata.SessionID)
+	if fallbackErr == nil {
+		return content, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	return nil, fallbackReadError(v2SessionReadErr, "read v1 fallback session content", fallbackErr)
 }
 
 func (r *DualCheckpointReader) readV1SessionContentByIndex(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*SessionContent, error) {

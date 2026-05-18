@@ -121,6 +121,59 @@ func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T
 	require.NotContains(t, string(content.Transcript), "from-v1-session-a")
 }
 
+func TestDualCheckpointReader_DoesNotUseIndexFallbackWhenV2CheckpointExists(t *testing.T) {
+	t.Parallel()
+
+	repo := initTestRepo(t)
+	v1Store := NewGitStore(repo)
+	v2Store := NewV2GitStore(repo, "origin")
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("787878787878")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-a",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-a"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-b",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1-session-b"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	v1IndexZero, err := v1Store.ReadSessionContent(ctx, cpID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "session-a", v1IndexZero.Metadata.SessionID)
+
+	require.NoError(t, v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID:      cpID,
+		SessionID:         "session-b",
+		Strategy:          "manual-commit",
+		CompactTranscript: []byte(`{"text":"compact-session-b"}` + "\n"),
+		AuthorName:        "Test",
+		AuthorEmail:       "test@test.com",
+	}))
+	removeV2MainSessionTree(t, repo, cpID)
+
+	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
+	require.NoError(t, err)
+
+	content, err := reader.ReadSessionContent(ctx, cpID, 0)
+	require.Nil(t, content)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrCheckpointNotFound)
+
+	metadata, err := reader.ReadSessionMetadata(ctx, cpID, 0)
+	require.Nil(t, metadata)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrCheckpointNotFound)
+}
+
 func TestDualCheckpointReader_ReadSessionContentReturnsV2AndFallbackErrors(t *testing.T) {
 	t.Parallel()
 
@@ -421,7 +474,7 @@ func TestReadRawSessionLogForCheckpoint_PrefersV1WhenV2Disabled(t *testing.T) {
 	require.Contains(t, string(logContent), "from-v1")
 }
 
-func TestCommittedReader_FallsBackToV1WhenV2Malformed(t *testing.T) {
+func TestCommittedReader_DoesNotUseIndexFallbackWhenV2Malformed(t *testing.T) {
 	t.Parallel()
 
 	repo := initTestRepo(t)
@@ -451,15 +504,15 @@ func TestCommittedReader_FallsBackToV1WhenV2Malformed(t *testing.T) {
 	}))
 	corruptV2MainMetadata(t, repo, cpID)
 
-	// Should fall back to v1 instead of propagating the v2 parse error.
 	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
 	require.NoError(t, err)
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
 	content, err := reader.ReadSessionContent(ctx, cpID, 0)
-	require.NoError(t, err)
-	require.Equal(t, "session-v1", content.Metadata.SessionID)
+	require.Nil(t, content)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read v2 checkpoint summary")
 }
 
 // corruptV2MainMetadata replaces the v2 /main ref tree with one containing
@@ -497,6 +550,50 @@ func corruptV2MainMetadata(t *testing.T, repo *git.Repository, cpID id.Checkpoin
 
 	commitHash, err := CreateCommit(context.Background(), repo, rootTreeHash, parentHash,
 		"corrupt metadata for test", "Test", "test@test.com")
+	require.NoError(t, err)
+
+	require.NoError(t, repo.Storer.SetReference(
+		plumbing.NewHashReference(refName, commitHash)))
+}
+
+func removeV2MainSessionTree(t *testing.T, repo *git.Repository, cpID id.CheckpointID) {
+	t.Helper()
+
+	refName := plumbing.ReferenceName(paths.V2MainRefName)
+	ref, err := repo.Storer.Reference(refName)
+	require.NoError(t, err)
+	parentHash := ref.Hash()
+
+	parentCommit, err := repo.CommitObject(parentHash)
+	require.NoError(t, err)
+	rootTree, err := parentCommit.Tree()
+	require.NoError(t, err)
+
+	cpTree, err := rootTree.Tree(cpID.Path())
+	require.NoError(t, err)
+	metadataFile, err := cpTree.File(paths.MetadataFileName)
+	require.NoError(t, err)
+
+	parts := strings.SplitN(cpID.Path(), "/", 2)
+	require.Len(t, parts, 2)
+
+	cpTreeHash, err := storeTree(repo, []object.TreeEntry{
+		{Name: paths.MetadataFileName, Mode: filemode.Regular, Hash: metadataFile.Hash},
+	})
+	require.NoError(t, err)
+
+	shardTreeHash, err := storeTree(repo, []object.TreeEntry{
+		{Name: parts[1], Mode: filemode.Dir, Hash: cpTreeHash},
+	})
+	require.NoError(t, err)
+
+	rootTreeHash, err := storeTree(repo, []object.TreeEntry{
+		{Name: parts[0], Mode: filemode.Dir, Hash: shardTreeHash},
+	})
+	require.NoError(t, err)
+
+	commitHash, err := CreateCommit(context.Background(), repo, rootTreeHash, parentHash,
+		"remove v2 session tree for test", "Test", "test@test.com")
 	require.NoError(t, err)
 
 	require.NoError(t, repo.Storer.SetReference(
