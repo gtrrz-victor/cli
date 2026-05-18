@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Pi coding agent integration is now internal ([#1170](https://github.com/entireio/cli/pull/1170), [#1173](https://github.com/entireio/cli/pull/1173))
 - User-defined redaction rules and rule packs ([#1076](https://github.com/entireio/cli/pull/1076))
-- Codex post-tool-use hook support + and updated hooks handling ([#1155](https://github.com/entireio/cli/pull/1155))
+- Codex post-tool-use hook support and updated hook handling ([#1155](https://github.com/entireio/cli/pull/1155))
 - `entire review` streams agent events live via JSONL output modes ([#1192](https://github.com/entireio/cli/pull/1192))
 - CodeQL workflow scanning GitHub Actions on fork-safe PRs ([#1176](https://github.com/entireio/cli/pull/1176))
 - First-time contributors guide ([#1189](https://github.com/entireio/cli/pull/1189))
