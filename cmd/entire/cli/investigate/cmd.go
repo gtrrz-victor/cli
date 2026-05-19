@@ -137,25 +137,6 @@ Subcommands:
 			if err := validateFlags(args, flags); err != nil {
 				return err
 			}
-			prompt := deps.PromptYN
-			// When tests inject a PromptYN stub, treat it as a usable prompt
-			// regardless of TTY detection (cmd output may be io.Discard).
-			// In production, prompt is nil → use realPromptYN and gate on
-			// TTY + interactive capability.
-			canPrompt := prompt != nil
-			if prompt == nil {
-				prompt = realPromptYN
-				canPrompt = interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively()
-			}
-			if err := maybePromptInvestigateSettingsMigration(
-				ctx,
-				cmd.OutOrStdout(),
-				cmd.ErrOrStderr(),
-				canPrompt,
-				prompt,
-			); err != nil {
-				return err
-			}
 			return runInvestigate(ctx, cmd, args, flags, deps)
 		},
 	}
