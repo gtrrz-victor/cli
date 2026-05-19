@@ -1060,6 +1060,37 @@ func (s *GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpoint
 	return result, nil
 }
 
+func (s *GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err //nolint:wrapcheck // Propagating context cancellation
+	}
+
+	ft, err := s.getFetchingTree(ctx)
+	if err != nil {
+		return "", ErrCheckpointNotFound
+	}
+
+	checkpointTree, err := ft.Tree(checkpointID.Path())
+	if err != nil {
+		return "", ErrCheckpointNotFound
+	}
+
+	sessionTree, err := checkpointTree.Tree(strconv.Itoa(sessionIndex))
+	if err != nil {
+		return "", fmt.Errorf("%w: session %d not found: %w", ErrCheckpointNotFound, sessionIndex, err)
+	}
+
+	file, err := sessionTree.File(paths.PromptFileName)
+	if err != nil {
+		return "", nil //nolint:nilerr // Missing prompt.txt means no recorded prompts.
+	}
+	content, err := file.Contents()
+	if err != nil {
+		return "", nil //nolint:nilerr // Keep committed prompt reads best-effort.
+	}
+	return content, nil
+}
+
 // ReadSessionContent reads the actual content for a specific session within a checkpoint.
 // sessionIndex is 0-based (0 for first session, 1 for second, etc.).
 // Returns the session's metadata, transcript, prompts, and context.

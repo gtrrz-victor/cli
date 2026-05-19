@@ -2182,11 +2182,11 @@ func readLatestCommittedSessionPrompt(ctx context.Context, store checkpoint.Comm
 		return ""
 	}
 	for i := sessionCount - 1; i >= 0; i-- {
-		content, err := store.ReadSessionMetadataAndPrompts(ctx, cpID, i)
+		prompts, err := store.ReadSessionPrompts(ctx, cpID, i)
 		if err != nil {
 			continue
 		}
-		if prompt := strategy.ExtractFirstPrompt(content.Prompts); prompt != "" {
+		if prompt := strategy.ExtractFirstPrompt(prompts); prompt != "" {
 			return prompt
 		}
 	}

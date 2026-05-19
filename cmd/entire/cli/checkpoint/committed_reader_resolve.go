@@ -29,6 +29,7 @@ type CommittedListReader interface {
 	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*CommittedMetadata, error)
 	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
+	ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error)
 }
 
 // CommittedStore provides read/list access plus committed checkpoint metadata updates.
@@ -230,6 +231,33 @@ func (r *DualCheckpointReader) ReadSessionMetadataAndPrompts(ctx context.Context
 		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
 	}
 	return nil, fallbackReadError(err, "read v1 session metadata and prompts", fallbackErr)
+}
+
+func (r *DualCheckpointReader) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
+	prompts, err := r.v2.ReadSessionPrompts(ctx, checkpointID, sessionIndex)
+	if err == nil {
+		return prompts, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	if errors.Is(err, ErrCheckpointNotFound) {
+		v2CheckpointExists, existsErr := r.v2CheckpointExists(ctx, checkpointID)
+		if existsErr != nil {
+			return "", existsErr
+		}
+		if v2CheckpointExists {
+			return "", err
+		}
+	}
+	prompts, fallbackErr := r.v1.ReadSessionPrompts(ctx, checkpointID, sessionIndex)
+	if fallbackErr == nil {
+		return prompts, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	return "", fallbackReadError(err, "read v1 session prompts", fallbackErr)
 }
 
 func (r *DualCheckpointReader) ReadSessionCompactTranscript(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) ([]byte, error) {

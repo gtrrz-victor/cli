@@ -238,6 +238,27 @@ func (s *V2GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpoi
 	return result, nil
 }
 
+func (s *V2GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
+	sessionTree, err := s.sessionTreeFromMain(ctx, checkpointID, sessionIndex)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr //nolint:wrapcheck // Propagating context cancellation
+		}
+		return "", ErrCheckpointNotFound
+	}
+
+	sessionFT := s.wrapWithFetcher(ctx, sessionTree)
+	file, err := sessionFT.File(paths.PromptFileName)
+	if err != nil {
+		return "", nil //nolint:nilerr // Missing prompt.txt means no recorded prompts.
+	}
+	content, err := file.Contents()
+	if err != nil {
+		return "", nil //nolint:nilerr // Keep committed prompt reads best-effort.
+	}
+	return content, nil
+}
+
 // ReadSessionContent reads a session's metadata and prompts from the v2 /main ref,
 // and the raw transcript (raw_transcript) from /full/* refs (current + archived generations).
 // This is the v2 equivalent of GitStore.ReadSessionContent — it reads the raw agent

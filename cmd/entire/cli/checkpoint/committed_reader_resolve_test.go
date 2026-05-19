@@ -55,6 +55,52 @@ func TestCommittedReadModeForAvailability(t *testing.T) {
 	require.Equal(t, committedReadV2, resolveCommittedReadMode(false, 2, true))
 }
 
+func TestReadSessionPromptsUsesPromptOnlyReader(t *testing.T) {
+	t.Parallel()
+
+	reader := &promptOnlyReaderStub{prompt: "prompt without metadata"}
+	prompt, err := reader.ReadSessionPrompts(context.Background(), id.MustCheckpointID("343434343434"), 0)
+	require.NoError(t, err)
+	require.Equal(t, "prompt without metadata", prompt)
+	require.Equal(t, 1, reader.promptOnlyReads)
+	require.Zero(t, reader.metadataAndPromptReads)
+}
+
+type promptOnlyReaderStub struct {
+	prompt                 string
+	promptErr              error
+	promptOnlyReads        int
+	metadataAndPromptReads int
+}
+
+var _ CommittedListReader = (*promptOnlyReaderStub)(nil)
+
+func (s *promptOnlyReaderStub) ReadCommitted(context.Context, id.CheckpointID) (*CheckpointSummary, error) {
+	return nil, ErrCheckpointNotFound
+}
+
+func (s *promptOnlyReaderStub) ReadSessionContent(context.Context, id.CheckpointID, int) (*SessionContent, error) {
+	return nil, ErrCheckpointNotFound
+}
+
+func (s *promptOnlyReaderStub) ListCommitted(context.Context) ([]CommittedInfo, error) {
+	return nil, nil
+}
+
+func (s *promptOnlyReaderStub) ReadSessionMetadata(context.Context, id.CheckpointID, int) (*CommittedMetadata, error) {
+	return nil, ErrCheckpointNotFound
+}
+
+func (s *promptOnlyReaderStub) ReadSessionMetadataAndPrompts(context.Context, id.CheckpointID, int) (*SessionContent, error) {
+	s.metadataAndPromptReads++
+	return &SessionContent{Prompts: "fallback metadata prompt"}, nil
+}
+
+func (s *promptOnlyReaderStub) ReadSessionPrompts(context.Context, id.CheckpointID, int) (string, error) {
+	s.promptOnlyReads++
+	return s.prompt, s.promptErr
+}
+
 func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T) {
 	t.Parallel()
 
