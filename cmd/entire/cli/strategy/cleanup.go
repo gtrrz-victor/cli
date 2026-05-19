@@ -127,6 +127,77 @@ func ListShadowBranches(ctx context.Context) ([]string, error) {
 	return shadowBranches, nil
 }
 
+// CleanupPushedShadowBranches deletes shadow branches whose sessions
+// have all ended cleanly (no active session referencing them, no
+// pending turn-checkpoints awaiting finalization). Intended to be
+// called only after a successful push so the caller knows any
+// condensed checkpoint data already reached the remote.
+//
+// Returns the count of branches deleted. Failures (e.g., one branch
+// fails to delete due to a stale lock) are logged but don't abort
+// the operation — remaining branches are still attempted.
+//
+// Safety properties:
+//   - Skips any shadow branch referenced by a session with EndedAt
+//     == nil (still active).
+//   - Skips any shadow branch whose session has TurnCheckpointIDs
+//     pending (mid-finalize race window).
+//   - Multiple sessions can share the same shadow branch (same base
+//     commit + worktree); ALL must satisfy the criteria above.
+//   - Shadow branches with no associated session state are deleted
+//     (no session to lose data from).
+func CleanupPushedShadowBranches(ctx context.Context) (int, error) {
+	branches, err := ListShadowBranches(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list shadow branches: %w", err)
+	}
+	if len(branches) == 0 {
+		return 0, nil
+	}
+
+	states, err := ListSessionStates(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list session states: %w", err)
+	}
+
+	// Build a set of shadow branch names that must be preserved
+	// because at least one session still depends on them.
+	protected := map[string]bool{}
+	for _, s := range states {
+		if s.EndedAt != nil && len(s.TurnCheckpointIDs) == 0 {
+			continue // safe — session ended cleanly and finalized
+		}
+		shadow := getShadowBranchNameForCommit(s.BaseCommit, s.WorktreeID)
+		protected[shadow] = true
+	}
+
+	var toDelete []string
+	for _, b := range branches {
+		if !protected[b] {
+			toDelete = append(toDelete, b)
+		}
+	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	deleted, failed, delErr := DeleteShadowBranches(ctx, toDelete)
+	if delErr != nil {
+		// DeleteShadowBranches signature returns an error for future
+		// extensibility but currently always returns nil; log defensively.
+		logging.Warn(ctx, "shadow branch deletion reported error",
+			slog.String("error", delErr.Error()),
+		)
+	}
+	if len(failed) > 0 {
+		logging.Warn(ctx, "some shadow branches failed to delete during post-push cleanup",
+			slog.Int("failed_count", len(failed)),
+			slog.Int("deleted_count", len(deleted)),
+		)
+	}
+	return len(deleted), nil
+}
+
 // DeleteShadowBranches deletes the specified branches from the repository.
 // Returns two slices: successfully deleted branches and branches that failed to delete.
 // Individual branch deletion failures do not stop the operation - all branches are attempted.

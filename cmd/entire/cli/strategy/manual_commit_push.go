@@ -94,13 +94,30 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		// problem doesn't break the user's git push of their actual work.
 		// (OPF failures above are the exception — they're privacy-critical.)
 		_, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoints_branch")
-		if pushErr := pushBranchIfNeeded(ctx, ps.pushTarget(), paths.MetadataBranchName); pushErr != nil {
+		pushErr := pushBranchIfNeeded(ctx, ps.pushTarget(), paths.MetadataBranchName)
+		if pushErr != nil {
 			pushCheckpointsSpan.RecordError(pushErr)
 			logging.Warn(ctx, "checkpoint branch push failed; user push continues",
 				slog.String("error", pushErr.Error()),
 			)
 		}
 		pushCheckpointsSpan.End()
+
+		// Post-push cleanup: only when the v1 push succeeded, so we
+		// know the condensed checkpoint data is on the remote. Failures
+		// here are non-fatal — shadow branches just accumulate until
+		// `entire clean` or the next successful push.
+		if pushErr == nil {
+			if deleted, cleanupErr := CleanupPushedShadowBranches(ctx); cleanupErr != nil {
+				logging.Warn(ctx, "post-push shadow branch cleanup failed",
+					slog.String("error", cleanupErr.Error()),
+				)
+			} else if deleted > 0 {
+				logging.Info(ctx, "cleaned up vestigial shadow branches",
+					slog.Int("count", deleted),
+				)
+			}
+		}
 	}
 
 	// Push v2 refs when enabled.

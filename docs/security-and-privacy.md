@@ -189,7 +189,7 @@ Three places retain content that OPF *didn't* redact, with different lifetimes. 
 | Location | Redaction level | Lifetime | Reaches remote? |
 |---|---|---|---|
 | `.entire/<session>.jsonl` | **None — raw** | Until session is deleted (managed by the agent) | No |
-| Shadow branch `entire/<commit>-<worktree>` | 7-layer | Until session is condensed (and post-push cleanup, if enabled) | No |
+| Shadow branch `entire/<commit>-<worktree>` | 7-layer | Auto-deleted after the next successful push (only when its session has ended cleanly) | No |
 | Unreachable git objects after pre-push rewrite | 7-layer | Until `git gc --prune` (default `gc.pruneExpire` is 2 weeks) | No |
 | Reflog `git reflog show entire/checkpoints/v1` | 7-layer tips | Default `gc.reflogExpire` is 90 days | No |
 | `<remote>/entire/checkpoints/v1` | 8-layer (after OPF rewrite) | Until you delete the branch on the remote | Yes |
