@@ -45,10 +45,9 @@ var (
 	isSummaryProviderCLIAvailable    = agent.IsSummaryCLIAvailable
 )
 
-// listCheckpoints returns all checkpoints from the metadata branch.
-// Uses checkpoint.GitStore.ListCommitted() for reading from entire/checkpoints/v1.
+// listCheckpoints returns all checkpoints from committed checkpoint storage.
 func (s *ManualCommitStrategy) listCheckpoints(ctx context.Context) ([]CheckpointInfo, error) {
-	store, err := s.getCheckpointStore()
+	store, err := s.committedCheckpointStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get checkpoint store: %w", err)
 	}
@@ -58,35 +57,21 @@ func (s *ManualCommitStrategy) listCheckpoints(ctx context.Context) ([]Checkpoin
 		return nil, fmt.Errorf("failed to list committed checkpoints: %w", err)
 	}
 
-	// Convert from checkpoint.CommittedInfo to strategy.CheckpointInfo
-	result := make([]CheckpointInfo, 0, len(committed))
-	for _, c := range committed {
-		result = append(result, CheckpointInfo{
-			CheckpointID:     c.CheckpointID,
-			SessionID:        c.SessionID,
-			CreatedAt:        c.CreatedAt,
-			CheckpointsCount: c.CheckpointsCount,
-			FilesTouched:     c.FilesTouched,
-			Agent:            c.Agent,
-			IsTask:           c.IsTask,
-			ToolUseID:        c.ToolUseID,
-			SessionCount:     c.SessionCount,
-			SessionIDs:       c.SessionIDs,
-		})
-	}
-
-	return result, nil
+	return checkpointInfosFromCommitted(committed), nil
 }
 
 // getCheckpointLog returns the transcript for a specific checkpoint ID.
-// Uses checkpoint.GitStore.ReadCommitted() for reading from entire/checkpoints/v1.
 func (s *ManualCommitStrategy) getCheckpointLog(ctx context.Context, checkpointID id.CheckpointID) ([]byte, error) {
-	store, err := s.getCheckpointStore()
+	store, err := s.committedCheckpointStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get checkpoint store: %w", err)
 	}
 
-	content, err := store.ReadLatestSessionContent(ctx, checkpointID)
+	summary, err := cpkg.ReadCommittedCheckpoint(ctx, store, checkpointID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
+	}
+	content, err := cpkg.ReadLatestSessionContent(ctx, store, checkpointID, summary)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}

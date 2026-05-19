@@ -7,9 +7,12 @@ import (
 	"log/slog"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 
+	git "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
@@ -26,52 +29,94 @@ type CommittedListReader interface {
 	CommittedReader
 	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*CommittedMetadata, error)
+	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 }
 
-type CommittedReadMode int
+// CommittedStore provides read/list access plus committed checkpoint metadata updates.
+// NewCommittedReader returns this abstraction so callers do not need to know which
+// backing checkpoint format was selected.
+type CommittedStore interface {
+	CommittedListReader
+	UpdateSummary(ctx context.Context, checkpointID id.CheckpointID, summary *Summary) error
+	GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error)
+}
+
+type committedReadMode int
 
 const (
-	CommittedReadV1 CommittedReadMode = iota
-	CommittedReadDual
-	CommittedReadV2
+	committedReadV1 committedReadMode = iota
+	committedReadDual
+	committedReadV2
 )
 
-func CommittedReadModeForOptions(checkpointsV2Enabled bool, checkpointsVersion int) CommittedReadMode {
-	if checkpointsVersion == 2 {
-		return CommittedReadV2
-	}
-	if checkpointsV2Enabled {
-		return CommittedReadDual
-	}
-	return CommittedReadV1
+// CommittedReaderOptions configures NewCommittedReader.
+type CommittedReaderOptions struct {
+	BlobFetcher    BlobFetchFunc
+	FetchRemoteLog string
 }
 
-func NewCommittedReader(v1Store *GitStore, v2Store *V2GitStore, mode CommittedReadMode) (CommittedListReader, error) { //nolint:ireturn // Factory selects among v1, v2, and dual reader implementations.
+//nolint:ireturn // Factory selects among v1, v2, and dual store implementations.
+func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) {
+	if repo == nil {
+		return nil, errors.New("git repository is required")
+	}
+
+	v1Store := NewGitStore(repo)
+	if opts.BlobFetcher != nil {
+		v1Store.SetBlobFetcher(opts.BlobFetcher)
+	}
+
+	mode := resolveCommittedReadMode(
+		settings.IsCheckpointsV2Enabled(ctx),
+		settings.CheckpointsVersion(ctx),
+		hasLocalV2MainRef(repo),
+	)
+
+	var v2Store *V2GitStore
+	if mode != committedReadV1 {
+		v2URL, err := remote.FetchURL(ctx)
+		if err != nil {
+			message := opts.FetchRemoteLog
+			if message == "" {
+				message = "checkpoint reader: using origin for v2 store fetch remote"
+			}
+			logging.Debug(ctx, message, slog.String("error", err.Error()))
+			v2URL = ""
+		}
+		v2Store = NewV2GitStore(repo, v2URL)
+		if opts.BlobFetcher != nil {
+			v2Store.SetBlobFetcher(opts.BlobFetcher)
+		}
+	}
+
 	switch mode {
-	case CommittedReadV2:
-		if v2Store == nil {
-			return nil, errors.New("v2 committed checkpoint reader unavailable")
-		}
+	case committedReadV2:
 		return v2Store, nil
-	case CommittedReadDual:
-		switch {
-		case v2Store == nil && v1Store == nil:
-			return nil, errors.New("committed checkpoint reader unavailable")
-		case v2Store == nil:
-			return v1Store, nil
-		case v1Store == nil:
-			return v2Store, nil
-		default:
-			return &DualCheckpointReader{v2: v2Store, v1: v1Store}, nil
-		}
-	case CommittedReadV1:
-		if v1Store == nil {
-			return nil, errors.New("v1 committed checkpoint reader unavailable")
-		}
+	case committedReadDual:
+		return &DualCheckpointReader{v2: v2Store, v1: v1Store}, nil
+	case committedReadV1:
 		return v1Store, nil
 	default:
 		return nil, fmt.Errorf("unknown committed checkpoint read mode: %d", mode)
 	}
+}
+
+func resolveCommittedReadMode(checkpointsV2Enabled bool, checkpointsVersion int, localV2MainRef bool) committedReadMode {
+	if checkpointsVersion == 2 {
+		return committedReadV2
+	}
+	if checkpointsV2Enabled || localV2MainRef {
+		return committedReadDual
+	}
+	return committedReadV1
+}
+
+func hasLocalV2MainRef(repo *git.Repository) bool {
+	if repo == nil {
+		return false
+	}
+	_, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
+	return err == nil
 }
 
 type DualCheckpointReader struct {
@@ -143,11 +188,25 @@ func (r *DualCheckpointReader) ReadSessionMetadata(ctx context.Context, checkpoi
 	return r.readSingleV1SessionMetadata(ctx, checkpointID, sessionIndex, err)
 }
 
-// ReadSessionMetadataAndPrompts is intentionally v2-only because callers pair
-// this metadata with the v2 compact transcript. Returning v1 raw content here
-// would bypass the checkpoint transcript offset handling in ReadSessionContent.
 func (r *DualCheckpointReader) ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
-	return r.v2.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
+	content, err := r.v2.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
+	if err == nil {
+		return content, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	if errors.Is(err, ErrCheckpointNotFound) {
+		v2CheckpointExists, existsErr := r.v2CheckpointExists(ctx, checkpointID)
+		if existsErr != nil {
+			return nil, existsErr
+		}
+		if v2CheckpointExists {
+			return r.readSingleV1SessionMetadataAndPrompts(ctx, checkpointID, sessionIndex, err)
+		}
+		return r.readV1SessionMetadataAndPromptsByIndex(ctx, checkpointID, sessionIndex, err)
+	}
+	return r.readSingleV1SessionMetadataAndPrompts(ctx, checkpointID, sessionIndex, err)
 }
 
 func (r *DualCheckpointReader) ReadSessionCompactTranscript(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) ([]byte, error) {
@@ -187,6 +246,39 @@ func (r *DualCheckpointReader) ListCommitted(ctx context.Context) ([]CommittedIn
 		}
 	}
 	return committed, nil
+}
+
+func (r *DualCheckpointReader) UpdateSummary(ctx context.Context, checkpointID id.CheckpointID, summary *Summary) error {
+	err := r.v2.UpdateSummary(ctx, checkpointID, summary)
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	if !errors.Is(err, ErrCheckpointNotFound) {
+		return fmt.Errorf("update v2 checkpoint summary: %w", err)
+	}
+	fallbackErr := r.v1.UpdateSummary(ctx, checkpointID, summary)
+	if fallbackErr == nil {
+		return nil
+	}
+	return fallbackReadError(err, "update v1 checkpoint summary", fallbackErr)
+}
+
+func (r *DualCheckpointReader) GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error) {
+	author, err := r.v2.GetCheckpointAuthor(ctx, checkpointID)
+	if err == nil && (author.Name != "" || author.Email != "") {
+		return author, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Author{}, ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	v1Author, v1Err := r.v1.GetCheckpointAuthor(ctx, checkpointID)
+	if v1Err == nil {
+		return v1Author, nil
+	}
+	return Author{}, fallbackReadError(err, "read v1 checkpoint author", v1Err)
 }
 
 func (r *DualCheckpointReader) v2CheckpointExists(ctx context.Context, checkpointID id.CheckpointID) (bool, error) {
@@ -250,6 +342,24 @@ func (r *DualCheckpointReader) readSingleV1SessionMetadata(ctx context.Context, 
 		return nil, err
 	}
 	return r.readV1SessionMetadataByIndex(ctx, checkpointID, sessionIndex, originalErr)
+}
+
+func (r *DualCheckpointReader) readSingleV1SessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*SessionContent, error) {
+	if err := r.requireSingleV1Session(ctx, checkpointID, sessionIndex, originalErr); err != nil {
+		return nil, err
+	}
+	return r.readV1SessionMetadataAndPromptsByIndex(ctx, checkpointID, sessionIndex, originalErr)
+}
+
+func (r *DualCheckpointReader) readV1SessionMetadataAndPromptsByIndex(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*SessionContent, error) {
+	content, err := r.v1.ReadSessionMetadataAndPrompts(ctx, checkpointID, sessionIndex)
+	if err == nil {
+		return content, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr //nolint:wrapcheck // Propagating context cancellation
+	}
+	return nil, fallbackReadError(originalErr, "read v1 session metadata and prompts", err)
 }
 
 func (r *DualCheckpointReader) readV1SessionMetadataByIndex(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, originalErr error) (*CommittedMetadata, error) {

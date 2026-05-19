@@ -34,8 +34,7 @@ func TestCommittedReader_UsesV2WhenFound(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
@@ -45,33 +44,15 @@ func TestCommittedReader_UsesV2WhenFound(t *testing.T) {
 	require.Equal(t, "session-v2", content.Metadata.SessionID)
 }
 
-func TestNewCommittedReader_SelectsMode(t *testing.T) {
+func TestCommittedReadModeForAvailability(t *testing.T) {
 	t.Parallel()
 
-	repo := initTestRepo(t)
-	v1Store := NewGitStore(repo)
-	v2Store := NewV2GitStore(repo, "origin")
-
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadV1)
-	require.NoError(t, err)
-	require.IsType(t, &GitStore{}, reader)
-
-	reader, err = NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
-	require.IsType(t, &DualCheckpointReader{}, reader)
-
-	reader, err = NewCommittedReader(v1Store, v2Store, CommittedReadV2)
-	require.NoError(t, err)
-	require.IsType(t, &V2GitStore{}, reader)
-}
-
-func TestCommittedReadModeForOptions(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, CommittedReadV1, CommittedReadModeForOptions(false, 1))
-	require.Equal(t, CommittedReadDual, CommittedReadModeForOptions(true, 1))
-	require.Equal(t, CommittedReadV2, CommittedReadModeForOptions(true, 2))
-	require.Equal(t, CommittedReadV2, CommittedReadModeForOptions(false, 2))
+	require.Equal(t, committedReadV1, resolveCommittedReadMode(false, 1, false))
+	require.Equal(t, committedReadDual, resolveCommittedReadMode(true, 1, false))
+	require.Equal(t, committedReadV2, resolveCommittedReadMode(true, 2, false))
+	require.Equal(t, committedReadV2, resolveCommittedReadMode(false, 2, false))
+	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 1, true))
+	require.Equal(t, committedReadV2, resolveCommittedReadMode(false, 2, true))
 }
 
 func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T) {
@@ -108,8 +89,7 @@ func TestDualCheckpointReader_FallsBackToV1RawTranscriptBySessionID(t *testing.T
 		AuthorEmail:       "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.Len(t, summary.Sessions, 1)
@@ -160,8 +140,7 @@ func TestDualCheckpointReader_DoesNotUseIndexFallbackWhenV2CheckpointExists(t *t
 	}))
 	removeV2MainSessionTree(t, repo, cpID)
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 
 	content, err := reader.ReadSessionContent(ctx, cpID, 0)
 	require.Nil(t, content)
@@ -192,8 +171,7 @@ func TestDualCheckpointReader_ReadSessionContentReturnsV2AndFallbackErrors(t *te
 		AuthorEmail:       "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 
 	content, err := reader.ReadSessionContent(ctx, cpID, 0)
 	require.Nil(t, content)
@@ -237,8 +215,7 @@ func TestReadRawSessionLogForCheckpoint_FallsBackToV1RawTranscriptByV2SessionID(
 		AuthorEmail:       "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	logContent, sessionID, err := ReadRawSessionLogForCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.Equal(t, "session-b", sessionID)
@@ -264,8 +241,7 @@ func TestCommittedReader_FallsBackToV1WhenMissingInV2(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
@@ -302,8 +278,7 @@ func TestCommittedReader_PrefersV1WhenV2Disabled(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadV1)
-	require.NoError(t, err)
+	reader := v1Store
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.NotNil(t, summary)
@@ -328,8 +303,7 @@ func TestReadRawSessionLogForCheckpoint_UsesV2WhenFound(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	logContent, sessionID, err := ReadRawSessionLogForCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.Equal(t, "session-v2", sessionID)
@@ -373,8 +347,7 @@ func TestDualCheckpointReader_ListCommittedMergesV2AndV1(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 
 	results, err := reader.ListCommitted(ctx)
 	require.NoError(t, err)
@@ -405,8 +378,7 @@ func TestCommittedReadV2DoesNotFallBackToV1(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadV2)
-	require.NoError(t, err)
+	reader := v2Store
 
 	summary, err := reader.ReadCommitted(ctx, cpID)
 	require.NoError(t, err)
@@ -431,8 +403,7 @@ func TestReadRawSessionLogForCheckpoint_FallsBackToV1WhenMissingInV2(t *testing.
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	logContent, sessionID, err := ReadRawSessionLogForCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.Equal(t, "session-v1", sessionID)
@@ -466,8 +437,7 @@ func TestReadRawSessionLogForCheckpoint_PrefersV1WhenV2Disabled(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	}))
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadV1)
-	require.NoError(t, err)
+	reader := v1Store
 	logContent, sessionID, err := ReadRawSessionLogForCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.Equal(t, "session-v1", sessionID)
@@ -512,8 +482,7 @@ func TestCommittedReader_DoesNotUseIndexFallbackWhenV2Malformed(t *testing.T) {
 	}))
 	corruptV2MainMetadata(t, repo, cpID)
 
-	reader, err := NewCommittedReader(v1Store, v2Store, CommittedReadDual)
-	require.NoError(t, err)
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
 	summary, err := ReadCommittedCheckpoint(ctx, reader, cpID)
 	require.NoError(t, err)
 	require.NotNil(t, summary)

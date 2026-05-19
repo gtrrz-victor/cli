@@ -92,41 +92,7 @@ func (s *V2GitStore) ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 			return nil
 		}
 
-		info := CommittedInfo{CheckpointID: checkpointID}
-
-		if metadataFile, fileErr := checkpointTree.File(paths.MetadataFileName); fileErr == nil {
-			if content, contentErr := metadataFile.Contents(); contentErr == nil {
-				var summary CheckpointSummary
-				if unmarshalErr := json.Unmarshal([]byte(content), &summary); unmarshalErr != nil {
-					logging.Debug(ctx, "v2 ListCommitted: skipping malformed metadata",
-						slog.String("checkpoint_id", checkpointID.String()),
-						slog.String("error", unmarshalErr.Error()))
-				} else {
-					info.CheckpointsCount = summary.CheckpointsCount
-					info.FilesTouched = summary.FilesTouched
-					info.SessionCount = len(summary.Sessions)
-
-					if len(summary.Sessions) > 0 {
-						latestIndex := len(summary.Sessions) - 1
-						latestDir := strconv.Itoa(latestIndex)
-						if sessionTree, treeErr := checkpointTree.Tree(latestDir); treeErr == nil {
-							if sessionMetadataFile, smErr := sessionTree.File(paths.MetadataFileName); smErr == nil {
-								if sessionContent, scErr := sessionMetadataFile.Contents(); scErr == nil {
-									var sessionMetadata CommittedMetadata
-									if json.Unmarshal([]byte(sessionContent), &sessionMetadata) == nil {
-										info.Agent = sessionMetadata.Agent
-										info.SessionID = sessionMetadata.SessionID
-										info.CreatedAt = sessionMetadata.CreatedAt
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		checkpoints = append(checkpoints, info)
+		checkpoints = append(checkpoints, readCommittedInfoFromCheckpointTree(checkpointID, checkpointTree))
 		return nil
 	})
 

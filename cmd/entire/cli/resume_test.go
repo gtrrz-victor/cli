@@ -517,29 +517,88 @@ func TestResolveLatestCheckpoint(t *testing.T) {
 	// Pass checkpoint IDs in reverse chronological order (newest first),
 	// simulating git CLI squash merge trailer order.
 	reverseOrderIDs := []id.CheckpointID{cpID3, cpID2, cpID1}
-	latest, tree, _, err := resolveLatestCheckpoint(context.Background(), reverseOrderIDs)
+	latest, err := resolveLatestCheckpoint(context.Background(), reverseOrderIDs)
 	if err != nil {
 		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
 	}
 
 	// Should return the newest checkpoint regardless of input order
-	if latest.String() != cpID3.String() {
-		t.Errorf("resolveLatestCheckpoint() = %s, want newest %s", latest, cpID3)
-	}
-
-	// Should return a non-nil tree for reuse
-	if tree == nil {
-		t.Error("resolveLatestCheckpoint() returned nil tree")
+	if latest.CheckpointID.String() != cpID3.String() {
+		t.Errorf("resolveLatestCheckpoint() = %s, want newest %s", latest.CheckpointID, cpID3)
 	}
 
 	// Also verify with chronological order
 	chronologicalIDs := []id.CheckpointID{cpID1, cpID2, cpID3}
-	latest2, _, _, err := resolveLatestCheckpoint(context.Background(), chronologicalIDs)
+	latest2, err := resolveLatestCheckpoint(context.Background(), chronologicalIDs)
 	if err != nil {
 		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
 	}
-	if latest2.String() != cpID3.String() {
-		t.Errorf("resolveLatestCheckpoint() = %s, want newest %s", latest2, cpID3)
+	if latest2.CheckpointID.String() != cpID3.String() {
+		t.Errorf("resolveLatestCheckpoint() = %s, want newest %s", latest2.CheckpointID, cpID3)
+	}
+}
+
+func TestResolveLatestCheckpointUsesLocalV2WhenSettingsDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+	cpID := id.MustCheckpointID("dd11ee22ff33")
+	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	if err := v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-v2-local",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"from v2"}]}}` + "\n")),
+		Prompts:      []string{"Use local v2 data"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	latest, err := resolveLatestCheckpoint(context.Background(), []id.CheckpointID{cpID})
+	if err != nil {
+		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
+	}
+	if latest.CheckpointID != cpID {
+		t.Errorf("resolveLatestCheckpoint() = %s, want %s", latest.CheckpointID, cpID)
+	}
+}
+
+func TestResolveLatestCheckpointFallsBackToV1WhenLocalV2MissesCheckpoint(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	v2Store := checkpoint.NewV2GitStore(repo, "origin")
+	if err := v2Store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID: id.MustCheckpointID("dd11ee22ff33"),
+		SessionID:    "session-v2-other",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"from v2"}]}}` + "\n")),
+		Prompts:      []string{"Use local v2 data"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	targetID := createCheckpointOnMetadataBranchFull(
+		t,
+		repo,
+		"session-v1-target",
+		id.MustCheckpointID("aa11bb22cc33"),
+		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC),
+	)
+
+	latest, err := resolveLatestCheckpoint(context.Background(), []id.CheckpointID{targetID})
+	if err != nil {
+		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
+	}
+	if latest.CheckpointID != targetID {
+		t.Errorf("resolveLatestCheckpoint() = %s, want %s", latest.CheckpointID, targetID)
 	}
 }
 
