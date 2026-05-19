@@ -187,6 +187,8 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	checkpointID := result.checkpointIDs[0]
 	var metadata *strategy.CheckpointInfo
 
+	promoteRemoteTrackingMetadataBranch(ctx, repo)
+
 	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
 		BlobFetcher: FetchBlobsByHash,
 	})
@@ -791,9 +793,42 @@ func checkRemoteMetadata(ctx context.Context, w, errW io.Writer, checkpointID id
 
 	// Fall back to origin's remote-tracking branch
 	if remoteTree, treeErr := strategy.GetRemoteMetadataBranchTree(repo); treeErr == nil {
-		if metadata, err := tryReadCheckpointFromTree(ctx, remoteTree, repo, checkpointID); err == nil {
+		metadata, err := tryReadCheckpointFromTree(ctx, remoteTree, repo, checkpointID)
+		if err == nil {
 			return resumeSession(ctx, w, errW, metadata, false)
 		}
+		logging.Debug(logCtx, "remote-tracking metadata tree read failed",
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		logging.Debug(logCtx, "remote-tracking metadata branch not available",
+			slog.String("error", treeErr.Error()),
+		)
+	}
+
+	if fetchErr := FetchMetadataBranch(ctx); fetchErr == nil {
+		freshRepo, freshErr := openRepository(ctx)
+		if freshErr != nil {
+			logging.Debug(logCtx, "origin metadata fetch succeeded but repository reopen failed",
+				slog.String("error", freshErr.Error()),
+			)
+		} else if metadataTree, treeErr := strategy.GetMetadataBranchTree(freshRepo); treeErr != nil {
+			logging.Debug(logCtx, "origin metadata fetch succeeded but local branch read failed",
+				slog.String("error", treeErr.Error()),
+			)
+		} else if metadata, err := tryReadCheckpointFromTree(ctx, metadataTree, freshRepo, checkpointID); err != nil {
+			logging.Debug(logCtx, "origin metadata fetch succeeded but checkpoint metadata read failed",
+				slog.String("checkpoint_id", checkpointID.String()),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			return resumeSession(ctx, w, errW, metadata, false)
+		}
+	} else {
+		logging.Debug(logCtx, "origin metadata fetch failed",
+			slog.String("error", fetchErr.Error()),
+		)
 	}
 
 	// Nothing worked — print helpful error message
@@ -810,6 +845,24 @@ func checkRemoteMetadata(ctx context.Context, w, errW io.Writer, checkpointID id
 		fmt.Fprintf(errW, "  git fetch origin entire/checkpoints/v1:entire/checkpoints/v1\n")
 	}
 	return nil
+}
+
+func promoteRemoteTrackingMetadataBranch(ctx context.Context, repo *git.Repository) {
+	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	if _, err := repo.Reference(localRefName, true); err == nil {
+		return
+	}
+
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), true)
+	if err != nil {
+		return
+	}
+
+	if err := strategy.SafelyAdvanceLocalRef(ctx, repo, localRefName, remoteRef.Hash()); err != nil {
+		logging.Debug(ctx, "failed to promote remote-tracking metadata branch",
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // tryReadCheckpointFromTree attempts to read checkpoint metadata from a metadata tree.
