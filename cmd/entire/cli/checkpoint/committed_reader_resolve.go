@@ -54,7 +54,6 @@ type CommittedReaderOptions struct {
 	BlobFetcher BlobFetchFunc
 }
 
-//nolint:ireturn // Factory selects among v1, v2, and dual store implementations.
 func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is required")
@@ -65,11 +64,13 @@ func NewCommittedReader(ctx context.Context, repo *git.Repository, opts Committe
 		v1Store.SetBlobFetcher(opts.BlobFetcher)
 	}
 
-	mode := resolveCommittedReadMode(
-		settings.IsCheckpointsV2Enabled(ctx),
-		settings.CheckpointsVersion(ctx),
-		hasLocalV2MainRef(repo),
-	)
+	v2Enabled := settings.IsCheckpointsV2Enabled(ctx)
+	version := settings.CheckpointsVersion(ctx)
+	localV2MainRef := false
+	if version != 2 && !v2Enabled {
+		localV2MainRef = hasLocalV2MainRef(repo)
+	}
+	mode := resolveCommittedReadMode(v2Enabled, version, localV2MainRef)
 
 	var v2Store *V2GitStore
 	if mode != committedReadV1 {
@@ -410,13 +411,18 @@ func (r *DualCheckpointReader) readV1SessionMetadataAndPromptsByID(ctx context.C
 		return nil, originalErr
 	}
 	for i := range len(summary.Sessions) {
-		content, readErr := r.v1.ReadSessionMetadataAndPrompts(ctx, checkpointID, i)
+		metadata, readErr := r.v1.ReadSessionMetadata(ctx, checkpointID, i)
 		if readErr != nil {
 			continue
 		}
-		if content != nil && content.Metadata.SessionID == sessionID {
-			return content, nil
+		if metadata == nil || metadata.SessionID != sessionID {
+			continue
 		}
+		prompts, promptsErr := r.v1.ReadSessionPrompts(ctx, checkpointID, i)
+		if promptsErr != nil {
+			return nil, fallbackReadError(originalErr, "read v1 fallback session prompts", promptsErr)
+		}
+		return &SessionContent{Metadata: *metadata, Prompts: prompts}, nil
 	}
 	return nil, fallbackReadError(originalErr, "read v1 fallback session metadata and prompts", fmt.Errorf("session %q not found in checkpoint %s", sessionID, checkpointID))
 }

@@ -229,15 +229,13 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 			if localErr == nil {
 				metadata = localInfo
 			} else {
-				err = errors.Join(storeErr, localErr)
+				metadataErr := errors.Join(storeErr, localErr)
+				logging.Warn(logCtx, "checkpoint metadata read failed, checking remote",
+					slog.String("checkpoint_id", checkpointID.String()),
+					slog.String("error", metadataErr.Error()),
+				)
+				return checkRemoteMetadata(ctx, w, errW, checkpointID)
 			}
-		}
-		if err != nil {
-			logging.Warn(logCtx, "checkpoint metadata read failed, checking remote",
-				slog.String("checkpoint_id", checkpointID.String()),
-				slog.String("error", err.Error()),
-			)
-			return checkRemoteMetadata(ctx, w, errW, checkpointID)
 		}
 	}
 
