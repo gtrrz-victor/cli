@@ -25,11 +25,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 )
 
@@ -42,8 +40,8 @@ import (
 // display the appropriate flag's prose around it.
 //
 // Single lookup: read the Entire-Checkpoint trailer from HEAD, then resolve
-// the CheckpointSummary via ResolveCommittedReaderForCheckpoint so v2-enabled
-// repos also work (v1 alone would miss v2-written summaries).
+// the CheckpointSummary through the configured committed checkpoint reader
+// (v1 + v2 stores per the user's checkpoints-v2 setting).
 func headCheckpointFlags(ctx context.Context) (hasReview, hasInvestigation bool, info string) {
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
@@ -66,14 +64,14 @@ func headCheckpointFlags(ctx context.Context) (hasReview, hasInvestigation bool,
 		logging.Debug(ctx, "head checkpoint flags: open repository", slog.String("error", err.Error()))
 		return false, false, ""
 	}
-	v1Store := checkpoint.NewGitStore(repo)
-	v2URL, urlErr := remote.FetchURL(ctx)
-	if urlErr != nil {
-		logging.Debug(ctx, "head checkpoint flags: no configured v2 fetch remote", slog.String("error", urlErr.Error()))
-		v2URL = ""
+	checkpointReader, readerErr := newCommittedCheckpointReader(ctx, repo, committedCheckpointReaderOptions{
+		fetchRemoteLog: "head checkpoint flags: no configured v2 fetch remote",
+	})
+	if readerErr != nil {
+		logging.Debug(ctx, "head checkpoint flags: checkpoint reader unavailable", slog.String("error", readerErr.Error()))
+		return false, false, ""
 	}
-	v2Store := checkpoint.NewV2GitStore(repo, v2URL)
-	_, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, cpID, v1Store, v2Store, settings.IsCheckpointsV2Enabled(ctx))
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, checkpointReader.reader, cpID)
 	if err != nil || summary == nil {
 		logging.Debug(ctx, "head checkpoint flags: resolve checkpoint summary",
 			slog.String("checkpoint_id", cpID.String()),
