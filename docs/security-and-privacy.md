@@ -149,7 +149,9 @@ Ctrl-C to cancel the push.
 
 Non-interactive contexts (CI, scripted pipes with no TTY) skip the prompt and run OPF automatically when enabled, printing `→ OpenAI Privacy Filter: scanning checkpoints…` to stderr so the wait isn't silent. Set `ENTIRE_OPF=no` to skip OPF in those contexts without disabling the feature globally.
 
-There is no `on_failure` setting; warn-on-failure is the only mode supported today. If OPF is not on PATH, fails to start, or times out, Entire prints a one-line `× OpenAI Privacy Filter unavailable …` notice and continues with the seven built-in layers. A per-process circuit breaker disables OPF for the remainder of the invocation after the first failure, so a broken install costs one warning rather than one timeout per redaction call.
+OPF failures at push time are **fail-closed**: if OPF is not on PATH, fails to start, or times out during the pre-push rewrite, the per-process circuit breaker trips and the rewrite aborts the push with `OPF runtime failed; aborting push`. Nothing reaches the remote. The intent is that "the user enabled OPF" means "I do not want unredacted content leaving this machine" — falling back to 7-layer silently on the push path would violate that contract. Fix the install or set `ENTIRE_OPF=no` for a one-off push.
+
+(The circuit breaker is per-process, so a broken install costs one warning instead of one timeout per blob — but the push still aborts.)
 
 Cost note: each shell-out loads the OPF model (~1.5B parameters on CPU). The pre-push rewrite batches all eligible leaf strings into a single inference pass per scope (transcript + joined prompts), so a typical real-world push adds ~25–30s of OPF inference rather than the multi-minute cost a per-leaf flow would incur. Per-commit latency is unaffected because OPF doesn't run at commit time.
 

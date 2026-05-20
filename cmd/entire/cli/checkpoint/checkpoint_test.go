@@ -4362,3 +4362,42 @@ func TestCheckpointSummary_HasReview(t *testing.T) {
 		t.Errorf(`expected zero-value summary to omit "has_review" key, got %s`, string(bZero))
 	}
 }
+
+// TestRedactBlobBytes_JSONMetadata pins the .json branch of RedactBlobBytes:
+// checkpoint metadata files (metadata.json) carry free-form fields like
+// Summary.Intent and ReviewPrompt that previously bypassed redaction because
+// the dispatcher only matched .jsonl. The PR 1236 fix extended the JSON-aware
+// branch to .json. We assert via a low-entropy AWS-key shaped secret (catches
+// the 7-layer pipeline) so the test stays deterministic without the OPF binary.
+func TestRedactBlobBytes_JSONMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := CommittedMetadata{
+		Kind:         "agent_review",
+		ReviewPrompt: "credential leak: key=AKIAYRWQG5EJLPZLBYNP",
+		Summary: &Summary{
+			Intent: "leak: key=AKIAYRWQG5EJLPZLBYNP",
+		},
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got := RedactBlobBytes(context.Background(), b, "metadata.json", false)
+	if strings.Contains(string(got), "AKIAYRWQG5EJLPZLBYNP") {
+		t.Errorf("expected AWS key redacted in metadata.json blob, got %s", string(got))
+	}
+	if !strings.Contains(string(got), "REDACTED") {
+		t.Errorf("expected REDACTED placeholder in metadata.json blob, got %s", string(got))
+	}
+	// JSON structure must survive — Kind is not redactable content, so it
+	// should round-trip through the JSON-aware redactor.
+	var roundTripped map[string]any
+	if err := json.Unmarshal(got, &roundTripped); err != nil {
+		t.Errorf("redacted .json blob must remain valid JSON, got parse err %v (content: %s)", err, string(got))
+	}
+	if roundTripped["kind"] != "agent_review" {
+		t.Errorf(`expected "kind":"agent_review" preserved after redaction, got %v`, roundTripped["kind"])
+	}
+}

@@ -12,12 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/redact"
@@ -25,6 +28,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
 )
 
 // V1DivergedError: local entire/checkpoints/v1 has commits that aren't
@@ -116,7 +120,7 @@ func resolveBootstrapLimit() int {
 // Returns one of {V1DivergedError, BootstrapTooLargeError,
 // V1RefMovedError, OPFRuntimeFailedError} for privacy-critical
 // failures — the pre-push hook propagates these so git push aborts.
-func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, remoteName string) (plumbing.Hash, error) {
+func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, target string) (plumbing.Hash, error) {
 	localTip, err := readV1Tip(repo, plumbing.NewBranchReferenceName(paths.MetadataBranchName))
 	if err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("read local v1: %w", err)
@@ -124,7 +128,7 @@ func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, remoteN
 	if localTip.IsZero() {
 		return plumbing.ZeroHash, nil // no checkpoints yet
 	}
-	remoteTip, err := readV1Tip(repo, plumbing.NewRemoteReferenceName(remoteName, paths.MetadataBranchName))
+	remoteTip, err := resolveRemoteV1Tip(ctx, repo, target)
 	if err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("read remote v1: %w", err)
 	}
@@ -183,6 +187,48 @@ func readV1Tip(repo *git.Repository, refName plumbing.ReferenceName) (plumbing.H
 	return ref.Hash(), nil
 }
 
+// opfRewriteFetchTmpRef is the temp ref used to stage the URL-fetched
+// remote v1 tip during OPF rewrite. Cleaned up at the end of each
+// resolveRemoteV1Tip call so the tracking is invisible to the user.
+const opfRewriteFetchTmpRef = FetchTmpRefPrefix + "opf-rewrite-v1"
+
+// resolveRemoteV1Tip returns the hash of the remote's
+// entire/checkpoints/v1 tip.
+//
+// When target is a remote name (e.g., "origin"), looks up the local
+// tracking ref `refs/remotes/<target>/entire/checkpoints/v1`. When
+// target is a URL (checkpoint_remote configured), fetches the v1 ref
+// from the URL into a temporary local ref so the rewrite can see what's
+// already on the remote — otherwise every push would re-redact the
+// entire history as a "bootstrap" since URL-based remotes have no
+// tracking refs locally.
+//
+// Returns ZeroHash with no error when the remote has no v1 yet (genuine
+// bootstrap case). Fetch failures fall back to ZeroHash + a warning
+// log; the rewrite then treats the push as bootstrap rather than
+// blocking the user on a transient network issue.
+func resolveRemoteV1Tip(ctx context.Context, repo *git.Repository, target string) (plumbing.Hash, error) {
+	if !remote.IsURL(target) {
+		return readV1Tip(repo, plumbing.NewRemoteReferenceName(target, paths.MetadataBranchName))
+	}
+	srcRef := "refs/heads/" + paths.MetadataBranchName
+	if err := fetchURLIntoTmpRef(ctx, target, srcRef, opfRewriteFetchTmpRef, "v1 for OPF rewrite", true); err != nil {
+		logging.Warn(ctx, "OPF rewrite: failed to fetch remote v1 from URL; treating push as bootstrap",
+			slog.String("error", err.Error()),
+		)
+		return plumbing.ZeroHash, nil
+	}
+	defer removeTempRefs(repo, []plumbing.ReferenceName{plumbing.ReferenceName(opfRewriteFetchTmpRef)})
+	ref, err := repo.Reference(plumbing.ReferenceName(opfRewriteFetchTmpRef), true)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return plumbing.ZeroHash, nil
+		}
+		return plumbing.ZeroHash, fmt.Errorf("resolve fetched v1 ref: %w", err)
+	}
+	return ref.Hash(), nil
+}
+
 // computeMergeBase returns the merge-base commit hash. Multi-base
 // (criss-cross) and unrelated-histories both return ZeroHash —
 // caller treats those as diverged.
@@ -209,28 +255,24 @@ func computeMergeBase(repo *git.Repository, local, remote plumbing.Hash) (plumbi
 // remoteTip, in graph order (oldest-first). Graph order matters more
 // than timestamp order — commits made in rapid succession can share
 // Author.When; the parent chain is the unambiguous truth.
+//
+// Optimization: the caller (RewriteUnpushedV1WithOPF) has already
+// validated that remoteTip is the unique merge-base of local and
+// remote, which means v1 is linear and remoteTip is an ancestor of
+// localTip. So walking back from localTip, the FIRST commit we hit
+// whose hash equals remoteTip is the boundary — no need to pre-build
+// a full remote-reachability set. This drops the cost from
+// O(local + remote history) to O(unpushed) per call.
 func listUnpushedV1Commits(repo *git.Repository, localTip, remoteTip plumbing.Hash) ([]*object.Commit, error) {
-	remoteReachable := map[plumbing.Hash]struct{}{}
-	if !remoteTip.IsZero() {
-		iter, err := repo.Log(&git.LogOptions{From: remoteTip})
-		if err != nil {
-			return nil, fmt.Errorf("log remote tip: %w", err)
-		}
-		if walkErr := iter.ForEach(func(c *object.Commit) error {
-			remoteReachable[c.Hash] = struct{}{}
-			return nil
-		}); walkErr != nil {
-			return nil, fmt.Errorf("walk remote ancestry: %w", walkErr)
-		}
-	}
-
-	var unpushed []*object.Commit
 	iter, err := repo.Log(&git.LogOptions{From: localTip})
 	if err != nil {
 		return nil, fmt.Errorf("log local tip: %w", err)
 	}
+	defer iter.Close()
+
+	var unpushed []*object.Commit
 	if walkErr := iter.ForEach(func(c *object.Commit) error {
-		if _, ok := remoteReachable[c.Hash]; ok {
+		if !remoteTip.IsZero() && c.Hash == remoteTip {
 			return errStop
 		}
 		unpushed = append(unpushed, c)
@@ -284,6 +326,12 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 		TreeHash:     newTree,
 		ParentHashes: parents,
 	}
+	// Sign the rewritten commit when commit signing is enabled, matching
+	// every other commit-construction site in this package (common.go,
+	// metadata_reconcile.go, push_common.go). Without this, a user who
+	// has signed checkpoint commits would see the rewrite produce
+	// unsigned commits — silently degrading their integrity story.
+	checkpoint.SignCommitBestEffort(ctx, c)
 	obj := repo.Storer.NewEncodedObject()
 	if err := c.Encode(obj); err != nil {
 		return plumbing.ZeroHash, fmt.Errorf("encode commit: %w", err)
@@ -328,9 +376,15 @@ func parseShardPathFromCommitMessage(message string) string {
 // everything (used for bootstrap/unknown-subject commits).
 //
 // Path-specific behavior (when in the target shard):
-//   - *.jsonl, *.txt → redacted via checkpoint.RedactBlobBytes (OPF on)
+//   - *.jsonl, *.txt, *.json → redacted via checkpoint.RedactBlobBytes
+//     (OPF on). .json files include checkpoint and per-session
+//     metadata.json, which carry free-form fields like Summary.Intent
+//     / Summary.Outcome / ReviewPrompt that can contain PII the regex
+//     layers miss; RedactBlobBytes uses the JSON-aware redactor for
+//     them so the JSON structure is preserved while leaves are
+//     redacted.
 //   - content_hash.txt → SHA256 of the sibling full.jsonl's new bytes
-//   - other files (metadata.json, *.json) → copied verbatim (no user text)
+//   - other files → copied verbatim (no user text expected)
 func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.Tree, pathPrefix, shardPath string) (plumbing.Hash, error) {
 	entries := make([]object.TreeEntry, 0, len(tree.Entries))
 	// deferredHashes records indexes of content_hash.txt entries we
@@ -379,7 +433,9 @@ func rebuildTreeWithOPF(ctx context.Context, repo *git.Repository, tree *object.
 			case e.Name == paths.ContentHashFileName:
 				deferredHashes = append(deferredHashes, deferred{idx: len(entries), entryName: e.Name, entryMode: e.Mode})
 				entries = append(entries, e) // placeholder; fixed in second pass
-			case strings.HasSuffix(e.Name, ".jsonl"), strings.HasSuffix(e.Name, ".txt"):
+			case strings.HasSuffix(e.Name, ".jsonl"),
+				strings.HasSuffix(e.Name, ".txt"),
+				strings.HasSuffix(e.Name, ".json"):
 				content, err := readBlob(repo, e.Hash)
 				if err != nil {
 					return plumbing.ZeroHash, fmt.Errorf("read blob %s/%s: %w", pathPrefix, e.Name, err)
@@ -480,19 +536,27 @@ func readBlob(repo *git.Repository, hash plumbing.Hash) ([]byte, error) {
 	return data, nil
 }
 
-// atomicSetV1Ref CAS-updates the local v1 ref. On conflict returns
-// V1RefMovedError so the hook aborts the push.
+// atomicSetV1Ref CAS-updates the local v1 ref. A concrete
+// ErrReferenceHasChanged from the storer means another worktree
+// advanced the ref during our rewrite — return V1RefMovedError so the
+// hook aborts the push. Other errors (I/O, packed-ref locks, storage
+// bugs) get wrapped as-is so they aren't misreported as concurrency
+// failures.
 func atomicSetV1Ref(repo *git.Repository, expectedOld, newHash plumbing.Hash) error {
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
-	if err := repo.Storer.CheckAndSetReference(
+	err := repo.Storer.CheckAndSetReference(
 		plumbing.NewHashReference(refName, newHash),
 		plumbing.NewHashReference(refName, expectedOld),
-	); err != nil {
+	)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, storage.ErrReferenceHasChanged) {
 		actual := plumbing.ZeroHash
 		if cur, refErr := repo.Reference(refName, true); refErr == nil {
 			actual = cur.Hash()
 		}
 		return &V1RefMovedError{Expected: expectedOld, Actual: actual}
 	}
-	return nil
+	return fmt.Errorf("set v1 ref: %w", err)
 }

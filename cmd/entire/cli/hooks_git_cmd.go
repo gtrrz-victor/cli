@@ -255,11 +255,14 @@ func newHooksGitPrePushCmd() *cobra.Command {
 
 			// Propagate the error so the hook script exits non-zero and
 			// git push aborts the entire batch. PrePush itself only
-			// returns errors for privacy-critical failures (OPF rewrite);
-			// transient checkpoint-push failures are logged and swallowed
-			// before reaching this point. See strategy/manual_commit_push.go
-			// for the contract. The error type already includes user
-			// guidance, so wrapping would only add noise.
+			// returns errors for privacy-critical failures (OPF rewrite —
+			// e.g., V1DivergedError, BootstrapTooLargeError,
+			// V1RefMovedError, OPFRuntimeFailedError); transient
+			// checkpoint-push failures are logged and swallowed before
+			// reaching this point. See strategy/manual_commit_push.go
+			// for the contract. We wrap with a short "pre-push:" prefix
+			// so the user sees the source of the abort without losing
+			// the underlying type (errors.As still finds the sentinels).
 			if hookErr == nil {
 				return nil
 			}

@@ -112,7 +112,7 @@ func askOPFPrompt(ctx context.Context, accessible bool) (OPFDecision, error) {
 	if accessible {
 		form = form.WithAccessible(true)
 	}
-	if err := form.Run(); err != nil {
+	if err := form.RunWithContext(ctx); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return OPFAbort, nil
 		}

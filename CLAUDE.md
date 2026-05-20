@@ -451,7 +451,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - `common.go` - Helpers for metadata extraction, tree building, rewind validation, `ListCheckpoints()`
 - `session.go` - Session/checkpoint data structures
 - `push_common.go` - PrePush logic for pushing `entire/checkpoints/v1` branch
-- `manual_commit_opf_rewrite.go` - Pre-push OPF re-redaction: walks unpushed v1 commits, runs OPF over their blobs, rebuilds commits with `Entire-OPF-Applied: true` trailer, CAS-updates the local ref. Sentinel errors: `ErrV1Diverged`, `ErrBootstrapTooLarge`, `ErrV1RefMoved`.
+- `manual_commit_opf_rewrite.go` - Pre-push OPF re-redaction: walks unpushed v1 commits, runs OPF over their blobs, rebuilds commits with `Entire-OPF-Applied: true` trailer, CAS-updates the local ref. Sentinel error types (use `errors.As`): `V1DivergedError`, `BootstrapTooLargeError`, `V1RefMovedError`, `OPFRuntimeFailedError`.
 - `manual_commit.go` - Manual-commit strategy main implementation
 - `manual_commit_types.go` - Type definitions: `SessionState`, `CheckpointInfo`, `CondenseResult`
 - `manual_commit_session.go` - Session state management (load/save/list session states)

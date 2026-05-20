@@ -47,10 +47,10 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		// before pushing. Skipped entirely when OPF is off, so the
 		// common-case fast path is unchanged.
 		if redact.OPFEnabled() {
-			s, _ := settings.Load(ctx) //nolint:errcheck // Load already failed at hook init; fall back to nil
+			cfg, _ := settings.Load(ctx) //nolint:errcheck // Load already failed at hook init; fall back to nil
 			var opfCfg *settings.OPFSettings
-			if s != nil && s.Redaction != nil {
-				opfCfg = s.Redaction.OpenAIPrivacyFilter
+			if cfg != nil && cfg.Redaction != nil {
+				opfCfg = cfg.Redaction.OpenAIPrivacyFilter
 			}
 			decision, decisionErr := resolveOPFDecisionForPrePush(ctx, opfCfg, os.Stderr)
 			if decisionErr != nil {

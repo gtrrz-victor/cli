@@ -1723,10 +1723,11 @@ func (s *GitStore) copyMetadataDir(ctx context.Context, metadataDir, basePath st
 		}
 
 		// Create blob from file with 7-layer secrets redaction.
-		// Post-commit emits 7-layer-only blobs; the OPF-capable variant
-		// (createRedactedBlobFromFileWithPrivacyFilter) is used later by
-		// the pre-push rewrite path, which re-redacts these blobs into
-		// 8-layer commits before they leave the local machine.
+		// Post-commit emits 7-layer-only blobs; the pre-push rewrite
+		// (strategy/manual_commit_opf_rewrite.go) walks the resulting
+		// tree, re-redacts these blobs with OPF when enabled, and
+		// rewrites entire/checkpoints/v1 into 8-layer commits before
+		// they leave the local machine.
 		_ = ctx // ctx not needed by the 7-layer path; kept on caller signature for future use
 		blobHash, mode, err := createRedactedBlobFromFile(s.repo, path, relPath)
 		if err != nil {
@@ -1793,15 +1794,23 @@ func createRedactedBlobFromFile(repo *git.Repository, filePath, treePath string)
 }
 
 // RedactBlobBytes redacts a single blob's content given its tree path.
-// JSONL files get JSONL-aware redaction (falling back to plain bytes on
-// parse failure so regex/credential layers still apply); other files
-// get plain byte redaction. When usePrivacyFilter is true the full
-// 8-layer pipeline (including OPF) runs; otherwise the 7-layer pipeline.
+// JSON-shaped files (.jsonl or .json) get JSON-aware redaction (falling
+// back to plain bytes on parse failure so regex/credential layers
+// still apply); other files get plain byte redaction. When
+// usePrivacyFilter is true the full 8-layer pipeline (including OPF)
+// runs; otherwise the 7-layer pipeline.
+//
+// .json is handled alongside .jsonl because checkpoint metadata files
+// (metadata.json, per-session metadata.json) carry free-form fields
+// like Summary.Intent / Summary.Outcome / ReviewPrompt that can
+// contain PII the regex layers miss. The JSON-aware redactor extracts
+// string leaves and applies OPF only to those, preserving the JSON
+// structure.
 //
 // Post-commit condensation uses false (fast path). The pre-push rewrite
 // (strategy/manual_commit_opf_rewrite.go) uses true.
 func RedactBlobBytes(ctx context.Context, content []byte, treePath string, usePrivacyFilter bool) []byte {
-	if strings.HasSuffix(treePath, ".jsonl") {
+	if strings.HasSuffix(treePath, ".jsonl") || strings.HasSuffix(treePath, ".json") {
 		var (
 			redacted redact.RedactedBytes
 			err      error
