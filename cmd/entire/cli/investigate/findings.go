@@ -47,21 +47,31 @@ func PrintInvestigateFindingsListForTest(w io.Writer, manifests []LocalManifest)
 }
 
 // printInvestigateFindingsList renders the non-TTY list view. Each
-// manifest gets a header row plus a "fix" command hint. When findings
-// have been captured into the manifest (terminal outcome) the path
-// shows "<captured in manifest>" so users know the on-disk path is
-// stale but the content is reachable via the manifest.
+// manifest gets a header row, a `view:` hint (pointing at
+// `entire investigate show <run-id>` which works regardless of where the
+// findings live), and a `fix:` hint (the apply-findings next step). When
+// findings are still on disk (paused/cancelled), an additional `path:`
+// line points at the file for direct inspection.
 func printInvestigateFindingsList(w io.Writer, manifests []LocalManifest) {
 	fmt.Fprintln(w, "Investigations")
 	fmt.Fprintln(w)
 	for _, m := range manifests {
 		fmt.Fprintln(w, investigateManifestListLabel(m))
-		fmt.Fprintf(w, "  fix:     entire investigate fix %s\n", m.RunID)
-		switch {
-		case m.FindingsContent != "":
-			fmt.Fprintln(w, "  findings: <captured in manifest>")
-		case m.FindingsDoc != "":
-			fmt.Fprintf(w, "  findings: %s\n", m.FindingsDoc)
+		fmt.Fprintf(w, "  view:    entire investigate show %s\n", m.RunID)
+		// `fix` only makes sense for terminal outcomes (Quorum/Stalled).
+		// Paused/Cancelled runs need to be resumed (or cleaned), not fed
+		// into a coding agent off of partial findings.
+		switch m.Outcome {
+		case string(OutcomePaused), string(OutcomeCancelled):
+			fmt.Fprintf(w, "  resume:  entire investigate --continue %s\n", m.RunID)
+		default:
+			fmt.Fprintf(w, "  fix:     entire investigate fix %s\n", m.RunID)
+		}
+		// Add the on-disk path only when it points at a still-present
+		// file (paused/cancelled). Terminal outcomes auto-clean the
+		// per-run dir, so printing the stale path would be misleading.
+		if m.FindingsContent == "" && m.FindingsDoc != "" {
+			fmt.Fprintf(w, "  path:    %s\n", m.FindingsDoc)
 		}
 	}
 }

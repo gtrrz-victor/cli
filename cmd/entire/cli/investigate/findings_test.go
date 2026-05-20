@@ -120,13 +120,35 @@ func TestRunInvestigateFindings_PrintsCapturedMarker(t *testing.T) {
 	investigate.PrintInvestigateFindingsListForTest(out, manifests)
 	got := out.String()
 
-	if !strings.Contains(got, "  findings: <captured in manifest>") {
-		t.Errorf("expected captured-marker for terminal run, got:\n%s", got)
+	// Both rows must surface a `view:` hint pointing at the show
+	// subcommand — that's the actionable next step regardless of where
+	// the findings live.
+	if !strings.Contains(got, "  view:    entire investigate show aaaaaaaaaaaa") {
+		t.Errorf("expected view hint for terminal run, got:\n%s", got)
 	}
-	if !strings.Contains(got, "  findings: /live/path/findings.md") {
+	if !strings.Contains(got, "  view:    entire investigate show bbbbbbbbbbbb") {
+		t.Errorf("expected view hint for paused run, got:\n%s", got)
+	}
+	// Terminal outcome → `fix:` hint; paused → `resume:` hint instead.
+	if !strings.Contains(got, "  fix:     entire investigate fix aaaaaaaaaaaa") {
+		t.Errorf("expected fix hint for terminal run, got:\n%s", got)
+	}
+	if !strings.Contains(got, "  resume:  entire investigate --continue bbbbbbbbbbbb") {
+		t.Errorf("expected resume hint for paused run, got:\n%s", got)
+	}
+	if strings.Contains(got, "entire investigate fix bbbbbbbbbbbb") {
+		t.Errorf("paused run must not advertise `fix` (no terminal findings), got:\n%s", got)
+	}
+	// Paused run still has its findings.md on disk — surface the path
+	// for direct inspection. Terminal run's path is stale (per-run dir
+	// auto-cleaned) so it must not be printed.
+	if !strings.Contains(got, "  path:    /live/path/findings.md") {
 		t.Errorf("expected file path for paused run, got:\n%s", got)
 	}
 	if strings.Contains(got, "/stale/path/findings.md") {
 		t.Errorf("should NOT print stale path when findings are captured, got:\n%s", got)
+	}
+	if strings.Contains(got, "<captured in manifest>") {
+		t.Errorf("legacy `<captured in manifest>` placeholder should be gone, got:\n%s", got)
 	}
 }
