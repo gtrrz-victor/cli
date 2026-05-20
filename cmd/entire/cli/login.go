@@ -48,7 +48,7 @@ func newLoginCmd() *cobra.Command {
 			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
 				return err
 			}
-			return runLogin(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), auth.NewClient(nil), openBrowser, copyToClipboard)
+			return runLogin(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), auth.NewClient(nil, insecureHTTPAuth), openBrowser, copyToClipboard)
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)

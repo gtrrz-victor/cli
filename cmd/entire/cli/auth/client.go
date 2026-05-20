@@ -47,11 +47,12 @@ type Client struct {
 // flows through); a nil httpClient or nil Transport falls back to the
 // deviceflow default (http.DefaultTransport).
 //
-// HTTPS is required unless the configured auth host is loopback http://
-// (localhost, 127.0.0.1, ::1) — see isLoopbackHTTP. Production
-// deployments never qualify; local dev does. There is no other opt-in
-// for plain HTTP on the device-flow surface.
-func NewClient(httpClient *http.Client) *Client {
+// HTTPS is required by default. Loopback http:// (localhost, 127.0.0.1,
+// ::1) is always permitted — see isLoopbackHTTP. allowInsecureHTTP=true
+// additionally permits non-loopback http:// for cases like local-dev
+// auth hosts on a private network (e.g. http://devbox.internal); the
+// CLI plumbs this from the --insecure-http-auth flag.
+func NewClient(httpClient *http.Client, allowInsecureHTTP bool) *Client {
 	p := CurrentProvider()
 	issuer := api.AuthBaseURL()
 	var transport http.RoundTripper
@@ -66,7 +67,7 @@ func NewClient(httpClient *http.Client) *Client {
 		UserAgent:         p.ClientID,
 		DeviceCodePath:    p.DeviceCodePath,
 		TokenPath:         p.TokenPath,
-		AllowInsecureHTTP: isLoopbackHTTP(issuer),
+		AllowInsecureHTTP: allowInsecureHTTP || isLoopbackHTTP(issuer),
 	}}
 }
 
