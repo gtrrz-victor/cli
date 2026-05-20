@@ -184,6 +184,9 @@ func (e *keyringReadError) Unwrap() error { return e.Cause }
 // collapsed back into an empty token so the caller's "render with no
 // bearer, let the server respond 401" path still fires.
 func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
+	if insecureHTTP {
+		auth.EnableInsecureHTTP()
+	}
 	token, err := auth.TokenForResource(ctx, api.BaseURL())
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		token = ""

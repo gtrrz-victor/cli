@@ -25,7 +25,9 @@ import (
 // core token travels to the auth host during the exchange step.
 func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
 	dataURL, authURL := api.BaseURL(), api.AuthBaseURL()
-	if !insecureHTTP {
+	if insecureHTTP {
+		auth.EnableInsecureHTTP()
+	} else {
 		if err := api.RequireSecureURL(dataURL); err != nil {
 			return nil, fmt.Errorf("base URL check: %w", err)
 		}

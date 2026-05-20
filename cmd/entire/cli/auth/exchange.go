@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"sync/atomic"
 
 	"github.com/entireio/auth-go/tokenmanager"
 	"github.com/entireio/cli/cmd/entire/cli/api"
@@ -30,7 +31,28 @@ var (
 	// don't race. Production code never reads this var.
 	managerForTest *tokenmanager.Manager
 	managerTestMu  sync.Mutex
+
+	// insecureHTTPOverride records the --insecure-http-auth opt-in.
+	// Read once when the package-level manager is built (sync.Once);
+	// callers must invoke EnableInsecureHTTP before any TokenForResource
+	// call in the same process or the override has no effect. Loopback
+	// hosts are always permitted regardless of this flag.
+	insecureHTTPOverride atomic.Bool
 )
+
+// EnableInsecureHTTP relaxes the package-level manager's HTTPS guard so
+// non-loopback http:// resources (and the auth host's STS endpoint) are
+// permitted during token resolution. The CLI calls this when the user
+// passes --insecure-http-auth to a command that hits the data API on a
+// private network (e.g. a split-host local-dev box where both hosts are
+// plain HTTP).
+//
+// Call before any TokenForResource invocation — the manager is built
+// lazily on first use and the AllowInsecureHTTP setting is frozen at
+// that point.
+func EnableInsecureHTTP() {
+	insecureHTTPOverride.Store(true)
+}
 
 // SetManagerForTest installs mgr as the manager returned by
 // defaultManager() and returns a cleanup function. Test-only.
@@ -70,11 +92,13 @@ func defaultManager() (*tokenmanager.Manager, error) {
 			Store:     NewStore(),
 			UserAgent: provider.ClientID,
 			Scope:     "cli",
-			// Auto-permit only loopback http:// for local development.
-			// Anything else must be https:// — STS ships the user's
-			// core token in the request body and would leak in clear
-			// otherwise.
-			AllowInsecureHTTP: isLoopbackHTTP(issuer),
+			// Auto-permit loopback http:// for local development. The
+			// EnableInsecureHTTP setter adds non-loopback http on top
+			// so split-host private-network dev (e.g. http://devbox.internal)
+			// works under --insecure-http-auth. Anything else must be
+			// https:// — STS ships the user's core token in the request
+			// body and would leak in clear otherwise.
+			AllowInsecureHTTP: isLoopbackHTTP(issuer) || insecureHTTPOverride.Load(),
 		})
 		manager = m
 		if err != nil {

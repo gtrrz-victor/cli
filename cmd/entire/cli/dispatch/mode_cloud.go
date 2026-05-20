@@ -21,7 +21,9 @@ var requireSecureDispatchURL = api.RequireSecureURL
 
 func runServer(ctx context.Context, opts Options) (*Dispatch, error) {
 	baseURL := api.BaseURL()
-	if !opts.InsecureHTTPAuth {
+	if opts.InsecureHTTPAuth {
+		auth.EnableInsecureHTTP()
+	} else {
 		if err := requireSecureDispatchURL(baseURL); err != nil {
 			return nil, fmt.Errorf("dispatch base URL: %w", err)
 		}
