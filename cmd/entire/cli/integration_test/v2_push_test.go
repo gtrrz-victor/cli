@@ -124,10 +124,11 @@ func TestV2Push_Disabled_NoV2Refs(t *testing.T) {
 		"v1 metadata branch should still exist on remote")
 }
 
-// TestV2Push_Version2SkipsV1Branch verifies that the v1 metadata branch is not
-// pushed when checkpoints_version is set to 2; v2 ref pushing itself is covered
-// by TestV2Push_FullCycle.
-func TestV2Push_Version2SkipsV1Branch(t *testing.T) {
+// TestPush_CheckpointsVersion2DisallowedFallsBackToV1 verifies that setting
+// strategy_options.checkpoints_version: 2 is now ignored — the v1 metadata
+// branch is pushed (as if checkpoints_version were unset), and no v2 refs are
+// created by the setting alone.
+func TestPush_CheckpointsVersion2DisallowedFallsBackToV1(t *testing.T) {
 	t.Parallel()
 	env := NewTestEnv(t)
 	defer env.Cleanup()
@@ -138,7 +139,7 @@ func TestV2Push_Version2SkipsV1Branch(t *testing.T) {
 	env.GitAdd("README.md")
 	env.GitAdd(".gitignore")
 	env.GitCommit("Initial commit")
-	env.GitCheckoutNewBranch("feature/checkpoints-v2-push-test")
+	env.GitCheckoutNewBranch("feature/checkpoints-v2-disallowed-push")
 
 	env.InitEntireWithOptions(map[string]any{
 		"checkpoints_version": 2,
@@ -161,9 +162,8 @@ func TestV2Push_Version2SkipsV1Branch(t *testing.T) {
 
 	env.RunPrePush("origin")
 
-	assert.False(t, bareRefExists(t, bareDir, "refs/heads/"+paths.MetadataBranchName),
-		"v1 metadata branch should NOT exist on remote when checkpoints_version is 2")
-	// Smoke: v2 refs still land; full payload asserted in TestV2Push_FullCycle.
-	assert.True(t, bareRefExists(t, bareDir, paths.V2MainRefName),
-		"v2 /main ref should exist on remote after push")
+	assert.True(t, bareRefExists(t, bareDir, "refs/heads/"+paths.MetadataBranchName),
+		"v1 metadata branch should be pushed even with checkpoints_version: 2 (the setting is disallowed)")
+	assert.False(t, bareRefExists(t, bareDir, paths.V2MainRefName),
+		"v2 /main ref should NOT be pushed solely because checkpoints_version: 2 is configured")
 }

@@ -1072,8 +1072,9 @@ func (s *EntireSettings) IsCheckpointsV2Enabled() bool {
 }
 
 // CheckpointsVersion returns the configured checkpoints format version from
-// strategy_options.checkpoints_version. Returns 1 when unset, invalid, or
-// unsupported. The currently supported versions are 1 and 2.
+// strategy_options.checkpoints_version. Returns 1 when unset or invalid.
+// checkpoints_version: 2 is no longer supported — when configured, a one-time
+// warning is emitted and 1 is returned instead.
 func (s *EntireSettings) CheckpointsVersion() int {
 	if s.StrategyOptions == nil {
 		return 1
@@ -1083,10 +1084,19 @@ func (s *EntireSettings) CheckpointsVersion() int {
 		return 1
 	}
 	version, ok := parseCheckpointsVersion(val)
-	if ok {
-		return version
+	if !ok {
+		return 1
 	}
-	return 1
+	if version == 2 {
+		checkpointsVersionWarningOnce.Do(func() {
+			fmt.Fprintf(os.Stderr,
+				"[entire] strategy_options.checkpoints_version %v is no longer supported. Falling back to version 1.\n",
+				val,
+			)
+		})
+		return 1
+	}
+	return version
 }
 
 func parseCheckpointsVersion(val any) (int, bool) {

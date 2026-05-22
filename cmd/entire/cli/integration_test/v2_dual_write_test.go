@@ -245,11 +245,10 @@ func TestV2DualWrite_StopTimeFinalization(t *testing.T) {
 	assert.Contains(t, compactTranscript, `"v":1`)
 }
 
-// TestCheckpointsVersion2_SkipsV1Write verifies the specific deltas of running
-// with checkpoints_version: 2 — v1 metadata is not written and v2 refs still
-// exist. The full v2 payload shape is already covered by
-// TestV2DualWrite_FullWorkflow.
-func TestCheckpointsVersion2_SkipsV1Write(t *testing.T) {
+// TestCheckpointsVersion2Disallowed_WritesV1 verifies that setting
+// strategy_options.checkpoints_version: 2 is now ignored — v1 metadata is
+// written and v2 refs are not created by the setting alone.
+func TestCheckpointsVersion2Disallowed_WritesV1(t *testing.T) {
 	t.Parallel()
 	env := NewTestEnv(t)
 	defer env.Cleanup()
@@ -260,7 +259,7 @@ func TestCheckpointsVersion2_SkipsV1Write(t *testing.T) {
 	env.GitAdd("README.md")
 	env.GitAdd(".gitignore")
 	env.GitCommit("Initial commit")
-	env.GitCheckoutNewBranch("feature/checkpoints-v2-test")
+	env.GitCheckoutNewBranch("feature/checkpoints-v2-disallowed")
 
 	env.InitEntireWithOptions(map[string]any{
 		"checkpoints_version": 2,
@@ -285,21 +284,21 @@ func TestCheckpointsVersion2_SkipsV1Write(t *testing.T) {
 	require.NoError(t, err)
 	cpPath := cpID.Path()
 
-	// v1: should NOT be written.
 	_, found := env.ReadFileFromBranch(paths.MetadataBranchName, cpPath+"/"+paths.MetadataFileName)
-	assert.False(t, found,
-		"v1 committed checkpoint metadata should NOT exist when checkpoints_version is 2")
+	assert.True(t, found,
+		"v1 committed checkpoint metadata should be written even with checkpoints_version: 2 (the setting is disallowed)")
 
-	// v2: smoke check that the checkpoint still landed.
-	assert.True(t, env.RefExists(paths.V2MainRefName), "v2 /main ref should exist")
-	assert.True(t, env.RefExists(paths.V2FullCurrentRefName), "v2 /full/current ref should exist")
+	assert.False(t, env.RefExists(paths.V2MainRefName),
+		"v2 /main ref should NOT exist solely because checkpoints_version: 2 is configured")
+	assert.False(t, env.RefExists(paths.V2FullCurrentRefName),
+		"v2 /full/current ref should NOT exist solely because checkpoints_version: 2 is configured")
 }
 
-// TestCheckpointsVersion2_HookDrivenCommitOnMain verifies the same hook-driven
-// prompt -> stop -> commit flow used by the attach E2E precondition setup. In
-// checkpoints_version: 2 mode, the normal git hook path should still write only
-// v2 refs even when committing on the default branch.
-func TestCheckpointsVersion2_HookDrivenCommitOnMain(t *testing.T) {
+// TestCheckpointsVersion2Disallowed_HookDrivenCommitOnMain verifies the same
+// hook-driven prompt -> stop -> commit flow used by the attach E2E
+// precondition setup. checkpoints_version: 2 is now disallowed, so the normal
+// git hook path writes v1 metadata even when the setting is configured.
+func TestCheckpointsVersion2Disallowed_HookDrivenCommitOnMain(t *testing.T) {
 	t.Parallel()
 	env := NewTestEnv(t)
 	defer env.Cleanup()
@@ -315,8 +314,6 @@ func TestCheckpointsVersion2_HookDrivenCommitOnMain(t *testing.T) {
 		"checkpoints_version": 2,
 	})
 
-	// Mirror the E2E flow: enable is committed first, then a normal prompt/stop
-	// cycle produces content that the subsequent user commit condenses.
 	env.GitAdd(".entire/settings.json")
 	env.GitCommit("Enable entire")
 
@@ -339,19 +336,12 @@ func TestCheckpointsVersion2_HookDrivenCommitOnMain(t *testing.T) {
 	require.NoError(t, err)
 	cpPath := cpID.Path()
 
-	// v1 should remain absent in strict v2-only mode.
-	_, found := env.ReadFileFromBranch(paths.MetadataBranchName, cpPath+"/"+paths.MetadataFileName)
-	assert.False(t, found, "v1 metadata branch should not be used when checkpoints_version is 2")
+	v1Summary, found := env.ReadFileFromBranch(paths.MetadataBranchName, cpPath+"/0/"+paths.MetadataFileName)
+	require.True(t, found, "v1 metadata branch should be written even with checkpoints_version: 2 (the setting is disallowed)")
+	assert.Contains(t, v1Summary, cpIDStr)
 
-	// v2 refs should contain the checkpoint created by the normal hook path.
-	assert.True(t, env.RefExists(paths.V2MainRefName), "v2 /main ref should exist after hook-driven commit")
-	assert.True(t, env.RefExists(paths.V2FullCurrentRefName), "v2 /full/current ref should exist after hook-driven commit")
-
-	mainSummary, found := env.ReadFileFromRef(paths.V2MainRefName, cpPath+"/"+paths.MetadataFileName)
-	require.True(t, found, "v2 /main metadata.json should exist")
-	assert.Contains(t, mainSummary, cpIDStr)
-
-	fullTranscript, found := env.ReadFileFromRef(paths.V2FullCurrentRefName, cpPath+"/0/"+paths.V2RawTranscriptFileName)
-	require.True(t, found, "v2 /full/current raw transcript should exist")
-	assert.Contains(t, fullTranscript, "existing checkpoints")
+	assert.False(t, env.RefExists(paths.V2MainRefName),
+		"v2 /main ref should NOT exist solely because checkpoints_version: 2 is configured")
+	assert.False(t, env.RefExists(paths.V2FullCurrentRefName),
+		"v2 /full/current ref should NOT exist solely because checkpoints_version: 2 is configured")
 }
