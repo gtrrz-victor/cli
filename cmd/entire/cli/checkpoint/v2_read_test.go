@@ -87,7 +87,6 @@ func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
 	store := NewV2GitStore(repo)
-	store.maxCheckpointsPerGeneration = 1
 	ctx := context.Background()
 
 	cpID1 := id.MustCheckpointID("d1d2d3d4d5d6")
@@ -100,6 +99,19 @@ func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
 		AuthorEmail:  "test@test.com",
 	})
 	require.NoError(t, err)
+
+	fullRefName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
+	fullRef, err := repo.Reference(fullRefName, true)
+	require.NoError(t, err)
+	archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(archiveRefName, fullRef.Hash())))
+
+	emptyTreeHash, err := BuildTreeFromEntries(ctx, repo, map[string]object.TreeEntry{})
+	require.NoError(t, err)
+	authorName, authorEmail := GetGitAuthorFromRepo(repo)
+	emptyCommitHash, err := CreateCommit(ctx, repo, emptyTreeHash, plumbing.ZeroHash, "Reset v2 full current", authorName, authorEmail)
+	require.NoError(t, err)
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(fullRefName, emptyCommitHash)))
 
 	cpID2 := id.MustCheckpointID("e1e2e3e4e5e6")
 	err = store.WriteCommitted(ctx, WriteCommittedOptions{

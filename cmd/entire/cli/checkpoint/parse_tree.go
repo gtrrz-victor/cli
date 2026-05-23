@@ -348,7 +348,7 @@ func readTreeEntriesViaCLI(ctx context.Context, hash plumbing.Hash) ([]object.Tr
 
 // WalkCheckpointShards iterates over the two-level shard structure (<id[:2]>/<id[2:]>/)
 // in a checkpoint tree, calling fn for each checkpoint found. Skips non-directory entries
-// at both levels (e.g., generation.json at the root). The callback receives the parsed
+// at both levels (e.g., metadata.json at the root). The callback receives the parsed
 // checkpoint ID and the tree hash of the checkpoint subtree.
 func WalkCheckpointShards(ctx context.Context, repo *git.Repository, tree *object.Tree, fn func(cpID id.CheckpointID, cpTreeHash plumbing.Hash) error) error {
 	for _, bucketEntry := range tree.Entries {

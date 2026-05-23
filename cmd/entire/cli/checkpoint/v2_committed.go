@@ -773,10 +773,6 @@ func (s *V2GitStore) updateCommittedFullTranscript(ctx context.Context, opts Upd
 		return err
 	}
 
-	if refName == plumbing.ReferenceName(paths.V2FullCurrentRefName) {
-		s.rotateCurrentIfNeeded(ctx, newTreeHash)
-	}
-
 	return nil
 }
 
@@ -997,8 +993,7 @@ func (s *V2GitStore) writeCompactTranscriptHash(compactTranscript []byte, sessio
 
 // writeCommittedFullTranscript writes the raw transcript to the /full/current ref.
 // Transcripts accumulate across checkpoints — each write splices into the existing
-// tree. Generation metadata (generation.json) at the tree root is updated on every
-// write with the new checkpoint ID and timestamps.
+// tree.
 //
 // sessionIndex is the session slot (0-based), determined by the caller to stay
 // consistent with the /main ref's session numbering.
@@ -1073,28 +1068,7 @@ func (s *V2GitStore) writeCommittedFullTranscript(ctx context.Context, opts Writ
 		return err
 	}
 
-	s.rotateCurrentIfNeeded(ctx, newTreeHash)
 	return nil
-}
-
-func (s *V2GitStore) rotateCurrentIfNeeded(ctx context.Context, treeHash plumbing.Hash) {
-	checkpointCount, countErr := s.CountCheckpointsInTree(ctx, treeHash)
-	if countErr != nil {
-		logging.Warn(ctx, "failed to count checkpoints for rotation check",
-			slog.String("error", countErr.Error()),
-		)
-		return
-	}
-	if checkpointCount < s.maxCheckpoints() {
-		return
-	}
-	if rotErr := s.rotateGeneration(ctx); rotErr != nil {
-		logging.Warn(ctx, "generation rotation failed",
-			slog.String("error", rotErr.Error()),
-			slog.Int("checkpoint_count", checkpointCount),
-		)
-		// Non-fatal: rotation failure doesn't invalidate the write
-	}
 }
 
 // writeTranscriptBlobs writes pre-redacted, chunked transcript blobs to entries.
