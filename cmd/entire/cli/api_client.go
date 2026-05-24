@@ -44,7 +44,13 @@ func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Cli
 	token, err := auth.TokenForResource(ctx, api.OriginOnly(dataURL))
 	if err != nil {
 		if errors.Is(err, auth.ErrNotLoggedIn) {
-			return nil, errors.New("not logged in (run 'entire login' first)")
+			// Wrap rather than replace so callers can still
+			// errors.Is(err, auth.ErrNotLoggedIn) to distinguish "no
+			// keyring entry" from other resolution failures (STS
+			// rejection, network error). Pre-wrap, every caller had to
+			// fall back to string-matching, and the activity command
+			// papered over real failures with a misleading login hint.
+			return nil, fmt.Errorf("not logged in (run 'entire login' first): %w", auth.ErrNotLoggedIn)
 		}
 		return nil, fmt.Errorf("resolve API token: %w", err)
 	}

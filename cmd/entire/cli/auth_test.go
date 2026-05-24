@@ -26,7 +26,7 @@ func TestRunAuthStatus_NotLoggedIn(t *testing.T) {
 	store := newMockTokenStore()
 
 	listCalled := false
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		listCalled = true
 		return nil, nil
 	}
@@ -50,7 +50,7 @@ func TestRunAuthStatus_LoggedIn(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return []api.Token{
 			{ID: "a", Name: "laptop"},
 			{ID: "b", Name: "ci"},
@@ -76,7 +76,7 @@ func TestRunAuthStatus_TokenInvalid(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return nil, &api.HTTPError{StatusCode: http.StatusUnauthorized, Message: "Not authenticated"}
 	}
 
@@ -99,7 +99,7 @@ func TestRunAuthStatus_ServerError(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return nil, errors.New("connection refused")
 	}
 
@@ -122,7 +122,7 @@ func TestRunAuthList_NotLoggedInErrors(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runAuthList(context.Background(), &out, store,
-		func(context.Context, string) ([]api.Token, error) { return nil, nil },
+		func(context.Context) ([]api.Token, error) { return nil, nil },
 		testBaseURL, false)
 	if err == nil {
 		t.Fatal("expected error when not logged in")
@@ -139,7 +139,7 @@ func TestRunAuthList_TablePrintsRows(t *testing.T) {
 	store.tokens[testBaseURL] = testAuthTok
 
 	lastUsed := "2026-04-01T12:00:00Z"
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return []api.Token{
 			{ID: "tok-1", Name: "laptop", Scope: "cli",
 				CreatedAt:  "2026-01-01T00:00:00Z",
@@ -179,7 +179,7 @@ func TestRunAuthList_JSONOutput(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return []api.Token{{ID: "tok-1", Name: "laptop"}}, nil
 	}
 
@@ -203,7 +203,7 @@ func TestRunAuthList_EmptyPrintsMessage(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	list := func(context.Context, string) ([]api.Token, error) { return nil, nil }
+	list := func(context.Context) ([]api.Token, error) { return nil, nil }
 
 	var out bytes.Buffer
 	if err := runAuthList(context.Background(), &out, store, list, testBaseURL, false); err != nil {
@@ -295,21 +295,20 @@ func TestRunAuthRevoke_ByIDCallsRevoker(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	var gotCallerToken, gotID string
-	revokeByID := func(_ context.Context, callerToken, id string) error {
-		gotCallerToken = callerToken
+	var gotID string
+	revokeByID := func(_ context.Context, id string) error {
 		gotID = id
 		return nil
 	}
 
 	revokeCurrentCalled := false
-	revokeCurrent := func(context.Context, string) error {
+	revokeCurrent := func(context.Context) error {
 		revokeCurrentCalled = true
 		return nil
 	}
 
 	// list returns 200 → token id was someone else's, no local cleanup expected.
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return []api.Token{{ID: "other"}}, nil
 	}
 
@@ -323,9 +322,8 @@ func TestRunAuthRevoke_ByIDCallsRevoker(t *testing.T) {
 	if revokeCurrentCalled {
 		t.Fatal("revokeCurrent should not be called when revoking by id")
 	}
-	if gotCallerToken != testAuthTok || gotID != testTokenID {
-		t.Errorf("revokeByID called with caller=%q id=%q, want caller=%q id=%q",
-			gotCallerToken, gotID, testAuthTok, testTokenID)
+	if gotID != testTokenID {
+		t.Errorf("revokeByID called with id=%q, want %q", gotID, testTokenID)
 	}
 	if store.deleted[testBaseURL] {
 		t.Fatal("local token should NOT be deleted when revoking another token")
@@ -344,11 +342,11 @@ func TestRunAuthRevoke_ByIDSelfRevokeCleansLocal(t *testing.T) {
 	store := newMockTokenStore()
 	store.tokens[testBaseURL] = testAuthTok
 
-	revokeByID := func(context.Context, string, string) error { return nil }
-	revokeCurrent := func(context.Context, string) error { return nil }
+	revokeByID := func(context.Context, string) error { return nil }
+	revokeCurrent := func(context.Context) error { return nil }
 
 	// list returns 401 → the id we just revoked was our own bearer.
-	list := func(context.Context, string) ([]api.Token, error) {
+	list := func(context.Context) ([]api.Token, error) {
 		return nil, &api.HTTPError{StatusCode: http.StatusUnauthorized, Message: "Not authenticated"}
 	}
 
@@ -374,18 +372,18 @@ func TestRunAuthRevoke_CurrentDelegatesToLogout(t *testing.T) {
 	store.tokens[testBaseURL] = testAuthTok
 
 	revokeByIDCalled := false
-	revokeByID := func(context.Context, string, string) error {
+	revokeByID := func(context.Context, string) error {
 		revokeByIDCalled = true
 		return nil
 	}
 
-	revokedToken := ""
-	revokeCurrent := func(_ context.Context, token string) error {
-		revokedToken = token
+	revokeCurrentCalled := false
+	revokeCurrent := func(context.Context) error {
+		revokeCurrentCalled = true
 		return nil
 	}
 
-	list := func(context.Context, string) ([]api.Token, error) { return nil, nil }
+	list := func(context.Context) ([]api.Token, error) { return nil, nil }
 
 	var out, errOut bytes.Buffer
 	err := runAuthRevoke(context.Background(), &out, &errOut, store,
@@ -397,8 +395,8 @@ func TestRunAuthRevoke_CurrentDelegatesToLogout(t *testing.T) {
 	if revokeByIDCalled {
 		t.Fatal("revokeByID should not be called when --current is set")
 	}
-	if revokedToken != testAuthTok {
-		t.Errorf("revokeCurrent called with token %q, want %q", revokedToken, testAuthTok)
+	if !revokeCurrentCalled {
+		t.Fatal("revokeCurrent should be called when --current is set")
 	}
 	if !store.deleted[testBaseURL] {
 		t.Fatal("local token should be deleted via logout path")
@@ -415,9 +413,9 @@ func TestRunAuthRevoke_NotLoggedInErrors(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	err := runAuthRevoke(context.Background(), &out, &errOut, store,
-		func(context.Context, string) ([]api.Token, error) { return nil, nil },
-		func(context.Context, string, string) error { return nil },
+		func(context.Context) ([]api.Token, error) { return nil, nil },
 		func(context.Context, string) error { return nil },
+		func(context.Context) error { return nil },
 		testBaseURL, "some-id", false)
 	if err == nil {
 		t.Fatal("expected error when not logged in")
