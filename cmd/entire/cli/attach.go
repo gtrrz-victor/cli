@@ -158,6 +158,7 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 	if err != nil {
 		return err
 	}
+	defer repo.Close()
 
 	existingState, err := validateAttachPreconditions(ctx, repo, sessionID)
 	if err != nil {
