@@ -46,6 +46,49 @@ func TestCommittedReader_UsesV2WhenFound(t *testing.T) {
 	require.Equal(t, "session-v2", content.Metadata.SessionID)
 }
 
+func TestDualCheckpointReader_UpdateSummaryUpdatesV1Only(t *testing.T) {
+	t.Parallel()
+
+	repo := initTestRepo(t)
+	v1Store := NewGitStore(repo)
+	v2Store := NewV2GitStore(repo)
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("121212121212")
+
+	require.NoError(t, v1Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-v1",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v1"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+	require.NoError(t, v2Store.WriteCommitted(ctx, WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-v2",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"text":"from-v2"}` + "\n")),
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}))
+
+	reader := &DualCheckpointReader{v2: v2Store, v1: v1Store}
+	require.NoError(t, reader.UpdateSummary(ctx, cpID, &Summary{
+		Intent:  "summarize intent",
+		Outcome: "summarize outcome",
+	}))
+
+	v1Content, err := v1Store.ReadSessionContent(ctx, cpID, 0)
+	require.NoError(t, err)
+	require.NotNil(t, v1Content.Metadata.Summary)
+	require.Equal(t, "summarize intent", v1Content.Metadata.Summary.Intent)
+	require.Equal(t, "summarize outcome", v1Content.Metadata.Summary.Outcome)
+
+	v2Content, err := v2Store.ReadSessionContent(ctx, cpID, 0)
+	require.NoError(t, err)
+	require.Nil(t, v2Content.Metadata.Summary)
+}
+
 func TestDualCheckpointReader_ReadSessionPromptsFallsBackWhenV2PromptMissing(t *testing.T) {
 	t.Parallel()
 
@@ -127,10 +170,10 @@ func TestCommittedReadModeForAvailability(t *testing.T) {
 
 	require.Equal(t, committedReadV1, resolveCommittedReadMode(false, 1, false))
 	require.Equal(t, committedReadDual, resolveCommittedReadMode(true, 1, false))
-	require.Equal(t, committedReadV2, resolveCommittedReadMode(true, 2, false))
-	require.Equal(t, committedReadV2, resolveCommittedReadMode(false, 2, false))
+	require.Equal(t, committedReadDual, resolveCommittedReadMode(true, 2, false))
+	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 2, false))
 	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 1, true))
-	require.Equal(t, committedReadV2, resolveCommittedReadMode(false, 2, true))
+	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 2, true))
 }
 
 func TestReadSessionPromptsUsesPromptOnlyReader(t *testing.T) {

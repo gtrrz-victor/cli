@@ -2323,7 +2323,7 @@ func TestRunExplainCheckpoint_GenerateV1ModeUsesSelectedStore(t *testing.T) {
 	require.Contains(t, buf.String(), "generated v1 intent")
 }
 
-func TestRunExplainCheckpoint_V2PreferredGenerateWritesSelectedStore(t *testing.T) {
+func TestRunExplainCheckpoint_V2PreferredGenerateWritesV1Store(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
@@ -2382,7 +2382,8 @@ func TestRunExplainCheckpoint_V2PreferredGenerateWritesSelectedStore(t *testing.
 	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"generate test"}]}}` + "\n" +
 		`{"type":"assistant","message":{"content":"done"}}` + "\n")
 
-	// Dual-write: checkpoint exists in both v1 and v2.
+	// Checkpoint exists in both v1 and v2. Reads still prefer v2, but generated
+	// summaries are persisted only to v1 during the v2 rollback.
 	require.NoError(t, v1Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-dual",
@@ -2404,70 +2405,14 @@ func TestRunExplainCheckpoint_V2PreferredGenerateWritesSelectedStore(t *testing.
 	err = runExplainCheckpoint(ctx, &buf, &errBuf, "aabbcc", false, false, false, false, true, true, false, 0)
 	require.NoError(t, err)
 
-	v2Metadata, err := v2Store.ReadSessionMetadata(ctx, cpID, 0)
-	require.NoError(t, err)
-	require.NotNil(t, v2Metadata.Summary)
-	require.Equal(t, "selected v2 intent", v2Metadata.Summary.Intent)
-
 	v1Metadata, err := v1Store.ReadSessionMetadata(ctx, cpID, 0)
 	require.NoError(t, err)
-	require.Nil(t, v1Metadata.Summary)
-}
+	require.NotNil(t, v1Metadata.Summary)
+	require.Equal(t, "selected v2 intent", v1Metadata.Summary.Intent)
 
-func TestRunExplainCheckpoint_V2OnlyGenerateSucceedsViaSelectedStore(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-
-	testutil.InitRepo(t, tmpDir)
-	repo, err := git.PlainOpen(tmpDir)
+	v2Metadata, err := v2Store.ReadSessionMetadata(ctx, cpID, 0)
 	require.NoError(t, err)
-
-	wt, err := repo.Worktree()
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("test"), 0o644))
-	_, err = wt.Add("test.txt")
-	require.NoError(t, err)
-	_, err = wt.Commit("initial commit", &git.CommitOptions{
-		Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()},
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(tmpDir, ".entire", "settings.json"),
-		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`),
-		0o644,
-	))
-
-	v2Store := checkpoint.NewV2GitStore(repo)
-	cpID := id.MustCheckpointID("f1f2f3f4f5f6")
-	ctx := context.Background()
-
-	transcript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"v2-only generate"}]}}` + "\n" +
-		`{"type":"assistant","message":{"content":"done"}}` + "\n")
-
-	// Write to v2 only — no v1 checkpoint exists.
-	require.NoError(t, v2Store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
-		CheckpointID: cpID,
-		SessionID:    "session-v2-only",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted(transcript),
-		AuthorName:   "Test",
-		AuthorEmail:  "test@example.com",
-	}))
-
-	// generate=true, force=true — should not fail with "failed to save summary"
-	// because v2 store can persist even when v1 doesn't have the checkpoint.
-	var buf, errBuf bytes.Buffer
-	err = runExplainCheckpoint(ctx, &buf, &errBuf, "f1f2f3", false, false, false, false, true, true, false, 0)
-	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "claude") || strings.Contains(errMsg, "executable file not found") {
-			t.Skipf("skipping: summarizer unavailable in CI: %v", err)
-		}
-		require.NotContains(t, errMsg, "failed to save summary",
-			"v2-only checkpoint should persist summary via v2 store")
-	}
+	require.Nil(t, v2Metadata.Summary)
 }
 
 func TestRunExplainCheckpoint_V2FallsBackToFullWhenCompactMissing(t *testing.T) {
