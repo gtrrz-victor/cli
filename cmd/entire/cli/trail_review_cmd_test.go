@@ -16,6 +16,8 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
+const trailReviewApplyOriginalContent = "hello\nold\n"
+
 func TestTrailReviewCommentsPath(t *testing.T) {
 	got := trailReviewCommentsPath("trail id/with slash", trailReviewListOptions{
 		Status:           "open,resolved",
@@ -32,8 +34,8 @@ func TestTrailReviewCommentsPath(t *testing.T) {
 }
 
 func TestPrintTrailReviewDashboard(t *testing.T) {
-	high := "high"
-	medium := "medium"
+	high := trailReviewSeverityHigh
+	medium := trailReviewSeverityMedium
 	path := "src/auth/session.ts"
 	line := 88
 	comments := []api.TrailReviewComment{
@@ -117,14 +119,14 @@ func TestFetchTrailReviewCommentsAndPatchStatus(t *testing.T) {
 			if got := r.URL.Query().Get("status"); got != "open" {
 				t.Fatalf("status query = %q, want open", got)
 			}
-			_ = json.NewEncoder(w).Encode(api.TrailReviewCommentsResponse{Comments: []api.TrailReviewComment{
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewCommentsResponse{Comments: []api.TrailReviewComment{
 				{ID: "cmt_1", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusOpen, Location: api.TrailReviewLocation{Granularity: "whole_change"}},
 			}})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/trails/trl_1/reviews/rvw_1/comments/cmt_1":
 			if err := json.NewDecoder(r.Body).Decode(&gotPatchBody); err != nil {
 				t.Fatalf("decode patch body: %v", err)
 			}
-			_ = json.NewEncoder(w).Encode(api.TrailReviewComment{ID: "cmt_1", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusResolved})
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewComment{ID: "cmt_1", TrailID: "trl_1", ReviewID: "rvw_1", Status: trailReviewStatusResolved})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -162,14 +164,14 @@ func TestFetchTrailReviewStateFollowsCursor(t *testing.T) {
 		switch r.URL.Query().Get("cursor") {
 		case "":
 			next := "cursor-2"
-			_ = json.NewEncoder(w).Encode(api.TrailReviewStateResponse{
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStateResponse{
 				Review:      api.TrailReview{ID: "rvw_1"},
 				CodeVersion: api.TrailReviewCodeVersion{ID: "cv_1"},
 				Comments:    []api.TrailReviewComment{{ID: "cmt_1"}},
 				NextCursor:  &next,
 			})
 		case "cursor-2":
-			_ = json.NewEncoder(w).Encode(api.TrailReviewStateResponse{
+			encodeTrailReviewTestJSON(t, w, api.TrailReviewStateResponse{
 				Review:      api.TrailReview{ID: "rvw_1"},
 				CodeVersion: api.TrailReviewCodeVersion{ID: "cv_1"},
 				Comments:    []api.TrailReviewComment{{ID: "cmt_2"}},
@@ -199,8 +201,8 @@ func TestFetchTrailReviewStateFollowsCursor(t *testing.T) {
 
 func TestApplyTrailReviewSuggestions_AppliesUnifiedDiff(t *testing.T) {
 	repo := newTrailReviewApplyRepo(t)
-	writeTrailReviewApplyFile(t, repo, "file.txt", "hello\nold\n")
-	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old", "new"))
+	writeTrailReviewApplyFile(t, repo, "file.txt")
+	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old"))
 
 	applied, err := applyTrailReviewSuggestions(context.Background(), comment, false, io.Discard)
 	if err != nil {
@@ -216,8 +218,8 @@ func TestApplyTrailReviewSuggestions_AppliesUnifiedDiff(t *testing.T) {
 
 func TestApplyTrailReviewSuggestions_CheckDoesNotModifyWorktree(t *testing.T) {
 	repo := newTrailReviewApplyRepo(t)
-	writeTrailReviewApplyFile(t, repo, "file.txt", "hello\nold\n")
-	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old", "new"))
+	writeTrailReviewApplyFile(t, repo, "file.txt")
+	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old"))
 
 	applied, err := applyTrailReviewSuggestions(context.Background(), comment, true, io.Discard)
 	if err != nil {
@@ -226,18 +228,18 @@ func TestApplyTrailReviewSuggestions_CheckDoesNotModifyWorktree(t *testing.T) {
 	if applied != 1 {
 		t.Fatalf("applied = %d, want 1", applied)
 	}
-	if got := readTrailReviewApplyFile(t, repo, "file.txt"); got != "hello\nold\n" {
+	if got := readTrailReviewApplyFile(t, repo, "file.txt"); got != trailReviewApplyOriginalContent {
 		t.Fatalf("file content = %q", got)
 	}
 }
 
 func TestApplyTrailReviewSuggestions_FailureDoesNotPartiallyApply(t *testing.T) {
 	repo := newTrailReviewApplyRepo(t)
-	writeTrailReviewApplyFile(t, repo, "a.txt", "hello\nold\n")
-	writeTrailReviewApplyFile(t, repo, "b.txt", "hello\nold\n")
+	writeTrailReviewApplyFile(t, repo, "a.txt")
+	writeTrailReviewApplyFile(t, repo, "b.txt")
 	comment := trailReviewApplyComment(
-		trailReviewPatch("a.txt", "old", "new"),
-		trailReviewPatch("b.txt", "missing", "new"),
+		trailReviewPatch("a.txt", "old"),
+		trailReviewPatch("b.txt", "missing"),
 	)
 
 	applied, err := applyTrailReviewSuggestions(context.Background(), comment, false, io.Discard)
@@ -247,10 +249,10 @@ func TestApplyTrailReviewSuggestions_FailureDoesNotPartiallyApply(t *testing.T) 
 	if applied != 0 {
 		t.Fatalf("applied = %d, want 0", applied)
 	}
-	if got := readTrailReviewApplyFile(t, repo, "a.txt"); got != "hello\nold\n" {
+	if got := readTrailReviewApplyFile(t, repo, "a.txt"); got != trailReviewApplyOriginalContent {
 		t.Fatalf("a.txt content = %q", got)
 	}
-	if got := readTrailReviewApplyFile(t, repo, "b.txt"); got != "hello\nold\n" {
+	if got := readTrailReviewApplyFile(t, repo, "b.txt"); got != trailReviewApplyOriginalContent {
 		t.Fatalf("b.txt content = %q", got)
 	}
 }
@@ -284,13 +286,13 @@ func newTrailReviewApplyRepo(t *testing.T) string {
 	return dir
 }
 
-func writeTrailReviewApplyFile(t *testing.T, repo, rel, content string) {
+func writeTrailReviewApplyFile(t *testing.T, repo, rel string) {
 	t.Helper()
 	path := filepath.Join(repo, rel)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(trailReviewApplyOriginalContent), 0o600); err != nil {
 		t.Fatalf("write %s: %v", rel, err)
 	}
 }
@@ -306,7 +308,7 @@ func readTrailReviewApplyFile(t *testing.T, repo, rel string) string {
 
 func runTrailReviewApplyGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -325,14 +327,21 @@ func trailReviewApplyComment(patches ...string) api.TrailReviewComment {
 	return api.TrailReviewComment{ID: "cmt_1", SuggestedChanges: changes}
 }
 
-func trailReviewPatch(file, oldText, newText string) string {
+func trailReviewPatch(file, oldText string) string {
 	return "diff --git a/" + file + " b/" + file + "\n" +
 		"--- a/" + file + "\n" +
 		"+++ b/" + file + "\n" +
 		"@@ -1,2 +1,2 @@\n" +
 		" hello\n" +
 		"-" + oldText + "\n" +
-		"+" + newText + "\n"
+		"+new\n"
+}
+
+func encodeTrailReviewTestJSON(t *testing.T, w http.ResponseWriter, v any) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
 }
 
 func TestStartTrailReviewSendsIdempotencyKey(t *testing.T) {
@@ -350,7 +359,7 @@ func TestStartTrailReviewSendsIdempotencyKey(t *testing.T) {
 		if body.HeadSHA == nil || *body.HeadSHA != "abc" {
 			t.Fatalf("HeadSHA = %#v", body.HeadSHA)
 		}
-		_ = json.NewEncoder(w).Encode(api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1", CodeVersionID: "cv_1"})
+		encodeTrailReviewTestJSON(t, w, api.TrailReviewStartResponse{ReviewID: "rvw_1", TrailID: "trl_1", CodeVersionID: "cv_1"})
 	}))
 	defer srv.Close()
 	t.Setenv(api.BaseURLEnvVar, srv.URL)

@@ -32,6 +32,9 @@ const (
 	trailReviewStatusOpen      = "open"
 	trailReviewStatusResolved  = "resolved"
 	trailReviewStatusDismissed = "dismissed"
+	trailReviewSeverityHigh    = "high"
+	trailReviewSeverityMedium  = "medium"
+	trailReviewSeverityLow     = "low"
 )
 
 type trailReviewListOptions struct {
@@ -300,7 +303,9 @@ func runTrailReviewShow(cmd *cobra.Command, number int, commentID string) error 
 	if err != nil {
 		return err
 	}
-	comment, _ = hydrateTrailReviewCommentSuggestions(cmd.Context(), client, target.Trail.ID, comment) // best-effort detail enrichment
+	if hydrated, hydrateErr := hydrateTrailReviewCommentSuggestions(cmd.Context(), client, target.Trail.ID, comment); hydrateErr == nil {
+		comment = hydrated
+	}
 	printTrailReviewCommentDetail(cmd.OutOrStdout(), comment)
 	return nil
 }
@@ -405,7 +410,7 @@ func runTrailReviewSubmit(cmd *cobra.Command, number int, event, body string) er
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s submitted by %s on %s\n", resp.Review.Event, resp.Review.Author, abbreviateMaybe(resp.Review.CommitSHA, 12))
+	fmt.Fprintf(cmd.OutOrStdout(), "%s submitted by %s on %s\n", resp.Review.Event, resp.Review.Author, abbreviate12(resp.Review.CommitSHA))
 	return nil
 }
 
@@ -657,7 +662,7 @@ func verifyTrailReviewHead(ctx context.Context, state api.TrailReviewStateRespon
 		return err
 	}
 	if got != want {
-		return fmt.Errorf("review was created for head %s, but current HEAD is %s; check out the reviewed commit or start a new review", abbreviateMaybe(want, 12), abbreviateMaybe(got, 12))
+		return fmt.Errorf("review was created for head %s, but current HEAD is %s; check out the reviewed commit or start a new review", abbreviate12(want), abbreviate12(got))
 	}
 	return nil
 }
@@ -927,12 +932,15 @@ func submitTrailReview(ctx context.Context, client *api.Client, target trailRevi
 func encodeTrailReviewJSON(w io.Writer, target trailReviewTarget, comments []api.TrailReviewComment, hasMore bool, counts trailReviewCommentCounts) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(map[string]any{
+	if err := enc.Encode(map[string]any{
 		"trail":    target.Trail,
 		"counts":   counts,
 		"comments": comments,
 		"has_more": hasMore,
-	})
+	}); err != nil {
+		return fmt.Errorf("encode trail review JSON: %w", err)
+	}
+	return nil
 }
 
 func printTrailReviewDashboard(w io.Writer, target trailReviewTarget, comments []api.TrailReviewComment, hasMore bool, opts trailReviewListOptions, counts trailReviewCommentCounts) {
@@ -953,7 +961,7 @@ func printTrailReviewDashboard(w io.Writer, target trailReviewTarget, comments [
 		return
 	}
 
-	for _, severity := range []string{"high", "medium", "low", ""} {
+	for _, severity := range []string{trailReviewSeverityHigh, trailReviewSeverityMedium, trailReviewSeverityLow, ""} {
 		group := filterCommentsBySeverity(comments, severity)
 		if len(group) == 0 {
 			continue
@@ -961,7 +969,7 @@ func printTrailReviewDashboard(w io.Writer, target trailReviewTarget, comments [
 		title := severityTitle(severity)
 		fmt.Fprintln(w, title)
 		for _, comment := range group {
-			fmt.Fprintf(w, "  %s %s   %s   %s\n", severityInitial(comment.Severity), trailReviewLocationDisplay(comment.Location), abbreviateMaybe(comment.ID, 12), trailReviewCommentTitle(comment))
+			fmt.Fprintf(w, "  %s %s   %s   %s\n", severityInitial(comment.Severity), trailReviewLocationDisplay(comment.Location), abbreviate12(comment.ID), trailReviewCommentTitle(comment))
 		}
 		fmt.Fprintln(w)
 	}
@@ -982,7 +990,7 @@ func printTrailReviewComments(w io.Writer, comments []api.TrailReviewComment, ha
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tSEV\tSTATUS\tLOCATION\tTITLE")
 	for _, comment := range comments {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", abbreviateMaybe(comment.ID, 12), severityDisplay(comment.Severity), comment.Status, trailReviewLocationDisplay(comment.Location), trailReviewCommentTitle(comment))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", abbreviate12(comment.ID), severityDisplay(comment.Severity), comment.Status, trailReviewLocationDisplay(comment.Location), trailReviewCommentTitle(comment))
 	}
 	_ = tw.Flush()
 	if hasMore {
@@ -1026,8 +1034,8 @@ func printTrailReviewStart(w io.Writer, target trailReviewTarget, started api.Tr
 	fmt.Fprintf(w, "Started review %s for trail #%d (%s)\n", started.ReviewID, target.Trail.Number, target.Trail.Title)
 	fmt.Fprintf(w, "  Code version: %s\n", started.CodeVersionID)
 	if started.BaseSHA != nil || started.HeadSHA != nil {
-		fmt.Fprintf(w, "  Base: %s\n", abbreviateMaybe(optionalStringValue(started.BaseSHA), 12))
-		fmt.Fprintf(w, "  Head: %s\n", abbreviateMaybe(optionalStringValue(started.HeadSHA), 12))
+		fmt.Fprintf(w, "  Base: %s\n", abbreviate12(optionalStringValue(started.BaseSHA)))
+		fmt.Fprintf(w, "  Head: %s\n", abbreviate12(optionalStringValue(started.HeadSHA)))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next:")
@@ -1056,11 +1064,11 @@ func countTrailReviewComments(comments []api.TrailReviewComment) trailReviewComm
 		case trailReviewStatusOpen:
 			counts.Open++
 			switch strings.ToLower(stringPtrValue(comment.Severity)) {
-			case "high":
+			case trailReviewSeverityHigh:
 				counts.OpenHigh++
-			case "medium":
+			case trailReviewSeverityMedium:
 				counts.OpenMedium++
-			case "low":
+			case trailReviewSeverityLow:
 				counts.OpenLow++
 			}
 		}
@@ -1076,7 +1084,7 @@ func filterCommentsBySeverity(comments []api.TrailReviewComment, severity string
 	for _, comment := range comments {
 		got := strings.ToLower(stringPtrValue(comment.Severity))
 		if severity == "" {
-			if got != "high" && got != "medium" && got != "low" {
+			if got != trailReviewSeverityHigh && got != trailReviewSeverityMedium && got != trailReviewSeverityLow {
 				out = append(out, comment)
 			}
 			continue
@@ -1115,11 +1123,11 @@ func trailReviewCommentTitle(comment api.TrailReviewComment) string {
 
 func severityTitle(severity string) string {
 	switch severity {
-	case "high":
+	case trailReviewSeverityHigh:
 		return "High"
-	case "medium":
+	case trailReviewSeverityMedium:
 		return "Medium"
-	case "low":
+	case trailReviewSeverityLow:
 		return "Low"
 	default:
 		return "Other"
@@ -1135,11 +1143,11 @@ func severityDisplay(severity *string) string {
 
 func severityInitial(severity *string) string {
 	switch strings.ToLower(stringPtrValue(severity)) {
-	case "high":
+	case trailReviewSeverityHigh:
 		return "H"
-	case "medium":
+	case trailReviewSeverityMedium:
 		return "M"
-	case "low":
+	case trailReviewSeverityLow:
 		return "L"
 	default:
 		return "-"
@@ -1206,8 +1214,9 @@ func optionalStringValue(s *string) string {
 	return *s
 }
 
-func abbreviateMaybe(s string, n int) string {
-	if len(s) <= n || n <= 0 {
+func abbreviate12(s string) string {
+	const n = 12
+	if len(s) <= n {
 		return s
 	}
 	return s[:n]
