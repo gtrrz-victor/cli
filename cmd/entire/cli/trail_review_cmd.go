@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -664,27 +666,120 @@ func applyTrailReviewSuggestions(ctx context.Context, comment api.TrailReviewCom
 	if len(comment.SuggestedChanges) == 0 {
 		return 0, fmt.Errorf("comment %s has no suggested changes", comment.ID)
 	}
-	applied := 0
+	combinedPatch, supported, err := combinedSafeUnifiedDiffPatch(comment, w)
+	if err != nil {
+		return 0, err
+	}
+	if supported == 0 {
+		return 0, fmt.Errorf("comment %s has no supported unified_diff suggested changes", comment.ID)
+	}
+	if err := runGitApply(ctx, combinedPatch, true); err != nil {
+		return 0, fmt.Errorf("suggested changes for comment %s do not apply cleanly: %w", comment.ID, err)
+	}
+	if checkOnly {
+		return supported, nil
+	}
+	if err := runGitApply(ctx, combinedPatch, false); err != nil {
+		return 0, fmt.Errorf("apply suggested changes for comment %s: %w", comment.ID, err)
+	}
+	return supported, nil
+}
+
+func combinedSafeUnifiedDiffPatch(comment api.TrailReviewComment, w io.Writer) (string, int, error) {
+	var combined strings.Builder
+	supported := 0
 	for _, change := range comment.SuggestedChanges {
 		patch := strings.TrimSpace(stringPtrValue(change.Patch))
 		if change.ChangeType != "unified_diff" || patch == "" {
 			fmt.Fprintf(w, "Skipping suggested change %s (%s): only unified_diff patches are supported.\n", change.ID, change.ChangeType)
 			continue
 		}
-		if err := runGitApply(ctx, patch, true); err != nil {
-			return applied, fmt.Errorf("suggested change %s does not apply cleanly: %w", change.ID, err)
+		if err := validateUnifiedDiffPatchPaths(patch); err != nil {
+			return "", 0, fmt.Errorf("suggested change %s has unsafe patch path: %w", change.ID, err)
 		}
-		if !checkOnly {
-			if err := runGitApply(ctx, patch, false); err != nil {
-				return applied, fmt.Errorf("apply suggested change %s: %w", change.ID, err)
+		if combined.Len() > 0 {
+			combined.WriteByte('\n')
+		}
+		combined.WriteString(patch)
+		combined.WriteByte('\n')
+		supported++
+	}
+	return combined.String(), supported, nil
+}
+
+func validateUnifiedDiffPatchPaths(patchText string) error {
+	scanner := bufio.NewScanner(strings.NewReader(patchText))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for scanner.Scan() {
+		line := scanner.Text()
+		for _, p := range patchHeaderPaths(line) {
+			if err := validatePatchPath(p); err != nil {
+				return err
 			}
 		}
-		applied++
 	}
-	if applied == 0 {
-		return 0, fmt.Errorf("comment %s has no supported unified_diff suggested changes", comment.ID)
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan patch: %w", err)
 	}
-	return applied, nil
+	return nil
+}
+
+func patchHeaderPaths(line string) []string {
+	switch {
+	case strings.HasPrefix(line, "diff --git "):
+		fields := strings.Fields(strings.TrimPrefix(line, "diff --git "))
+		if len(fields) >= 2 {
+			return []string{fields[0], fields[1]}
+		}
+	case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ "):
+		return []string{patchHeaderPath(line[4:])}
+	case strings.HasPrefix(line, "rename from "):
+		return []string{strings.TrimSpace(strings.TrimPrefix(line, "rename from "))}
+	case strings.HasPrefix(line, "rename to "):
+		return []string{strings.TrimSpace(strings.TrimPrefix(line, "rename to "))}
+	case strings.HasPrefix(line, "copy from "):
+		return []string{strings.TrimSpace(strings.TrimPrefix(line, "copy from "))}
+	case strings.HasPrefix(line, "copy to "):
+		return []string{strings.TrimSpace(strings.TrimPrefix(line, "copy to "))}
+	}
+	return nil
+}
+
+func patchHeaderPath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if beforeTab, _, ok := strings.Cut(raw, "\t"); ok {
+		raw = beforeTab
+	}
+	return raw
+}
+
+func validatePatchPath(raw string) error {
+	p := strings.TrimSpace(raw)
+	if p == "" || p == "/dev/null" {
+		return nil
+	}
+	if unquoted, err := strconv.Unquote(p); err == nil {
+		p = unquoted
+	}
+	p = strings.TrimPrefix(p, "a/")
+	p = strings.TrimPrefix(p, "b/")
+	p = strings.ReplaceAll(p, "\\", "/")
+	if strings.HasPrefix(p, "/") {
+		return fmt.Errorf("absolute path %q is not allowed", raw)
+	}
+	clean := path.Clean(p)
+	if clean == "." || clean == "" {
+		return nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("path %q escapes the repository", raw)
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if part == ".git" {
+			return fmt.Errorf("path %q targets .git metadata", raw)
+		}
+	}
+	return nil
 }
 
 func runGitApply(ctx context.Context, patch string, checkOnly bool) error {

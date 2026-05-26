@@ -3,12 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
 func TestTrailReviewCommentsPath(t *testing.T) {
@@ -190,6 +195,144 @@ func TestFetchTrailReviewStateFollowsCursor(t *testing.T) {
 	if state.NextCursor != nil {
 		t.Fatalf("NextCursor = %#v, want nil after final page", state.NextCursor)
 	}
+}
+
+func TestApplyTrailReviewSuggestions_AppliesUnifiedDiff(t *testing.T) {
+	repo := newTrailReviewApplyRepo(t)
+	writeTrailReviewApplyFile(t, repo, "file.txt", "hello\nold\n")
+	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old", "new"))
+
+	applied, err := applyTrailReviewSuggestions(context.Background(), comment, false, io.Discard)
+	if err != nil {
+		t.Fatalf("applyTrailReviewSuggestions: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied = %d, want 1", applied)
+	}
+	if got := readTrailReviewApplyFile(t, repo, "file.txt"); got != "hello\nnew\n" {
+		t.Fatalf("file content = %q", got)
+	}
+}
+
+func TestApplyTrailReviewSuggestions_CheckDoesNotModifyWorktree(t *testing.T) {
+	repo := newTrailReviewApplyRepo(t)
+	writeTrailReviewApplyFile(t, repo, "file.txt", "hello\nold\n")
+	comment := trailReviewApplyComment(trailReviewPatch("file.txt", "old", "new"))
+
+	applied, err := applyTrailReviewSuggestions(context.Background(), comment, true, io.Discard)
+	if err != nil {
+		t.Fatalf("applyTrailReviewSuggestions --check: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("applied = %d, want 1", applied)
+	}
+	if got := readTrailReviewApplyFile(t, repo, "file.txt"); got != "hello\nold\n" {
+		t.Fatalf("file content = %q", got)
+	}
+}
+
+func TestApplyTrailReviewSuggestions_FailureDoesNotPartiallyApply(t *testing.T) {
+	repo := newTrailReviewApplyRepo(t)
+	writeTrailReviewApplyFile(t, repo, "a.txt", "hello\nold\n")
+	writeTrailReviewApplyFile(t, repo, "b.txt", "hello\nold\n")
+	comment := trailReviewApplyComment(
+		trailReviewPatch("a.txt", "old", "new"),
+		trailReviewPatch("b.txt", "missing", "new"),
+	)
+
+	applied, err := applyTrailReviewSuggestions(context.Background(), comment, false, io.Discard)
+	if err == nil {
+		t.Fatal("applyTrailReviewSuggestions expected error")
+	}
+	if applied != 0 {
+		t.Fatalf("applied = %d, want 0", applied)
+	}
+	if got := readTrailReviewApplyFile(t, repo, "a.txt"); got != "hello\nold\n" {
+		t.Fatalf("a.txt content = %q", got)
+	}
+	if got := readTrailReviewApplyFile(t, repo, "b.txt"); got != "hello\nold\n" {
+		t.Fatalf("b.txt content = %q", got)
+	}
+}
+
+func TestApplyTrailReviewSuggestions_RejectsGitMetadataPaths(t *testing.T) {
+	_ = newTrailReviewApplyRepo(t)
+	comment := trailReviewApplyComment(`diff --git a/.git/config b/.git/config
+--- a/.git/config
++++ b/.git/config
+@@ -1,1 +1,1 @@
+-old
++new
+`)
+
+	_, err := applyTrailReviewSuggestions(context.Background(), comment, false, io.Discard)
+	if err == nil {
+		t.Fatal("applyTrailReviewSuggestions expected unsafe path error")
+	}
+	if !strings.Contains(err.Error(), ".git") {
+		t.Fatalf("error = %v, want .git mention", err)
+	}
+}
+
+func newTrailReviewApplyRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runTrailReviewApplyGit(t, dir, "init")
+	paths.ClearWorktreeRootCache()
+	t.Chdir(dir)
+	t.Cleanup(paths.ClearWorktreeRootCache)
+	return dir
+}
+
+func writeTrailReviewApplyFile(t *testing.T, repo, rel, content string) {
+	t.Helper()
+	path := filepath.Join(repo, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func readTrailReviewApplyFile(t *testing.T, repo, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repo, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return string(data)
+}
+
+func runTrailReviewApplyGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func trailReviewApplyComment(patches ...string) api.TrailReviewComment {
+	changes := make([]api.TrailReviewSuggestedChange, len(patches))
+	for i, patch := range patches {
+		changes[i] = api.TrailReviewSuggestedChange{
+			ID:         "change-" + string(rune('a'+i)),
+			ChangeType: "unified_diff",
+			Patch:      trailReviewStrPtr(patch),
+		}
+	}
+	return api.TrailReviewComment{ID: "cmt_1", SuggestedChanges: changes}
+}
+
+func trailReviewPatch(file, oldText, newText string) string {
+	return "diff --git a/" + file + " b/" + file + "\n" +
+		"--- a/" + file + "\n" +
+		"+++ b/" + file + "\n" +
+		"@@ -1,2 +1,2 @@\n" +
+		" hello\n" +
+		"-" + oldText + "\n" +
+		"+" + newText + "\n"
 }
 
 func TestStartTrailReviewSendsIdempotencyKey(t *testing.T) {
