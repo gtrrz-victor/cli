@@ -50,9 +50,6 @@ const (
 
 	// V2FullCurrentRefName stores raw transcripts.
 	V2FullCurrentRefName = "refs/entire/checkpoints/v2/full/current"
-
-	// V2FullRefPrefix is the common prefix for all /full/* refs.
-	V2FullRefPrefix = "refs/entire/checkpoints/v2/full/"
 )
 
 // TrailsBranchName is the orphan branch used to store trail metadata.

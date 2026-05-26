@@ -83,53 +83,6 @@ func TestV2ReadSessionContent_ReturnsMetadataAndTranscript(t *testing.T) {
 	assert.Contains(t, content.Prompts, "test prompt")
 }
 
-func TestV2ReadSessionContent_TranscriptFromArchivedGeneration(t *testing.T) {
-	t.Parallel()
-	repo := initTestRepo(t)
-	store := NewV2GitStore(repo)
-	ctx := context.Background()
-
-	cpID1 := id.MustCheckpointID("d1d2d3d4d5d6")
-	err := store.WriteCommitted(ctx, WriteCommittedOptions{
-		CheckpointID: cpID1,
-		SessionID:    "session-1",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"first": true}`)),
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
-	require.NoError(t, err)
-
-	fullRefName := plumbing.ReferenceName(paths.V2FullCurrentRefName)
-	fullRef, err := repo.Reference(fullRefName, true)
-	require.NoError(t, err)
-	archiveRefName := plumbing.ReferenceName(paths.V2FullRefPrefix + "0000000000001")
-	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(archiveRefName, fullRef.Hash())))
-
-	emptyTreeHash, err := BuildTreeFromEntries(ctx, repo, map[string]object.TreeEntry{})
-	require.NoError(t, err)
-	authorName, authorEmail := GetGitAuthorFromRepo(repo)
-	emptyCommitHash, err := CreateCommit(ctx, repo, emptyTreeHash, plumbing.ZeroHash, "Reset v2 full current", authorName, authorEmail)
-	require.NoError(t, err)
-	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(fullRefName, emptyCommitHash)))
-
-	cpID2 := id.MustCheckpointID("e1e2e3e4e5e6")
-	err = store.WriteCommitted(ctx, WriteCommittedOptions{
-		CheckpointID: cpID2,
-		SessionID:    "session-2",
-		Strategy:     "manual-commit",
-		Transcript:   redact.AlreadyRedacted([]byte(`{"second": true}`)),
-		AuthorName:   "Test",
-		AuthorEmail:  "test@test.com",
-	})
-	require.NoError(t, err)
-
-	content, err := store.ReadSessionContent(ctx, cpID1, 0)
-	require.NoError(t, err)
-	require.NotNil(t, content)
-	assert.NotEmpty(t, content.Transcript, "transcript should be found in archived generation")
-}
-
 func TestV2ReadSessionContent_MissingTranscript_ReturnsError(t *testing.T) {
 	t.Parallel()
 	repo := initTestRepo(t)
@@ -151,7 +104,7 @@ func TestV2ReadSessionContent_MissingTranscript_ReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoTranscript)
 }
 
-func TestV2FetchRemoteFullRefsUsesStoreRepository(t *testing.T) {
+func TestV2FetchRemoteFullCurrentRefUsesStoreRepository(t *testing.T) {
 	// Cannot use t.Parallel because this test changes cwd to verify the store
 	// repository controls remote resolution.
 	ctx := context.Background()
@@ -181,7 +134,7 @@ func TestV2FetchRemoteFullRefsUsesStoreRepository(t *testing.T) {
 	t.Chdir(cwdRoot)
 
 	localStore := NewV2GitStore(localRepo)
-	require.NoError(t, localStore.fetchRemoteFullRefs(ctx))
+	require.NoError(t, localStore.fetchRemoteFullCurrentRef(ctx))
 
 	reopenedLocalRepo, err := git.PlainOpen(localRoot)
 	require.NoError(t, err)

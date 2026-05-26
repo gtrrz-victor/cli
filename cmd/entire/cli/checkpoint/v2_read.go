@@ -198,7 +198,7 @@ func (s *V2GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Ch
 }
 
 // ReadSessionMetadataAndPrompts reads a session's metadata and prompts from the
-// v2 /main ref without requiring the raw transcript from /full/* refs.
+// v2 /main ref without requiring the raw transcript from /full/current.
 // Used by explain when the raw transcript is unavailable but compact transcript
 // (transcript.jsonl) on /main can substitute for display.
 // Returns ErrCheckpointNotFound if the checkpoint or session doesn't exist on /main.
@@ -260,7 +260,7 @@ func (s *V2GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.Che
 }
 
 // ReadSessionContent reads a session's metadata and prompts from the v2 /main ref,
-// and the raw transcript (raw_transcript) from /full/* refs (current + archived generations).
+// and the raw transcript (raw_transcript) from /full/current.
 // This is the v2 equivalent of GitStore.ReadSessionContent — it reads the raw agent
 // transcript, not the compact transcript.jsonl. Used by resume and RestoreLogsOnly.
 // Returns ErrNoTranscript if the session exists but no raw transcript is available.
@@ -290,7 +290,7 @@ func (s *V2GitStore) ReadSessionContent(ctx context.Context, checkpointID id.Che
 
 	transcript, transcriptErr := s.readTranscriptFromFullRefs(ctx, checkpointID, sessionIndex, result.Metadata.Agent)
 	if transcriptErr != nil {
-		return nil, fmt.Errorf("failed to read transcript from /full/* refs: %w", transcriptErr)
+		return nil, fmt.Errorf("failed to read transcript from /full/current: %w", transcriptErr)
 	}
 	if len(transcript) == 0 {
 		return nil, ErrNoTranscript
@@ -331,8 +331,7 @@ func (s *V2GitStore) sessionTreeFromMain(ctx context.Context, checkpointID id.Ch
 }
 
 // readTranscriptFromFullRefs reads the raw transcript for a checkpoint session
-// by searching /full/current first, then archived generations in reverse order.
-// If not found locally, attempts to discover and fetch remote /full/* refs.
+// from /full/current. If not found locally, it attempts to fetch remote /full/current.
 func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, agentType types.AgentType) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
@@ -340,53 +339,18 @@ func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointI
 
 	sessionPath := fmt.Sprintf("%s/%d", checkpointID.Path(), sessionIndex)
 
-	// Search locally first
 	transcript, err := s.readTranscriptFromRef(plumbing.ReferenceName(paths.V2FullCurrentRefName), sessionPath, agentType)
 	if err == nil && len(transcript) > 0 {
 		return transcript, nil
 	}
 
-	archived, err := s.ListArchivedGenerations()
-	if err != nil {
-		return nil, err
-	}
-	for i := len(archived) - 1; i >= 0; i-- {
-		refName := plumbing.ReferenceName(paths.V2FullRefPrefix + archived[i])
-		transcript, err := s.readTranscriptFromRef(refName, sessionPath, agentType)
-		if err == nil && len(transcript) > 0 {
-			return transcript, nil
-		}
-	}
-
-	// Not found locally — try fetching remote /full/* refs
-	if fetchErr := s.fetchRemoteFullRefs(ctx); fetchErr != nil {
-		logging.Debug(ctx, "failed to fetch remote /full/* refs",
+	if fetchErr := s.fetchRemoteFullCurrentRef(ctx); fetchErr != nil {
+		logging.Debug(ctx, "failed to fetch remote /full/current ref",
 			slog.String("error", fetchErr.Error()),
 		)
 		return nil, nil
 	}
 
-	// Search newly fetched refs only
-	newArchived, err := s.ListArchivedGenerations()
-	if err != nil {
-		return nil, nil //nolint:nilerr // Best-effort: fetch-on-demand failure shouldn't block resume
-	}
-	existingSet := make(map[string]bool, len(archived))
-	for _, a := range archived {
-		existingSet[a] = true
-	}
-	for i := len(newArchived) - 1; i >= 0; i-- {
-		if existingSet[newArchived[i]] {
-			continue
-		}
-		refName := plumbing.ReferenceName(paths.V2FullRefPrefix + newArchived[i])
-		transcript, err := s.readTranscriptFromRef(refName, sessionPath, agentType)
-		if err == nil && len(transcript) > 0 {
-			return transcript, nil
-		}
-	}
-
-	// Also retry /full/current in case it was updated by the fetch
 	transcript, err = s.readTranscriptFromRef(plumbing.ReferenceName(paths.V2FullCurrentRefName), sessionPath, agentType)
 	if err == nil && len(transcript) > 0 {
 		return transcript, nil
@@ -395,9 +359,8 @@ func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointI
 	return nil, nil
 }
 
-// fetchRemoteFullRefs discovers and fetches /full/* refs from the effective
-// checkpoint fetch target that aren't local.
-func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
+// fetchRemoteFullCurrentRef fetches /full/current from the effective checkpoint fetch target.
+func (s *V2GitStore) fetchRemoteFullCurrentRef(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
@@ -406,38 +369,10 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 		return err
 	}
 
-	fetchTarget := v2FullRefsFetchTarget(ctx, repoRoot)
-	output, err := remote.LsRemoteInDir(ctx, repoRoot, fetchTarget, paths.V2FullRefPrefix+"*")
-	if err != nil {
-		return fmt.Errorf("ls-remote failed: %w", err)
-	}
-
-	var refSpecs []string
-	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		remoteRefName := parts[1]
-
-		// Skip refs that already exist locally
-		if _, refErr := s.repo.Reference(plumbing.ReferenceName(remoteRefName), true); refErr == nil {
-			continue
-		}
-
-		refSpecs = append(refSpecs, fmt.Sprintf("+%s:%s", remoteRefName, remoteRefName))
-	}
-
-	if len(refSpecs) == 0 {
-		return nil
-	}
-
+	fetchTarget := v2FullCurrentFetchTarget(ctx, repoRoot)
 	if fetchOutput, fetchErr := remote.Fetch(ctx, remote.FetchOptions{
 		Remote:   fetchTarget,
-		RefSpecs: refSpecs,
+		RefSpecs: []string{fmt.Sprintf("+%s:%s", paths.V2FullCurrentRefName, paths.V2FullCurrentRefName)},
 		NoTags:   true,
 		NoFilter: true,
 		Dir:      repoRoot,
@@ -448,7 +383,7 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 	return nil
 }
 
-func v2FullRefsFetchTarget(ctx context.Context, repoRoot string) string {
+func v2FullCurrentFetchTarget(ctx context.Context, repoRoot string) string {
 	target, err := remote.FetchURL(ctx, remote.FetchURLOptions{WorktreeRoot: repoRoot})
 	if err == nil && target != "" {
 		return target
@@ -456,7 +391,7 @@ func v2FullRefsFetchTarget(ctx context.Context, repoRoot string) string {
 	return "origin"
 }
 
-// readTranscriptFromRef reads the raw transcript from a specific /full/* ref.
+// readTranscriptFromRef reads the raw transcript from a specific /full ref.
 // Follows the same chunking convention as readTranscriptFromTree in committed.go:
 // chunk 0 is the base file (raw_transcript), chunks 1+ are raw_transcript.001, .002, etc.
 // When chunk files exist, all chunks (including chunk 0) are reassembled using
