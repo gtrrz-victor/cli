@@ -1,7 +1,4 @@
 #!/bin/sh
 #MISE description="Build the CLI"
 
-OUTPUT="entire"
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) OUTPUT="entire.exe" ;; esac
-
-go build -o "$OUTPUT" ./cmd/entire
+go build ./cmd/entire
