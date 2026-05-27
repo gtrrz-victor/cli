@@ -48,11 +48,6 @@ func (s *ManualCommitStrategy) getCheckpointStore(repo *git.Repository) *checkpo
 	return store
 }
 
-func (s *ManualCommitStrategy) committedCheckpointStore(repo *git.Repository) *checkpoint.GitStore {
-	WarnIfMetadataDisconnected()
-	return s.getCheckpointStore(repo)
-}
-
 // NewManualCommitStrategy creates a new manual-commit strategy instance.
 func NewManualCommitStrategy() *ManualCommitStrategy {
 	return &ManualCommitStrategy{}

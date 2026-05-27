@@ -628,7 +628,8 @@ func (s *ManualCommitStrategy) RestoreLogsOnly(ctx context.Context, w, errW io.W
 	}
 	defer repo.Close()
 
-	store := s.committedCheckpointStore(repo)
+	WarnIfMetadataDisconnected()
+	store := s.getCheckpointStore(repo)
 	summary, err := cpkg.ReadCommittedCheckpoint(ctx, store, point.CheckpointID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read checkpoint: %w", err)
