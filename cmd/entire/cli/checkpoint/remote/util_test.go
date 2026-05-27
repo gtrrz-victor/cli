@@ -124,9 +124,21 @@ func TestFetchURL_EdgeCases(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name:         "unsupported origin protocol without token falls back to origin",
+			name:         "unsupported origin protocol without token routes to provider checkpoint url",
 			addOrigin:    true,
 			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"acme/checkpoints"}}}`,
+			wantURL:      "https://github.com/acme/checkpoints.git",
+		},
+		{
+			name:         "entire:// origin without token routes to provider checkpoint url",
+			originURL:    "entire://app.entire.io/acme/app",
+			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"acme/checkpoints"}}}`,
+			wantURL:      "https://github.com/acme/checkpoints.git",
+		},
+		{
+			name:         "non-derivable origin with unknown provider falls back to origin",
+			originURL:    "entire://app.entire.io/acme/app",
+			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"bitbucket","repo":"acme/checkpoints"}}}`,
 			wantURL:      "",
 		},
 		{
@@ -296,6 +308,30 @@ func TestPushURL(t *testing.T) {
 			pushRemote:   "origin",
 			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"acme/checkpoints"}}}`,
 			wantURL:      "https://github.com/fork/app.git",
+			wantEnabled:  false,
+		},
+		{
+			name:         "entire:// origin routes to provider checkpoint url over https",
+			originURL:    "entire://app.entire.io/acme/app",
+			pushRemote:   "origin",
+			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"acme/checkpoints"}}}`,
+			wantURL:      "https://github.com/acme/checkpoints.git",
+			wantEnabled:  true,
+		},
+		{
+			name:         "file:// origin routes to provider checkpoint url over https",
+			originURL:    "file:///acme/app",
+			pushRemote:   "origin",
+			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"github","repo":"acme/checkpoints"}}}`,
+			wantURL:      "https://github.com/acme/checkpoints.git",
+			wantEnabled:  true,
+		},
+		{
+			name:         "non-derivable origin with unknown provider falls back to origin",
+			originURL:    "entire://app.entire.io/acme/app",
+			pushRemote:   "origin",
+			settingsJSON: `{"enabled":true,"strategy_options":{"checkpoint_remote":{"provider":"bitbucket","repo":"acme/checkpoints"}}}`,
+			wantURL:      "entire://app.entire.io/acme/app",
 			wantEnabled:  false,
 		},
 		{

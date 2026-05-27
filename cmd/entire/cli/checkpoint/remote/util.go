@@ -109,6 +109,12 @@ func FetchURL(ctx context.Context, opts ...FetchURLOptions) (string, error) {
 
 	checkpointURL, err := deriveCheckpointURLFromInfo(info, config)
 	if err != nil {
+		// Origin's protocol can't be mapped to a git transport (e.g. entire://,
+		// file://). Honor the configured checkpoint_remote by targeting the
+		// provider's canonical host over HTTPS rather than falling back to origin.
+		if providerURL, ok := providerCheckpointURL(config); ok {
+			return providerURL, nil
+		}
 		logFallback(ctx, "fetch", originURL, "derive checkpoint remote URL", err)
 		return originURL, nil
 	}
@@ -204,6 +210,13 @@ func PushURL(ctx context.Context, pushRemoteName string) (string, bool, error) {
 
 	pushURL, err := deriveCheckpointURLFromInfo(pushInfo, config)
 	if err != nil {
+		// The push remote's protocol can't be mapped to a git transport
+		// (e.g. entire://, file://). Honor the configured checkpoint_remote by
+		// targeting the provider's canonical host over HTTPS rather than
+		// misrouting checkpoints to the origin remote.
+		if providerURL, ok := providerCheckpointURL(config); ok {
+			return providerURL, true, nil
+		}
 		fallbackURL, fallbackErr := resolvePushFallbackURL(ctx, pushRemoteName, originURL)
 		if fallbackErr == nil {
 			logFallback(ctx, "push", fallbackURL, "derive push checkpoint URL", err,
@@ -283,6 +296,27 @@ func deriveCheckpointURLFromInfo(info *Info, config *settings.CheckpointRemoteCo
 	default:
 		return "", fmt.Errorf("unsupported protocol %q in origin remote", info.Protocol)
 	}
+}
+
+// providerCheckpointURL returns the HTTPS checkpoint URL for the configured
+// provider's canonical host (e.g. github.com, gitlab.com). It is the fallback
+// used when the origin/push remote's protocol can't be mapped to a git
+// transport (e.g. entire://, file://): the configured checkpoint_remote names a
+// concrete provider, so checkpoints go there rather than being misrouted to the
+// origin remote. Mirrors the target the token path already uses.
+//
+// Returns ok=false for providers without a known canonical host, in which case
+// the caller should fall back to the origin remote.
+func providerCheckpointURL(config *settings.CheckpointRemoteConfig) (string, bool) {
+	host, ok := providerHost(config.Provider)
+	if !ok {
+		return "", false
+	}
+	url, err := deriveCheckpointURLFromInfo(&Info{Protocol: ProtocolHTTPS, Host: host}, config)
+	if err != nil {
+		return "", false
+	}
+	return url, true
 }
 
 func deriveTokenOriginURL(originURL string) (string, bool) {
