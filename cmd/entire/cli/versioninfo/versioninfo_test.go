@@ -53,6 +53,17 @@ func TestResolve(t *testing.T) {
 			wantCommit:  "ddf1a331c0ffee1234567890abcdef0987654321",
 		},
 		{
+			name:    "explicit commit survives build-info fallback",
+			version: "dev",
+			commit:  "abc1234",
+			info: buildInfo("(devel)",
+				debug.BuildSetting{Key: "vcs.revision", Value: "ddf1a331c0ffee1234567890abcdef0987654321"},
+			),
+			ok:          true,
+			wantVersion: "dev",
+			wantCommit:  "abc1234",
+		},
+		{
 			name:        "missing build info leaves defaults",
 			version:     "dev",
 			commit:      "unknown",

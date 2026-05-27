@@ -7,11 +7,12 @@ import (
 
 // Version and Commit identify the running CLI build.
 //
-// Release and `mise build` binaries stamp these via ldflags
-// (-X ...versioninfo.Version=...). For binaries built without those ldflags --
-// notably `go install github.com/entireio/cli/cmd/entire@<version>` and plain
-// `go build`/`go install ./...` -- Load() recovers them from Go's embedded
-// build info instead, so the CLI still self-reports a real version and commit.
+// Only release binaries (GoReleaser) stamp these via ldflags
+// (-X ...versioninfo.Version=...). Every other build -- `mise build`,
+// `go install github.com/entireio/cli/cmd/entire@<version>`, and plain
+// `go build`/`go install ./...` -- carries no ldflags, so Load() recovers
+// them from Go's embedded build info instead and the CLI still self-reports
+// a real version and commit.
 var (
 	Version = "dev"
 	Commit  = "unknown"
@@ -38,9 +39,12 @@ func resolve(version, commit string, info *debug.BuildInfo, ok bool) (string, st
 	if v := info.Main.Version; v != "" && v != "(devel)" {
 		version = strings.TrimPrefix(v, "v") // match GoReleaser's {{.Version}}
 	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" && setting.Value != "" {
-			commit = setting.Value
+	// Only fill an unset commit; an explicit ldflags stamp always wins.
+	if commit == "unknown" {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				commit = setting.Value
+			}
 		}
 	}
 
