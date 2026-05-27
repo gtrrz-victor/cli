@@ -8,100 +8,24 @@ package cli
 //   review → checkpoint → codex → review
 //   review → claudecode/codex/geminicli → review
 //
-// headHasReviewCheckpoint requires checkpoint access and stays here.
 // newReviewAttachCmd uses runAttachSurfaceReviewErrors (in attach.go)
-// and also stays here.
+// and stays here. HEAD-checkpoint flag resolution lives in
+// head_checkpoint_flags.go.
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
 
 	"github.com/spf13/cobra"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/external"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
-	"github.com/entireio/cli/cmd/entire/cli/gitrepo"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
-	"github.com/entireio/cli/cmd/entire/cli/trailers"
 )
-
-// headCheckpointFlags returns the (HasReview, HasInvestigation, info) triple
-// for HEAD's checkpoint. Returns (false, false, "") when there is no
-// checkpoint at HEAD or when reading fails (logged via slog Debug).
-//
-// info is a human-readable string used by status / re-run guards (e.g.
-// "checkpoint abc123def456"). It applies to whichever flag is true; callers
-// display the appropriate flag's prose around it.
-//
-// Single lookup: read the Entire-Checkpoint trailer from HEAD, then resolve
-// the CheckpointSummary through the configured committed checkpoint store
-// (handles v1, v2, and dual reader selection internally).
-func headCheckpointFlags(ctx context.Context) (hasReview, hasInvestigation bool, info string) {
-	repoRoot, err := paths.WorktreeRoot(ctx)
-	if err != nil {
-		logging.Debug(ctx, "head checkpoint flags: locate worktree root", slog.String("error", err.Error()))
-		return false, false, ""
-	}
-	execCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "log", "-1", "--format=%B")
-	output, err := execCmd.Output()
-	if err != nil {
-		logging.Debug(ctx, "head checkpoint flags: read HEAD commit message", slog.String("error", err.Error()))
-		return false, false, ""
-	}
-	cpID, ok := trailers.ParseCheckpoint(string(output))
-	if !ok {
-		logging.Debug(ctx, "head checkpoint flags: no Entire-Checkpoint trailer on HEAD")
-		return false, false, ""
-	}
-	repo, err := gitrepo.OpenPath(repoRoot)
-	if err != nil {
-		logging.Debug(ctx, "head checkpoint flags: open repository", slog.String("error", err.Error()))
-		return false, false, ""
-	}
-	defer repo.Close()
-	store, storeErr := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
-	if storeErr != nil {
-		logging.Debug(ctx, "head checkpoint flags: checkpoint store unavailable", slog.String("error", storeErr.Error()))
-		return false, false, ""
-	}
-	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, cpID)
-	if err != nil || summary == nil {
-		logging.Debug(ctx, "head checkpoint flags: resolve checkpoint summary",
-			slog.String("checkpoint_id", cpID.String()),
-			slog.Any("error", err))
-		return false, false, ""
-	}
-	return summary.HasReview, summary.HasInvestigation, fmt.Sprintf("checkpoint %s", cpID)
-}
-
-// headHasReviewCheckpoint checks whether HEAD's checkpoint metadata includes
-// a review session. Returns (true, infoString) if HasReview is set.
-// Thin compatibility wrapper around headCheckpointFlags so existing callers
-// (status display, review re-run guard) keep their (bool, string) signature.
-func headHasReviewCheckpoint(ctx context.Context) (bool, string) {
-	hasReview, _, info := headCheckpointFlags(ctx)
-	if !hasReview {
-		return false, ""
-	}
-	return true, info
-}
-
-// headHasInvestigateCheckpoint reports whether HEAD's checkpoint has an
-// investigation tagged on it. Mirrors headHasReviewCheckpoint for the
-// investigation umbrella flag.
-func headHasInvestigateCheckpoint(ctx context.Context) (bool, string) {
-	_, hasInvestigation, info := headCheckpointFlags(ctx)
-	if !hasInvestigation {
-		return false, ""
-	}
-	return true, info
-}
 
 // newReviewAttachCmd is a thin wrapper around `entire attach --review`. It
 // shares all wiring with runAttach; only the UX surface differs, letting
