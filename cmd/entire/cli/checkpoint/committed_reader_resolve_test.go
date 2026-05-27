@@ -157,15 +157,13 @@ func TestDualCheckpointReader_ReadSessionMetadataAndPromptsFallsBackWhenV2Prompt
 	require.Equal(t, "prompt only stored in v1", content.Prompts)
 }
 
-func TestCommittedReadModeForAvailability(t *testing.T) {
+func TestNewCommittedReaderReturnsV1Store(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, committedReadV1, resolveCommittedReadMode(false, 1, false))
-	require.Equal(t, committedReadDual, resolveCommittedReadMode(true, 1, false))
-	require.Equal(t, committedReadDual, resolveCommittedReadMode(true, 2, false))
-	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 2, false))
-	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 1, true))
-	require.Equal(t, committedReadDual, resolveCommittedReadMode(false, 2, true))
+	repo := initTestRepo(t)
+	store, err := NewCommittedReader(context.Background(), repo, CommittedReaderOptions{})
+	require.NoError(t, err)
+	require.IsType(t, &GitStore{}, store)
 }
 
 func TestReadSessionPromptsUsesPromptOnlyReader(t *testing.T) {

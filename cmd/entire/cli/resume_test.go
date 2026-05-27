@@ -24,6 +24,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 )
 
 type recordingResumeAgent struct {
@@ -600,13 +601,12 @@ func TestReadCheckpointInfoFromStoreUsesLatestSessionMetadata(t *testing.T) {
 	}
 }
 
-func TestResolveLatestCheckpointUsesLocalV2WhenSettingsDisabled(t *testing.T) {
+func TestResolveLatestCheckpointIgnoresLocalV2(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
 	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
 	cpID := id.MustCheckpointID("dd11ee22ff33")
-	v2Store := checkpoint.NewV2GitStore(repo)
 	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: cpID,
 		SessionID:    "session-v2-local",
@@ -615,22 +615,20 @@ func TestResolveLatestCheckpointUsesLocalV2WhenSettingsDisabled(t *testing.T) {
 		Prompts:      []string{"Use local v2 data"},
 	})
 
-	latest, err := resolveLatestCheckpoint(context.Background(), repo, v2Store, []id.CheckpointID{cpID})
-	if err != nil {
-		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
-	}
-	if latest.CheckpointID != cpID {
-		t.Errorf("resolveLatestCheckpoint() = %s, want %s", latest.CheckpointID, cpID)
-	}
+	store, err := checkpoint.NewCommittedReader(context.Background(), repo, checkpoint.CommittedReaderOptions{})
+	require.NoError(t, err)
+
+	latest, err := resolveLatestCheckpoint(context.Background(), repo, store, []id.CheckpointID{cpID})
+	require.Nil(t, latest)
+	require.ErrorContains(t, err, "no checkpoint metadata found")
 }
 
-func TestResolveLatestCheckpointFallsBackToV1WhenLocalV2MissesCheckpoint(t *testing.T) {
+func TestResolveLatestCheckpointUsesV1WhenLocalV2MissesCheckpoint(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
 	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
 
-	v2Store := checkpoint.NewV2GitStore(repo)
 	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: id.MustCheckpointID("dd11ee22ff33"),
 		SessionID:    "session-v2-other",
@@ -647,7 +645,10 @@ func TestResolveLatestCheckpointFallsBackToV1WhenLocalV2MissesCheckpoint(t *test
 		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC),
 	)
 
-	latest, err := resolveLatestCheckpoint(context.Background(), repo, v2Store, []id.CheckpointID{targetID})
+	store, err := checkpoint.NewCommittedReader(context.Background(), repo, checkpoint.CommittedReaderOptions{})
+	require.NoError(t, err)
+
+	latest, err := resolveLatestCheckpoint(context.Background(), repo, store, []id.CheckpointID{targetID})
 	if err != nil {
 		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
 	}
@@ -757,7 +758,7 @@ func TestFindBranchCheckpoint_SquashMergeMultipleCheckpoints(t *testing.T) {
 	}
 }
 
-func TestResumeSingleSession_FallsBackToV1WhenV2FullMissing(t *testing.T) {
+func TestResumeSingleSession_UsesV1WhenV2FullMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 
@@ -768,7 +769,7 @@ func TestResumeSingleSession_FallsBackToV1WhenV2FullMissing(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(tmpDir, ".entire", "settings.json"),
-		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`),
+		[]byte(`{"enabled": true}`),
 		0o644,
 	); err != nil {
 		t.Fatalf("failed to write settings: %v", err)

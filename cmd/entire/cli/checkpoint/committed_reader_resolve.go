@@ -10,21 +10,18 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 
 	git "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 )
 
 // CommittedReader provides read access to committed checkpoint data.
-// Both GitStore (v1) and V2GitStore (v2) implement this interface.
 type CommittedReader interface {
 	ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
 	ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 }
 
 // CommittedListReader provides read and list access to committed checkpoint data.
-// GitStore, V2GitStore, and DualCheckpointReader implement this interface.
 type CommittedListReader interface {
 	CommittedReader
 	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
@@ -42,19 +39,12 @@ type CommittedStore interface {
 	GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error)
 }
 
-type committedReadMode int
-
-const (
-	committedReadV1 committedReadMode = iota
-	committedReadDual
-)
-
 // CommittedReaderOptions configures NewCommittedReader.
 type CommittedReaderOptions struct {
 	BlobFetcher BlobFetchFunc
 }
 
-func NewCommittedReader(ctx context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) { //nolint:ireturn // Factory selects between v1 and dual reader implementations.
+func NewCommittedReader(_ context.Context, repo *git.Repository, opts CommittedReaderOptions) (CommittedStore, error) { //nolint:ireturn // Factory returns the committed checkpoint store abstraction.
 	if repo == nil {
 		return nil, errors.New("git repository is required")
 	}
@@ -63,46 +53,7 @@ func NewCommittedReader(ctx context.Context, repo *git.Repository, opts Committe
 	if opts.BlobFetcher != nil {
 		v1Store.SetBlobFetcher(opts.BlobFetcher)
 	}
-
-	v2Enabled := settings.IsCheckpointsV2Enabled(ctx)
-	version := settings.CheckpointsVersion(ctx)
-	localV2MainRef := false
-	if version != 2 && !v2Enabled {
-		localV2MainRef = hasLocalV2MainRef(repo)
-	}
-	mode := resolveCommittedReadMode(v2Enabled, version, localV2MainRef)
-
-	var v2Store *V2GitStore
-	if mode != committedReadV1 {
-		v2Store = NewV2GitStore(repo)
-		if opts.BlobFetcher != nil {
-			v2Store.SetBlobFetcher(opts.BlobFetcher)
-		}
-	}
-
-	switch mode {
-	case committedReadDual:
-		return &DualCheckpointReader{v2: v2Store, v1: v1Store}, nil
-	case committedReadV1:
-		return v1Store, nil
-	default:
-		return nil, fmt.Errorf("unknown committed checkpoint read mode: %d", mode)
-	}
-}
-
-func resolveCommittedReadMode(checkpointsV2Enabled bool, checkpointsVersion int, localV2MainRef bool) committedReadMode {
-	if checkpointsV2Enabled || checkpointsVersion == 2 || localV2MainRef {
-		return committedReadDual
-	}
-	return committedReadV1
-}
-
-func hasLocalV2MainRef(repo *git.Repository) bool {
-	if repo == nil {
-		return false
-	}
-	_, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
-	return err == nil
+	return v1Store, nil
 }
 
 type DualCheckpointReader struct {

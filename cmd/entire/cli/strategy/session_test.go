@@ -281,7 +281,7 @@ func TestListSessionsWithDescription(t *testing.T) {
 	}
 }
 
-func TestGetDescriptionForCheckpointFallsForwardToV2WhenV1MissesCheckpoint(t *testing.T) {
+func TestGetDescriptionForCheckpointIgnoresV2WhenV1MissesCheckpoint(t *testing.T) {
 	tmpDir := t.TempDir()
 	resolved, err := filepath.EvalSymlinks(tmpDir)
 	if err != nil {
@@ -300,17 +300,16 @@ func TestGetDescriptionForCheckpointFallsForwardToV2WhenV1MissesCheckpoint(t *te
 	createTestMetadataBranchWithPrompt(t, repo, testSessionID, id.MustCheckpointID("111111111111"), "v1 prompt")
 
 	targetCheckpointID := id.MustCheckpointID("222222222222")
-	expectedDesc := "prompt from v2"
 	writeV2CheckpointFixture(t, repo, v2CheckpointFixtureOptions{
 		CheckpointID: targetCheckpointID,
 		SessionID:    "session-v2-description",
 		Strategy:     StrategyNameManualCommit,
 		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"test"}` + "\n")),
-		Prompts:      []string{expectedDesc},
+		Prompts:      []string{"prompt from v2"},
 	})
 
-	if got := getDescriptionForCheckpoint(repo, targetCheckpointID); got != expectedDesc {
-		t.Errorf("getDescriptionForCheckpoint() = %q, want %q", got, expectedDesc)
+	if got := getDescriptionForCheckpoint(repo, targetCheckpointID); got != NoDescription {
+		t.Errorf("getDescriptionForCheckpoint() = %q, want %q", got, NoDescription)
 	}
 }
 

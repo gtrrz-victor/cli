@@ -290,9 +290,9 @@ Machine-readable export modes (additive surface for external consumers):
   --json           Metadata-only JSON. Lists checkpoints when no target is given;
                    emits a single checkpoint envelope when a target is supplied.
                    Transcript bytes are NEVER embedded in the JSON envelope.
-  --transcript     Stream the normalized compact transcript bytes (JSONL on
-                   /main) to stdout for the selected session. Pair with
-                   --raw-transcript for the per-agent raw transcript instead.
+  --transcript     Stream stored checkpoint transcript bytes (JSONL) to stdout
+                   for the selected session. Same bytes as --raw-transcript
+                   while checkpoints v1 is the checkpoint store.
   --session-index  Pick a session within a multi-session checkpoint (0-based).
                    Defaults to the latest session. Only meaningful with
                    --transcript or --raw-transcript.
@@ -670,7 +670,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// never interleave.
 	stopLoad := startSpinner(errW, fmt.Sprintf("Loading checkpoint %s", fullCheckpointID))
 
-	resolvedReader, summary, content, err := loadCheckpointForExplain(ctx, errW, lookup, fullCheckpointID, full, generate, rawTranscript)
+	resolvedReader, summary, content, err := loadCheckpointForExplain(ctx, errW, lookup, fullCheckpointID)
 	if err != nil {
 		stopLoad(false)
 		return err
@@ -681,11 +681,9 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		if err := generateCheckpointSummary(ctx, w, errW, lookup.store, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
 			return err
 		}
-		// Reload to get the updated summary. After generation, display can
-		// prefer v2 /main but must still fall back for v1-only checkpoints in
-		// dual-read mode.
+		// Reload to get the updated summary.
 		stopLoad = startSpinner(errW, fmt.Sprintf("Reloading checkpoint %s", fullCheckpointID))
-		content, err = readCheckpointContentForExplain(ctx, resolvedReader, fullCheckpointID, summary, true)
+		content, err = readCheckpointContentForExplain(ctx, resolvedReader, fullCheckpointID, summary)
 		if err != nil {
 			stopLoad(false)
 			return fmt.Errorf("failed to reload checkpoint: %w", err)
@@ -734,7 +732,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 // data-load pipeline out of runExplainCheckpointWithLookup so that
 // function stays under maintidx limits. Caller is responsible for the
 // surrounding spinner.
-func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *explainCheckpointLookup, cpID id.CheckpointID, full, generate, rawTranscript bool) (checkpoint.CommittedReader, *checkpoint.CheckpointSummary, *checkpoint.SessionContent, error) {
+func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *explainCheckpointLookup, cpID id.CheckpointID) (checkpoint.CommittedReader, *checkpoint.CheckpointSummary, *checkpoint.SessionContent, error) {
 	prefetchCheckpointBlobs(ctx, errW, lookup.repo, cpID)
 
 	store := lookup.store
@@ -743,8 +741,7 @@ func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *expla
 		return nil, nil, nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 
-	needsRawTranscript := full || generate || rawTranscript
-	content, contentErr := readCheckpointContentForExplain(ctx, store, cpID, summary, !needsRawTranscript)
+	content, contentErr := readCheckpointContentForExplain(ctx, store, cpID, summary)
 	if contentErr != nil {
 		return nil, nil, nil, fmt.Errorf("failed to read checkpoint content: %w", contentErr)
 	}
@@ -763,14 +760,10 @@ func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *expla
 // feedback.
 func prefetchCheckpointBlobs(ctx context.Context, _ io.Writer, repo *git.Repository, cpID id.CheckpointID) {
 	v1FT := buildCheckpointFetchingTree(ctx, repo, cpID, "v1", loadV1MetadataRootTree)
-	v2FT := buildCheckpointFetchingTree(ctx, repo, cpID, "v2", loadV2MainRootTree)
 
 	missingCount := 0
 	if v1FT != nil {
 		missingCount += len(v1FT.CollectMissingBlobs())
-	}
-	if v2FT != nil {
-		missingCount += len(v2FT.CollectMissingBlobs())
 	}
 	if missingCount == 0 {
 		return
@@ -781,7 +774,6 @@ func prefetchCheckpointBlobs(ctx context.Context, _ io.Writer, repo *git.Reposit
 	)
 
 	runPreFetch(ctx, v1FT, cpID, "v1")
-	runPreFetch(ctx, v2FT, cpID, "v2")
 }
 
 // buildCheckpointFetchingTree navigates to the checkpoint subtree using
@@ -837,22 +829,6 @@ func loadV1MetadataRootTree(repo *git.Repository) (*object.Tree, error) {
 	return tree, nil
 }
 
-func loadV2MainRootTree(repo *git.Repository) (*object.Tree, error) {
-	ref, err := repo.Reference(plumbing.ReferenceName(paths.V2MainRefName), true)
-	if err != nil {
-		return nil, fmt.Errorf("v2 /main ref not found: %w", err)
-	}
-	commit, err := repo.CommitObject(ref.Hash())
-	if err != nil {
-		return nil, fmt.Errorf("read v2 /main commit: %w", err)
-	}
-	tree, err := commit.Tree()
-	if err != nil {
-		return nil, fmt.Errorf("read v2 /main tree: %w", err)
-	}
-	return tree, nil
-}
-
 func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, error) {
 	repo, err := openRepository(ctx)
 	if err != nil {
@@ -890,69 +866,12 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	return lookup, nil
 }
 
-type v2MainContentReader interface {
-	checkpoint.CommittedReader
-	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
-}
-
-// readCheckpointContentForExplain reads session content for display. When
-// preferMain is true (default display modes that don't need the raw
-// transcript) it tries the v2 /main ref first — cheaper, and the /full/current
-// ref holding the raw transcript may not be fetched locally. It still
-// falls back to ReadLatestSessionContent on ErrCheckpointNotFound so
-// v1-only checkpoints work in dual-read mode.
-func readCheckpointContentForExplain(ctx context.Context, reader checkpoint.CommittedReader, checkpointID id.CheckpointID, summary *checkpoint.CheckpointSummary, preferMain bool) (*checkpoint.SessionContent, error) {
-	if preferMain {
-		if mainReader, ok := reader.(v2MainContentReader); ok {
-			content, err := readV2ContentFromMain(ctx, mainReader, checkpointID, summary)
-			if err == nil {
-				return content, nil
-			}
-			if !errors.Is(err, checkpoint.ErrCheckpointNotFound) {
-				return nil, err
-			}
-		}
-	}
+// readCheckpointContentForExplain reads the latest session content for display.
+func readCheckpointContentForExplain(ctx context.Context, reader checkpoint.CommittedReader, checkpointID id.CheckpointID, summary *checkpoint.CheckpointSummary) (*checkpoint.SessionContent, error) {
 	content, err := checkpoint.ReadLatestSessionContent(ctx, reader, checkpointID, summary)
 	if err != nil {
 		return nil, fmt.Errorf("read latest session content: %w", err)
 	}
-	return content, nil
-}
-
-// readV2ContentFromMain reads session content from the v2 /main ref only —
-// metadata, prompts, and the compact transcript (transcript.jsonl). This is the
-// primary read path for default display modes that don't need the raw transcript
-// stored on /full/current.
-func readV2ContentFromMain(ctx context.Context, v2Reader v2MainContentReader, checkpointID id.CheckpointID, summary *checkpoint.CheckpointSummary) (*checkpoint.SessionContent, error) {
-	if summary == nil || len(summary.Sessions) == 0 {
-		return nil, checkpoint.ErrCheckpointNotFound
-	}
-
-	latestIndex := len(summary.Sessions) - 1
-
-	content, err := v2Reader.ReadSessionMetadataAndPrompts(ctx, checkpointID, latestIndex)
-	if err != nil {
-		return nil, fmt.Errorf("reading session %d metadata: %w", latestIndex, err)
-	}
-
-	// ReadSessionMetadataAndPrompts reads the compact transcript from the same
-	// session tree. Reset transcript offsets when compact data is present.
-	if len(content.Transcript) > 0 {
-		content.Metadata.CheckpointTranscriptStart = 0
-		content.Metadata.TranscriptLinesAtStart = 0 //nolint:staticcheck // Set for backward compat with older CLI readers
-		return content, nil
-	}
-
-	// No compact transcript on /main — fall back to the raw transcript on
-	// /full/current for the most accurate display before resorting to prompt.txt.
-	fullContent, fullErr := v2Reader.ReadSessionContent(ctx, checkpointID, latestIndex)
-	if fullErr == nil && len(fullContent.Transcript) > 0 {
-		content.Transcript = fullContent.Transcript
-		return content, nil
-	}
-
-	// Last resort: return metadata + prompts without transcript.
 	return content, nil
 }
 
@@ -2092,7 +2011,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
 	}
 
-	// Get all committed checkpoints for lookup (v2-aware with v1 fallback).
+	// Get all committed checkpoints for lookup.
 	committedInfos, err := store.ListCommitted(ctx)
 	if err != nil {
 		committedInfos = nil // Continue without committed checkpoints

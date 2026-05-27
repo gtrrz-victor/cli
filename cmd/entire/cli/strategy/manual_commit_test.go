@@ -45,7 +45,7 @@ func TestShadowStrategy_ValidateRepository(t *testing.T) {
 	}
 }
 
-func TestManualCommitStrategy_ListCheckpointsUsesLocalV2WhenSettingsDisabled(t *testing.T) {
+func TestManualCommitStrategy_ListCheckpointsIgnoresLocalV2(t *testing.T) {
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	t.Chdir(dir)
@@ -66,9 +66,9 @@ func TestManualCommitStrategy_ListCheckpointsUsesLocalV2WhenSettingsDisabled(t *
 	s := NewManualCommitStrategy()
 	checkpoints, err := s.listCheckpoints(context.Background())
 	require.NoError(t, err)
-	require.Len(t, checkpoints, 1)
-	require.Equal(t, cpID, checkpoints[0].CheckpointID)
-	require.Equal(t, "session-v2-local", checkpoints[0].SessionID)
+	for _, rewindPoint := range checkpoints {
+		require.NotEqual(t, cpID, rewindPoint.CheckpointID)
+	}
 }
 
 func TestShadowStrategy_ValidateRepository_NotGitRepo(t *testing.T) {
