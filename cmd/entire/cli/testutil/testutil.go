@@ -339,8 +339,10 @@ func gitEmptyConfigPath() string {
 //
 // See https://git-scm.com/docs/git#Documentation/git.txt-GITCONFIGGLOBAL
 //
-// Existing GIT_CONFIG_* entries are filtered out before appending overrides to
-// ensure they take effect regardless of parent env.
+// Every inherited GIT_CONFIG_* entry is filtered out — including
+// GIT_CONFIG_PARAMETERS and the indexed KEY_/VALUE_ pairs that can inject
+// `git -c` overrides — so our explicit isolation overrides take effect
+// regardless of parent env.
 func GitIsolatedEnv() []string {
 	env := os.Environ()
 	filtered := make([]string, 0, len(env)+2)
@@ -358,31 +360,29 @@ func GitIsolatedEnv() []string {
 
 // IsolateGitConfigEnv applies the same git config isolation to the current
 // process. Use this in tests that exercise production code paths which invoke
-// git with os.Environ().
+// git with os.Environ(). All inherited GIT_CONFIG_* variables are cleared
+// before the isolation overrides are set, so values such as
+// GIT_CONFIG_PARAMETERS or indexed KEY_/VALUE_ overrides cannot leak into
+// child git invocations.
 func IsolateGitConfigEnv(t *testing.T) {
 	t.Helper()
-
-	t.Setenv("GIT_CONFIG_GLOBAL", gitEmptyConfigPath())
-	t.Setenv("GIT_CONFIG_SYSTEM", gitEmptyConfigPath())
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_CONFIG_COUNT", "0")
 
 	for _, e := range os.Environ() {
 		key, _, ok := strings.Cut(e, "=")
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+		if strings.HasPrefix(key, "GIT_CONFIG_") {
 			t.Setenv(key, "")
 		}
 	}
+
+	t.Setenv("GIT_CONFIG_GLOBAL", gitEmptyConfigPath())
+	t.Setenv("GIT_CONFIG_SYSTEM", gitEmptyConfigPath())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
 }
 
 func isGitConfigEnv(e string) bool {
-	return strings.HasPrefix(e, "GIT_CONFIG_GLOBAL=") ||
-		strings.HasPrefix(e, "GIT_CONFIG_SYSTEM=") ||
-		strings.HasPrefix(e, "GIT_CONFIG_NOSYSTEM=") ||
-		strings.HasPrefix(e, "GIT_CONFIG_COUNT=") ||
-		strings.HasPrefix(e, "GIT_CONFIG_KEY_") ||
-		strings.HasPrefix(e, "GIT_CONFIG_VALUE_")
+	return strings.HasPrefix(e, "GIT_CONFIG_")
 }

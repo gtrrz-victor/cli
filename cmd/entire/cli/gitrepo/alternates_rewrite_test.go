@@ -106,11 +106,26 @@ func TestAbsolutizedAlternates(t *testing.T) {
 			wantOk:  false,
 		},
 		{
-			name: "data beyond maxAlternatesReadBytes is ignored",
+			name: "truncation past the cap forces capped content, not fall-through",
 			// A 4096-byte comment fills the entire read budget; the relative
-			// path that follows sits past the limit and must not be reached.
+			// path that follows sits past the limit. We must serve our capped
+			// view (empty, because the visible portion was a truncated comment
+			// we dropped) rather than fall back to the uncapped original —
+			// which would expose the past-cap relative entry to go-git.
 			content: strings.Repeat("#", maxAlternatesReadBytes) + "\n" + relPath + "\n",
-			wantOk:  false,
+			want:    "",
+			wantOk:  true,
+		},
+		{
+			name: "truncation past the cap with absolute prelude preserves prelude only",
+			// Absolute entries fit inside the cap; a relative entry sits past
+			// the cap behind a giant comment whose terminating newline lives
+			// past the cap too. We serve only the absolute prelude (the
+			// truncated comment line is dropped) so the past-cap relative
+			// entry can never reach go-git unrepaired.
+			content: "/abs/one\n/abs/two\n" + strings.Repeat("#", maxAlternatesReadBytes) + "\n" + relPath + "\n",
+			want:    "/abs/one\n/abs/two",
+			wantOk:  true,
 		},
 		{
 			name: "trailing partial line past the cap is discarded",

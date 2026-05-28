@@ -102,7 +102,7 @@ func TestAlternates_RelativeObjectAlternate_CheckpointSync(t *testing.T) {
 	// path that reads the alternate-resident checkpoint commits via go-git.
 	cmd := exec.Command(entire.BinPath(), "hooks", "git", "pre-push", "origin")
 	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "ENTIRE_TEST_TTY=0", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = upsertEnv(os.Environ(), "ENTIRE_TEST_TTY", "0", "GIT_TERMINAL_PROMPT", "0")
 	combined, runErr := cmd.CombinedOutput()
 	output := string(combined)
 	t.Logf("entire pre-push output:\n%s", output)
@@ -127,4 +127,33 @@ func writeRepoFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+// upsertEnv returns env with each key=value pair set, replacing the first
+// occurrence of an existing entry for that key. Avoids the silent shadowing
+// that happens when a key is simply appended to os.Environ() but already
+// present in the inherited environment.
+func upsertEnv(env []string, pairs ...string) []string {
+	if len(pairs)%2 != 0 {
+		panic("upsertEnv requires an even number of key/value arguments")
+	}
+	out := make([]string, len(env))
+	copy(out, env)
+	for i := 0; i < len(pairs); i += 2 {
+		key, value := pairs[i], pairs[i+1]
+		prefix := key + "="
+		entry := prefix + value
+		replaced := false
+		for j, e := range out {
+			if strings.HasPrefix(e, prefix) {
+				out[j] = entry
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, entry)
+		}
+	}
+	return out
 }

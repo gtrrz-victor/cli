@@ -49,12 +49,12 @@ func (fs *alternatesFilesystem) rewrittenNestedAlternates(resolved string) (stri
 	}
 	defer func() { _ = f.Close() }()
 
-	lines, ok := readAlternatesLines(f)
+	content, ok := readAlternatesContent(f)
 	if !ok {
 		return "", false
 	}
 	objectsBase := filepath.Dir(filepath.Dir(resolved))
-	return rewriteRelativeAlternates(lines, objectsBase)
+	return rewriteRelativeAlternates(content, objectsBase)
 }
 
 func (fs *alternatesFilesystem) OpenFile(filename string, flag int, perm gofs.FileMode) (billy.File, error) {

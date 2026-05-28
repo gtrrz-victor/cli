@@ -1,4 +1,3 @@
-//nolint:ireturn // billy.Filesystem/File passthrough requires interface returns.
 package gitrepo
 
 import (
@@ -63,8 +62,12 @@ func isAlternatesFile(filename string) bool {
 // maxAlternatesReadBytes) and returns a copy of its contents with every
 // relative entry resolved against <root>/objects. Absolute entries, blank
 // lines, and comment lines (those starting with '#') are preserved
-// unchanged. ok is false when the file is missing/unreadable or no entry
-// needed rewriting, in which case the caller serves the original file.
+// unchanged. ok is false when the file is missing/unreadable or it fit
+// within the cap and needed no rewriting; in those cases the caller serves
+// the original file. When the file exceeded the cap, ok is true even if no
+// entry needed rewriting so the caller never falls back to the uncapped
+// original — which could contain a relative entry past the cap that go-git
+// would mangle.
 func (fs *alternatesRewriteFS) absolutizedAlternates() (string, bool) {
 	f, err := fs.Filesystem.Open(filepath.FromSlash(alternatesFilePath))
 	if err != nil {
@@ -72,23 +75,33 @@ func (fs *alternatesRewriteFS) absolutizedAlternates() (string, bool) {
 	}
 	defer func() { _ = f.Close() }()
 
-	lines, ok := readAlternatesLines(f)
+	content, ok := readAlternatesContent(f)
 	if !ok {
 		return "", false
 	}
-	return rewriteRelativeAlternates(lines, filepath.Join(fs.Root(), "objects"))
+	return rewriteRelativeAlternates(content, filepath.Join(fs.Root(), "objects"))
 }
 
-// readAlternatesLines reads up to maxAlternatesReadBytes from r and splits
+// alternatesContent holds the visible portion of an alternates file along
+// with a flag indicating whether the underlying file had more data than the
+// read cap allowed. Callers must not fall back to the original file when
+// truncated is true.
+type alternatesContent struct {
+	lines     []string
+	truncated bool
+}
+
+// readAlternatesContent reads up to maxAlternatesReadBytes from r and splits
 // the content on '\n'. When the file exceeds the cap, a trailing line that
 // has no closing newline is discarded so we never hand a truncated path to
-// the rewrite logic.
-func readAlternatesLines(r io.Reader) ([]string, bool) {
+// the rewrite logic, and truncated is set so the caller knows past-cap
+// content exists.
+func readAlternatesContent(r io.Reader) (alternatesContent, bool) {
 	// Read one byte past the cap so we can tell whether the underlying file
 	// has more data than fits in the budget.
 	data, err := io.ReadAll(io.LimitReader(r, maxAlternatesReadBytes+1))
 	if err != nil {
-		return nil, false
+		return alternatesContent{}, false
 	}
 	truncated := false
 	if len(data) > maxAlternatesReadBytes {
@@ -100,17 +113,20 @@ func readAlternatesLines(r io.Reader) ([]string, bool) {
 	if truncated && !strings.HasSuffix(text, "\n") && len(lines) > 0 {
 		lines = lines[:len(lines)-1]
 	}
-	return lines, true
+	return alternatesContent{lines: lines, truncated: truncated}, true
 }
 
-// rewriteRelativeAlternates rewrites every relative entry in lines against
-// objectsBase. Blank lines, comments ('#'-prefixed), and already-absolute
-// entries are left untouched. Returns (joined-content, true) when at least
-// one relative entry was rewritten; otherwise ok=false so the caller serves
-// the original file unchanged.
-func rewriteRelativeAlternates(lines []string, objectsBase string) (string, bool) {
+// rewriteRelativeAlternates rewrites every relative entry in content.lines
+// against objectsBase. Blank lines, comments ('#'-prefixed), and
+// already-absolute entries are left untouched. Returns (joined-content,
+// true) when at least one relative entry was rewritten OR when the file was
+// truncated (so the caller serves our capped view instead of the uncapped
+// original). Returns ok=false only when nothing was rewritten and the file
+// fit within the cap, in which case the caller can safely serve the
+// original file unchanged.
+func rewriteRelativeAlternates(content alternatesContent, objectsBase string) (string, bool) {
 	changed := false
-	for i, line := range lines {
+	for i, line := range content.lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -118,13 +134,13 @@ func rewriteRelativeAlternates(lines []string, objectsBase string) (string, bool
 		if filepath.IsAbs(trimmed) || filepath.VolumeName(trimmed) != "" {
 			continue
 		}
-		lines[i] = filepath.Clean(filepath.Join(objectsBase, filepath.FromSlash(trimmed)))
+		content.lines[i] = filepath.Clean(filepath.Join(objectsBase, filepath.FromSlash(trimmed)))
 		changed = true
 	}
-	if !changed {
+	if !changed && !content.truncated {
 		return "", false
 	}
-	return strings.Join(lines, "\n"), true
+	return strings.Join(content.lines, "\n"), true
 }
 
 // isAlternatesObjectsPath reports whether absPath looks like an alternates
