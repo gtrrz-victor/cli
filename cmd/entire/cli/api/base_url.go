@@ -60,6 +60,14 @@ func AuthBaseURL() string {
 	return NormalizeOriginURL(raw)
 }
 
+// IsSplitHost reports whether the CLI is configured for split-host —
+// i.e. ENTIRE_AUTH_BASE_URL points at a different origin than the data
+// API. Compared on canonicalised values, so a redundant override
+// (trailing slash, case differences) doesn't register as split.
+func IsSplitHost() bool {
+	return AuthBaseURL() != BaseURL()
+}
+
 // ResolveURL joins an API-relative path against the effective base URL.
 func ResolveURL(path string) (string, error) {
 	return ResolveURLFromBase(BaseURL(), path)

@@ -82,6 +82,29 @@ func TestAuthBaseURL_CanonicalisesScheme_HostCase_DefaultPort(t *testing.T) {
 	}
 }
 
+func TestIsSplitHost(t *testing.T) {
+	cases := map[string]struct {
+		base, auth string
+		want       bool
+	}{
+		"both unset":          {"", "", false},
+		"auth unset":          {"https://entire.io", "", false},
+		"auth same as base":   {"https://api.example.com", "https://api.example.com", false},
+		"auth cosmetic match": {"https://api.example.com", "https://api.example.com/", false},
+		"different origins":   {"https://api.example.com", "https://auth.example.com", true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(BaseURLEnvVar, tc.base)
+			t.Setenv(AuthBaseURLEnvVar, tc.auth)
+			if got := IsSplitHost(); got != tc.want {
+				t.Errorf("IsSplitHost() = %v, want %v (base=%q auth=%q)", got, tc.want, tc.base, tc.auth)
+			}
+		})
+	}
+}
+
 func TestNormalizeOriginURL(t *testing.T) {
 	t.Parallel()
 

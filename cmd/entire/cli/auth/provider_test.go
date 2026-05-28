@@ -41,19 +41,10 @@ func TestResolveProvider_V2(t *testing.T) {
 	}
 }
 
-// --- effectiveProviderVersion ----------------------------------------------
-//
-// These tests use t.Setenv and therefore cannot be t.Parallel — Go's
-// testing harness panics if either is paired with the other. The
-// trade-off is fine because effectiveProviderVersion is a tiny pure
-// function over env state; the bodies are short.
+// effectiveProviderVersion tests cannot be t.Parallel (they use t.Setenv).
 
-// TestEffectiveProviderVersion_ExplicitEnvWins pins the highest-
-// priority rule: ENTIRE_AUTH_PROVIDER_VERSION overrides everything
-// else, including a split-host configuration that would otherwise
-// auto-pick v2.
 func TestEffectiveProviderVersion_ExplicitEnvWins(t *testing.T) {
-	// Split-host config — would auto-pick v2 if env var were unset.
+	// Split-host configured: would auto-pick v2 if env were unset.
 	t.Setenv(api.BaseURLEnvVar, "https://api.example.com")
 	t.Setenv(api.AuthBaseURLEnvVar, "https://auth.example.com")
 
@@ -67,20 +58,15 @@ func TestEffectiveProviderVersion_ExplicitEnvWins(t *testing.T) {
 		t.Errorf("explicit v2 override = %q, want v2", got)
 	}
 
-	// Unrecognised value falls through to resolveProvider's default
-	// (v1) — the version string is returned verbatim here, and the
-	// routing table catches unknowns. We don't want an unrecognised
-	// value to suddenly invoke the auto-detect path, because that
-	// would hide typos behind a silent upgrade.
+	// Unrecognised values pass through verbatim rather than triggering
+	// auto-detect — a typo must not silently auto-upgrade. resolveProvider
+	// downstream defaults unknowns to v1.
 	t.Setenv(ProviderVersionEnvVar, "v3")
 	if got := effectiveProviderVersion(); got != "v3" {
 		t.Errorf("unrecognised value = %q, want passthrough %q", got, "v3")
 	}
 }
 
-// TestEffectiveProviderVersion_SplitHostPicksV2 is the actual user-
-// facing change: setting ENTIRE_AUTH_BASE_URL to an origin different
-// from the data API origin opts into v2 without an extra env var.
 func TestEffectiveProviderVersion_SplitHostPicksV2(t *testing.T) {
 	t.Setenv(ProviderVersionEnvVar, "")
 	t.Setenv(api.BaseURLEnvVar, "https://api.example.com")
@@ -91,13 +77,9 @@ func TestEffectiveProviderVersion_SplitHostPicksV2(t *testing.T) {
 	}
 }
 
-// TestEffectiveProviderVersion_SameHostPicksV1 covers a user who set
-// ENTIRE_AUTH_BASE_URL redundantly to the same value as the data API
-// — that's not actually a split-host configuration, so the auto-
-// detect should stay on v1 rather than picking v2 against a single-
-// host server that may not serve OIDC endpoints. The canonicalisation
-// inside AuthBaseURL/BaseURL handles cosmetic differences (trailing
-// slash, case) so this rule isn't fooled by formatting.
+// Redundant ENTIRE_AUTH_BASE_URL (same origin as data API, just
+// cosmetically different) must not register as split — relies on
+// AuthBaseURL/BaseURL canonicalisation.
 func TestEffectiveProviderVersion_SameHostPicksV1(t *testing.T) {
 	t.Setenv(ProviderVersionEnvVar, "")
 	t.Setenv(api.BaseURLEnvVar, "https://api.example.com")
@@ -108,10 +90,7 @@ func TestEffectiveProviderVersion_SameHostPicksV1(t *testing.T) {
 	}
 }
 
-// TestEffectiveProviderVersion_UnsetDefaultsToV1 covers the entire.io
-// default: nothing set, AuthBaseURL falls back to BaseURL, no split
-// signal, stay on v1. This is the path most existing users hit and
-// the one that must not silently break.
+// Entire.io default path — must not regress; most users hit this.
 func TestEffectiveProviderVersion_UnsetDefaultsToV1(t *testing.T) {
 	t.Setenv(ProviderVersionEnvVar, "")
 	t.Setenv(api.BaseURLEnvVar, "")
