@@ -252,26 +252,6 @@ func TestRunExplainExport_RawTranscriptStreamsRawBytes(t *testing.T) {
 	require.Equal(t, raw, stdout.Bytes())
 }
 
-func TestRunExplainExport_RawTranscriptStreamsStoredV1Bytes(t *testing.T) {
-	repo := setupExportRepo(t)
-
-	cpID := id.MustCheckpointID("dddd22223333")
-	raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"v1 raw export"}]}}` + "\n")
-	writeCheckpointForExport(t, repo, cpID, checkpoint.WriteCommittedOptions{
-		SessionID:  "session-export",
-		Transcript: redact.AlreadyRedacted(raw),
-	})
-
-	var stdout, stderr bytes.Buffer
-	err := runExplainExport(context.Background(), &stdout, &stderr, explainExportOptions{
-		target:        "dddd2222",
-		rawTranscript: true,
-		sessionIndex:  -1,
-	})
-	require.NoError(t, err)
-	require.Equal(t, raw, stdout.Bytes())
-}
-
 // TestExplainCmd_RawTranscriptWithSessionIndexRoutesToExportPath guards the
 // cobra-layer dispatch: --raw-transcript --session-index must reach the
 // export path (which honors the index). Before the fix, the legacy

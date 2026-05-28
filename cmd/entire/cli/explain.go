@@ -664,13 +664,13 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// One spinner covers the entire data-loading pipeline: prefetch's
 	// missing-blob analysis (which spawns one cat-file -e per blob and
 	// can take seconds on a deep checkpoint subtree), the prefetch fetch
-	// itself, ResolveCommittedReader's metadata read, session content
+	// itself, the committed checkpoint metadata read, session content
 	// reads, and getAssociatedCommits' git log walk. Stop strictly before
 	// any write to w (stdout) so stderr spinner frames and stdout output
 	// never interleave.
 	stopLoad := startSpinner(errW, fmt.Sprintf("Loading checkpoint %s", fullCheckpointID))
 
-	resolvedReader, summary, content, err := loadCheckpointForExplain(ctx, errW, lookup, fullCheckpointID)
+	summary, content, err := loadCheckpointForExplain(ctx, lookup, fullCheckpointID)
 	if err != nil {
 		stopLoad(false)
 		return err
@@ -683,10 +683,10 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		}
 		// Reload to get the updated summary.
 		stopLoad = startSpinner(errW, fmt.Sprintf("Reloading checkpoint %s", fullCheckpointID))
-		content, err = readCheckpointContentForExplain(ctx, resolvedReader, fullCheckpointID, summary)
+		content, err = checkpoint.ReadLatestSessionContent(ctx, lookup.store, fullCheckpointID, summary)
 		if err != nil {
 			stopLoad(false)
-			return fmt.Errorf("failed to reload checkpoint: %w", err)
+			return fmt.Errorf("failed to reload checkpoint: read latest session content: %w", err)
 		}
 	}
 
@@ -732,20 +732,20 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 // data-load pipeline out of runExplainCheckpointWithLookup so that
 // function stays under maintidx limits. Caller is responsible for the
 // surrounding spinner.
-func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *explainCheckpointLookup, cpID id.CheckpointID) (checkpoint.CommittedReader, *checkpoint.CheckpointSummary, *checkpoint.SessionContent, error) {
-	prefetchCheckpointBlobs(ctx, errW, lookup.repo, cpID)
+func loadCheckpointForExplain(ctx context.Context, lookup *explainCheckpointLookup, cpID id.CheckpointID) (*checkpoint.CheckpointSummary, *checkpoint.SessionContent, error) {
+	prefetchCheckpointBlobs(ctx, lookup.repo, cpID)
 
 	store := lookup.store
 	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, cpID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to read checkpoint: %w", err)
+		return nil, nil, fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 
-	content, contentErr := readCheckpointContentForExplain(ctx, store, cpID, summary)
+	content, contentErr := checkpoint.ReadLatestSessionContent(ctx, store, cpID, summary)
 	if contentErr != nil {
-		return nil, nil, nil, fmt.Errorf("failed to read checkpoint content: %w", contentErr)
+		return nil, nil, fmt.Errorf("failed to read checkpoint content: read latest session content: %w", contentErr)
 	}
-	return store, summary, content, nil
+	return summary, content, nil
 }
 
 // prefetchCheckpointBlobs navigates to the checkpoint's local subtree(s),
@@ -758,7 +758,7 @@ func loadCheckpointForExplain(ctx context.Context, errW io.Writer, lookup *expla
 // analysis (one cat-file -e per blob) and the actual fetch are silent
 // inside this function so the caller's spinner provides continuous
 // feedback.
-func prefetchCheckpointBlobs(ctx context.Context, _ io.Writer, repo *git.Repository, cpID id.CheckpointID) {
+func prefetchCheckpointBlobs(ctx context.Context, repo *git.Repository, cpID id.CheckpointID) {
 	v1FT := buildCheckpointFetchingTree(ctx, repo, cpID, "v1", loadV1MetadataRootTree)
 
 	missingCount := 0
@@ -860,15 +860,6 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	lookup.committed = committed
 	closeOnError = false
 	return lookup, nil
-}
-
-// readCheckpointContentForExplain reads the latest session content for display.
-func readCheckpointContentForExplain(ctx context.Context, reader checkpoint.CommittedReader, checkpointID id.CheckpointID, summary *checkpoint.CheckpointSummary) (*checkpoint.SessionContent, error) {
-	content, err := checkpoint.ReadLatestSessionContent(ctx, reader, checkpointID, summary)
-	if err != nil {
-		return nil, fmt.Errorf("read latest session content: %w", err)
-	}
-	return content, nil
 }
 
 // generateCheckpointSummary generates an AI summary for a checkpoint and persists it.

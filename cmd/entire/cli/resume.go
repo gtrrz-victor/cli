@@ -221,7 +221,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("error", storeErr.Error()),
 			)
-			localInfo, localErr := readCheckpointInfoFromLocalTrees(ctx, repo, checkpointID)
+			localInfo, localErr := readCheckpointInfoFromMetadataBranch(ctx, repo, checkpointID)
 			if localErr == nil {
 				metadata = localInfo
 			} else {
@@ -255,7 +255,7 @@ func resolveLatestCheckpoint(ctx context.Context, repo *git.Repository, store ch
 				slog.String("checkpoint_id", cpID.String()),
 				slog.String("error", readErr.Error()),
 			)
-			metadata, readErr = readCheckpointInfoFromLocalTrees(ctx, repo, cpID)
+			metadata, readErr = readCheckpointInfoFromMetadataBranch(ctx, repo, cpID)
 		}
 		if readErr != nil {
 			logging.Debug(ctx, "resolveLatestCheckpoint: checkpoint metadata read failed",
@@ -309,33 +309,31 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpoint.Committed
 	return info, nil
 }
 
-func readCheckpointInfoFromLocalTrees(ctx context.Context, repo *git.Repository, checkpointID id.CheckpointID) (*strategy.CheckpointInfo, error) {
+func readCheckpointInfoFromMetadataBranch(ctx context.Context, repo *git.Repository, checkpointID id.CheckpointID) (*strategy.CheckpointInfo, error) {
 	v1Tree, err := strategy.GetMetadataBranchTree(repo)
 	if err == nil {
-		info, infoErr := readCheckpointInfoFromLocalTree(ctx, repo, checkpointID, "v1", v1Tree)
+		info, infoErr := readCheckpointInfoFromMetadataTree(ctx, repo, checkpointID, v1Tree)
 		if infoErr == nil {
 			return info, nil
 		}
 		err = infoErr
 	}
-	logging.Debug(ctx, "v1 metadata tree not available",
+	logging.Debug(ctx, "metadata branch tree not available",
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.String("error", err.Error()),
 	)
 	return nil, checkpoint.ErrCheckpointNotFound
 }
 
-func readCheckpointInfoFromLocalTree(
+func readCheckpointInfoFromMetadataTree(
 	ctx context.Context,
 	repo *git.Repository,
 	checkpointID id.CheckpointID,
-	metadataSource string,
 	metadataTree *object.Tree,
 ) (*strategy.CheckpointInfo, error) {
 	logging.Debug(ctx, "metadata tree obtained",
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.String("checkpoint_path", checkpointID.Path()),
-		slog.String("metadata_source", metadataSource),
 		slog.String("tree_hash", metadataTree.Hash.String()),
 	)
 
@@ -344,7 +342,6 @@ func readCheckpointInfoFromLocalTree(
 		logging.Debug(ctx, "checkpoint subtree not found in metadata tree",
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("checkpoint_path", checkpointID.Path()),
-			slog.String("metadata_source", metadataSource),
 			slog.String("tree_hash", metadataTree.Hash.String()),
 			slog.String("error", err.Error()),
 		)
@@ -357,7 +354,6 @@ func readCheckpointInfoFromLocalTree(
 	}
 	logging.Debug(ctx, "checkpoint subtree found",
 		slog.String("checkpoint_id", checkpointID.String()),
-		slog.String("metadata_source", metadataSource),
 		slog.String("subtree_hash", cpSubtree.Hash.String()),
 		slog.Int("entry_count", len(cpSubtree.Entries)),
 		slog.Any("entries", subtreeEntryNames),
@@ -367,13 +363,11 @@ func readCheckpointInfoFromLocalTree(
 	if prefetched, pfErr := ft.PreFetch(); pfErr != nil {
 		logging.Debug(ctx, "read checkpoint metadata: PreFetch failed",
 			slog.String("checkpoint_id", checkpointID.String()),
-			slog.String("metadata_source", metadataSource),
 			slog.String("error", pfErr.Error()),
 		)
 	} else if prefetched > 0 {
 		logging.Debug(ctx, "PreFetch completed",
 			slog.String("checkpoint_id", checkpointID.String()),
-			slog.String("metadata_source", metadataSource),
 			slog.Int("blobs_fetched", prefetched),
 		)
 	}
@@ -381,7 +375,6 @@ func readCheckpointInfoFromLocalTree(
 	if err != nil {
 		logging.Debug(ctx, "ReadCheckpointMetadataFromSubtree failed",
 			slog.String("checkpoint_id", checkpointID.String()),
-			slog.String("metadata_source", metadataSource),
 			slog.String("subtree_hash", cpSubtree.Hash.String()),
 			slog.String("error", err.Error()),
 		)

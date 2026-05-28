@@ -18,7 +18,6 @@ type CommittedListReader interface {
 	CommittedReader
 	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*CommittedMetadata, error)
-	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 	ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error)
 }
 
