@@ -24,6 +24,7 @@ type DeclaredCaps struct {
 	TextGenerator          bool `json:"text_generator"`
 	HookResponseWriter     bool `json:"hook_response_writer"`
 	SubagentAwareExtractor bool `json:"subagent_aware_extractor"`
+	SkillEventExtractor    bool `json:"skill_event_extractor"`
 }
 
 // AsHookSupport returns the agent as HookSupport if it both implements the
@@ -185,4 +186,20 @@ func AsSubagentAwareExtractor(ag Agent) (SubagentAwareExtractor, bool) {
 		return sae, cd.DeclaredCapabilities().SubagentAwareExtractor
 	}
 	return sae, true
+}
+
+// AsSkillEventExtractor returns the agent as SkillEventExtractor if it both
+// implements the interface and (for CapabilityDeclarer agents) has declared the capability.
+func AsSkillEventExtractor(ag Agent) (SkillEventExtractor, bool) {
+	if ag == nil {
+		return nil, false
+	}
+	see, ok := ag.(SkillEventExtractor)
+	if !ok {
+		return nil, false
+	}
+	if cd, ok := ag.(CapabilityDeclarer); ok {
+		return see, cd.DeclaredCapabilities().SkillEventExtractor
+	}
+	return see, true
 }
