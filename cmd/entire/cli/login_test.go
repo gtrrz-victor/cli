@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -36,6 +37,43 @@ func (m *mockClient) PollDeviceAuth(_ context.Context, _ string) (*auth.DeviceAu
 	r := m.responses[m.calls]
 	m.calls++
 	return r.result, r.err
+}
+
+func TestCopyDeviceCodeToClipboard_Success(t *testing.T) {
+	t.Parallel()
+
+	var errBuf bytes.Buffer
+	var copied string
+	ok := copyDeviceCodeToClipboard(&errBuf, "ABCD-1234", func(text string) error {
+		copied = text
+		return nil
+	})
+
+	if !ok {
+		t.Fatal("copyDeviceCodeToClipboard() = false, want true")
+	}
+	if copied != "ABCD-1234" {
+		t.Fatalf("copied = %q, want device code", copied)
+	}
+	if errBuf.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", errBuf.String())
+	}
+}
+
+func TestCopyDeviceCodeToClipboard_Failure(t *testing.T) {
+	t.Parallel()
+
+	var errBuf bytes.Buffer
+	ok := copyDeviceCodeToClipboard(&errBuf, "ABCD-1234", func(_ string) error {
+		return errors.New("clipboard unavailable")
+	})
+
+	if ok {
+		t.Fatal("copyDeviceCodeToClipboard() = true, want false")
+	}
+	if !strings.Contains(errBuf.String(), "failed to copy device code to clipboard") {
+		t.Fatalf("stderr = %q, want clipboard warning", errBuf.String())
+	}
 }
 
 func TestWaitForApproval_ImmediateSuccess(t *testing.T) {
@@ -241,6 +279,47 @@ func TestWaitForApproval_TransientErrorCounterResets(t *testing.T) {
 	}
 	if token != "tok-reset" {
 		t.Fatalf("token = %q, want %q", token, "tok-reset")
+	}
+}
+
+// TestChooseApprovalURL locks in that the CLI opens the URI with the
+// user_code embedded (RFC 8628 §3.3.1) when the AS supplies one, falling
+// back to the bare verification_uri otherwise. Most AS verification pages
+// prefill the code input from the query param in the complete form; without
+// this, the user has to type the code by hand even when the AS provided a
+// click-through URL.
+func TestChooseApprovalURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		start *auth.DeviceAuthStart
+		want  string
+	}{
+		{
+			name: "prefers complete URI when supplied",
+			start: &auth.DeviceAuthStart{
+				VerificationURI:         "http://test/cli/auth",
+				VerificationURIComplete: "http://test/cli/auth?user_code=ABCD-1234",
+			},
+			want: "http://test/cli/auth?user_code=ABCD-1234",
+		},
+		{
+			name: "falls back to bare verification_uri",
+			start: &auth.DeviceAuthStart{
+				VerificationURI: "http://test/cli/auth",
+			},
+			want: "http://test/cli/auth",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := chooseApprovalURL(tc.start); got != tc.want {
+				t.Errorf("chooseApprovalURL = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 
@@ -143,6 +142,36 @@ func TestPushBranchIfNeeded_UnreachableTarget_ReturnsNil(t *testing.T) {
 	nonExistentPath := filepath.Join(t.TempDir(), "does-not-exist")
 	err := pushBranchIfNeeded(ctx, nonExistentPath, paths.MetadataBranchName)
 	assert.NoError(t, err, "pushBranchIfNeeded should return nil when target is unreachable")
+}
+
+// TestPrePush_WarnsForDisallowedV2Settings verifies that push-time keeps
+// telling users legacy v2 settings fall back to v1 until they remove them.
+//
+// Not parallel: uses t.Chdir() and os.Stderr redirection.
+func TestPrePush_WarnsForDisallowedV2Settings(t *testing.T) {
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".entire"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, ".entire", "settings.json"),
+		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_v2": true}}`),
+		0o644,
+	))
+	t.Chdir(tmpDir)
+
+	restore := captureStderr(t)
+	err := (&ManualCommitStrategy{}).PrePush(context.Background(), "origin")
+	output := restore()
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "[entire] strategy_options.checkpoints_version 2 is no longer supported. Falling back to version 1")
+
+	restore = captureStderr(t)
+	err = (&ManualCommitStrategy{}).PrePush(context.Background(), "origin")
+	output = restore()
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "[entire] strategy_options.checkpoints_version 2 is no longer supported. Falling back to version 1")
 }
 
 // TestPushBranchIfNeeded_LocalBareRepo_PushesSuccessfully verifies that
@@ -305,6 +334,86 @@ func TestFetchAndRebase_DivergedBranches(t *testing.T) {
 	assert.Contains(t, entries, "aa/aaaaaaaaaa/metadata.json", "base checkpoint should be preserved")
 	assert.Contains(t, entries, "bb/bbbbbbbbbb/metadata.json", "local checkpoint should be preserved")
 	assert.Contains(t, entries, "cc/cccccccccc/metadata.json", "remote checkpoint should be preserved")
+}
+
+// TestFetchAndRebase_SharedCloneLocalCommitInAlternate verifies that the
+// metadata branch replay path can read local-only commits that are present via
+// .git/objects/info/alternates. Git CLI can see these objects, but go-git may
+// return object not found without the CLI fallback.
+//
+// Not parallel: uses t.Chdir() (required for OpenRepository).
+func TestFetchAndRebase_SharedCloneLocalCommitInAlternate(t *testing.T) {
+	ctx := context.Background()
+	branchName := paths.MetadataBranchName
+
+	bareDir := t.TempDir()
+	sourceDir := filepath.Join(t.TempDir(), "source")
+	remoteWorkDir := filepath.Join(t.TempDir(), "remote-work")
+	cloneDir := filepath.Join(t.TempDir(), "shared-clone")
+	gitRun := func(dir string, args ...string) string {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = testutil.GitIsolatedEnv()
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v in %s failed: %s", args, dir, out)
+		return string(out)
+	}
+	writeCheckpoint := func(dir, shard, rest, checkpointID string) {
+		t.Helper()
+		cpDir := filepath.Join(dir, shard, rest)
+		require.NoError(t, os.MkdirAll(cpDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(cpDir, "metadata.json"),
+			[]byte(`{"checkpoint_id":"`+checkpointID+`"}`), 0o644))
+	}
+	configUser := func(dir, email string) {
+		t.Helper()
+		gitRun(dir, "config", "user.email", email)
+		gitRun(dir, "config", "user.name", "Test User")
+		gitRun(dir, "config", "commit.gpgsign", "false")
+	}
+
+	gitRun(bareDir, "init", "--bare", "-b", "main")
+	gitRun(filepath.Dir(sourceDir), "clone", bareDir, filepath.Base(sourceDir))
+	configUser(sourceDir, "source@test.com")
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "README.md"), []byte("# Test"), 0o644))
+	gitRun(sourceDir, "add", ".")
+	gitRun(sourceDir, "commit", "-m", "init")
+	gitRun(sourceDir, "push", "origin", "main")
+
+	gitRun(sourceDir, "checkout", "--orphan", branchName)
+	gitRun(sourceDir, "rm", "-rf", ".")
+	writeCheckpoint(sourceDir, "aa", "aaaaaaaaaa", "aaaaaaaaaaaa")
+	gitRun(sourceDir, "add", ".")
+	gitRun(sourceDir, "commit", "-m", "Checkpoint: aaaaaaaaaaaa")
+	gitRun(sourceDir, "push", "origin", branchName)
+
+	writeCheckpoint(sourceDir, "bb", "bbbbbbbbbb", "bbbbbbbbbbbb")
+	gitRun(sourceDir, "add", ".")
+	gitRun(sourceDir, "commit", "-m", "Checkpoint: bbbbbbbbbbbb")
+	localOnlyHash := strings.TrimSpace(gitRun(sourceDir, "rev-parse", "HEAD"))
+	gitRun(sourceDir, "checkout", "main")
+
+	gitRun(filepath.Dir(cloneDir), "clone", "--shared", sourceDir, filepath.Base(cloneDir))
+	gitRun(cloneDir, "branch", branchName, "origin/"+branchName)
+	require.Equal(t, "commit\n", gitRun(cloneDir, "cat-file", "-t", localOnlyHash))
+	gitRun(cloneDir, "remote", "set-url", "origin", bareDir)
+
+	gitRun(filepath.Dir(remoteWorkDir), "clone", bareDir, filepath.Base(remoteWorkDir))
+	configUser(remoteWorkDir, "remote@test.com")
+	gitRun(remoteWorkDir, "checkout", "-b", branchName, "origin/"+branchName)
+	writeCheckpoint(remoteWorkDir, "cc", "cccccccccc", "cccccccccccc")
+	gitRun(remoteWorkDir, "add", ".")
+	gitRun(remoteWorkDir, "commit", "-m", "Checkpoint: cccccccccccc")
+	gitRun(remoteWorkDir, "push", "origin", branchName)
+
+	t.Chdir(cloneDir)
+	err := fetchAndRebaseSessionsCommon(ctx, "origin", branchName)
+	require.NoError(t, err)
+
+	treePaths := gitRun(cloneDir, "ls-tree", "-r", "--name-only", branchName)
+	assert.Contains(t, treePaths, "aa/aaaaaaaaaa/metadata.json", "base checkpoint should be preserved")
+	assert.Contains(t, treePaths, "bb/bbbbbbbbbb/metadata.json", "alternate local checkpoint should be preserved")
+	assert.Contains(t, treePaths, "cc/cccccccccc/metadata.json", "remote checkpoint should be preserved")
 }
 
 // TestFetchAndRebase_LocalBehind verifies that when local is an ancestor of remote,
@@ -1203,105 +1312,6 @@ func TestPrintSettingsCommitHint(t *testing.T) {
 
 		count := bytes.Count(buf.Bytes(), []byte("does not contain checkpoint_remote"))
 		assert.Equal(t, 1, count, "hint should print exactly once, got %d", count)
-	})
-}
-
-func TestIsCheckpointsVersion2Committed(t *testing.T) {
-	t.Run("false when settings.json not committed", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		testutil.InitRepo(t, tmpDir)
-		testutil.WriteFile(t, tmpDir, "f.txt", "init")
-		testutil.GitAdd(t, tmpDir, "f.txt")
-		testutil.GitCommit(t, tmpDir, "init")
-
-		entireDir := filepath.Join(tmpDir, ".entire")
-		require.NoError(t, os.MkdirAll(entireDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(entireDir, "settings.json"),
-			[]byte(`{"strategy_options":{"checkpoints_version":2}}`), 0o644))
-
-		t.Chdir(tmpDir)
-		assert.False(t, isCheckpointsVersion2Committed(context.Background()))
-	})
-
-	t.Run("true when checkpoints_version 2 is committed", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		testutil.InitRepo(t, tmpDir)
-		testutil.WriteFile(t, tmpDir, "f.txt", "init")
-		testutil.GitAdd(t, tmpDir, "f.txt")
-		testutil.GitCommit(t, tmpDir, "init")
-
-		entireDir := filepath.Join(tmpDir, ".entire")
-		require.NoError(t, os.MkdirAll(entireDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(entireDir, "settings.json"),
-			[]byte(`{"strategy_options":{"checkpoints_version":2}}`), 0o644))
-		testutil.GitAdd(t, tmpDir, ".entire/settings.json")
-		testutil.GitCommit(t, tmpDir, "enable checkpoints_version 2")
-
-		t.Chdir(tmpDir)
-		assert.True(t, isCheckpointsVersion2Committed(context.Background()))
-	})
-}
-
-// setupCheckpointsV2CommittedRepo creates a temp repo with checkpoints_version: 2
-// set in the committed .entire/settings.json and chdirs into it. Returns an opened
-// *git.Repository for populating checkpoints.
-func setupCheckpointsV2CommittedRepo(t *testing.T) *git.Repository {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	testutil.InitRepo(t, tmpDir)
-	testutil.WriteFile(t, tmpDir, "f.txt", "init")
-	testutil.GitAdd(t, tmpDir, "f.txt")
-	testutil.GitCommit(t, tmpDir, "init")
-
-	entireDir := filepath.Join(tmpDir, ".entire")
-	require.NoError(t, os.MkdirAll(entireDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(entireDir, "settings.json"),
-		[]byte(`{"strategy_options":{"checkpoints_version":2}}`), 0o644))
-	testutil.GitAdd(t, tmpDir, ".entire/settings.json")
-	testutil.GitCommit(t, tmpDir, "enable checkpoints_version 2")
-	t.Chdir(tmpDir)
-
-	repo, err := git.PlainOpen(tmpDir)
-	require.NoError(t, err)
-	return repo
-}
-
-func TestPrintCheckpointsV2MigrationHint(t *testing.T) {
-	t.Run("suppressed when v2 /main exists", func(t *testing.T) {
-		checkpointsV2MigrationHintOnce = sync.Once{}
-		repo := setupCheckpointsV2CommittedRepo(t)
-		writeV2Checkpoint(t, repo, id.MustCheckpointID("aabbccddeeff"), "session-1")
-
-		restore := captureStderr(t)
-		printCheckpointsV2MigrationHint(context.Background())
-		output := restore()
-
-		assert.Empty(t, output, "hint should not print once v2 /main has been populated")
-	})
-
-	t.Run("prints when v2 /main is missing", func(t *testing.T) {
-		checkpointsV2MigrationHintOnce = sync.Once{}
-		setupCheckpointsV2CommittedRepo(t)
-
-		restore := captureStderr(t)
-		printCheckpointsV2MigrationHint(context.Background())
-		output := restore()
-
-		assert.Contains(t, output, "entire migrate --checkpoints v2")
-	})
-
-	t.Run("prints only once per process", func(t *testing.T) {
-		checkpointsV2MigrationHintOnce = sync.Once{}
-		setupCheckpointsV2CommittedRepo(t)
-
-		restore := captureStderr(t)
-		printCheckpointsV2MigrationHint(context.Background())
-		printCheckpointsV2MigrationHint(context.Background())
-		output := restore()
-
-		outputCount := strings.Count(output, "entire migrate --checkpoints v2")
-		assert.Equal(t, 1, outputCount, "hint should print exactly once per process")
 	})
 }
 

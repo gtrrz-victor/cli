@@ -11,6 +11,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 )
@@ -49,6 +50,10 @@ type explainExportOptions struct {
 	// listLimit caps the JSON list view at N entries. 0 means use the
 	// default (branchCheckpointsLimit). Only consulted in list mode.
 	listLimit int
+}
+
+type compactTranscriptReader interface {
+	ReadSessionCompactTranscript(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) ([]byte, error)
 }
 
 // runExplainExport handles --json, --transcript, and --raw-transcript with an
@@ -109,7 +114,11 @@ func resolveExplainCheckpointID(ctx context.Context, errW io.Writer, opts explai
 		return id.CheckpointID(""), nil, lookupErr
 	}
 
-	matches, lookup := matchCheckpointPrefixWithRemoteFallback(ctx, errW, lookup, prefix)
+	matches, resolvedLookup := matchCheckpointPrefixWithRemoteFallback(ctx, errW, lookup, prefix)
+	if resolvedLookup != lookup {
+		_ = lookup.Close()
+		lookup = resolvedLookup
+	}
 	switch len(matches) {
 	case 1:
 		return matches[0], lookup, nil
@@ -120,6 +129,7 @@ func resolveExplainCheckpointID(ctx context.Context, errW io.Writer, opts explai
 		if opts.target != "" && opts.checkpointFlag == "" {
 			cpID, freshLookup, commitErr := resolveCheckpointFromCommitRef(ctx, errW, opts.target)
 			if commitErr == nil {
+				_ = lookup.Close()
 				return cpID, freshLookup, nil
 			}
 		}
@@ -140,6 +150,7 @@ func resolveCheckpointFromCommitRef(ctx context.Context, errW io.Writer, commitR
 	if err != nil {
 		return id.CheckpointID(""), nil, fmt.Errorf("not a git repository: %w", err)
 	}
+	defer repo.Close()
 	hash, _, err := resolveCommitUnambiguous(repo, commitRef)
 	if err != nil {
 		return id.CheckpointID(""), nil, fmt.Errorf("commit not found: %s: %w", commitRef, err)
@@ -162,6 +173,9 @@ func resolveCheckpointFromCommitRef(ctx context.Context, errW io.Writer, commitR
 	// metadata reads would fail with an immediate "not found".
 	if !lookupHasCheckpoint(lookup, cpID) {
 		if matches, fresh := matchCheckpointPrefixWithRemoteFallback(ctx, errW, lookup, cpID.String()); len(matches) == 1 {
+			if fresh != lookup {
+				_ = lookup.Close()
+			}
 			lookup = fresh
 		}
 	}
@@ -190,10 +204,16 @@ func matchCheckpointPrefixWithRemoteFallback(ctx context.Context, errW io.Writer
 	}
 
 	stop := startSpinner(errW, "Fetching checkpoint metadata from remote")
-	_, _, v1Err := getMetadataTree(ctx)
+	_, v1Repo, v1Err := getMetadataTree(ctx)
+	if v1Repo != nil {
+		_ = v1Repo.Close()
+	}
 	v2OK := false
-	if lookup.preferCheckpointsV2 {
-		if _, _, v2Err := getV2MetadataTree(ctx); v2Err == nil {
+	if shouldFetchV2Metadata(ctx, lookup) {
+		if _, v2Repo, v2Err := getV2MetadataTree(ctx); v2Err == nil {
+			if v2Repo != nil {
+				_ = v2Repo.Close()
+			}
 			v2OK = true
 		}
 	}
@@ -206,6 +226,21 @@ func matchCheckpointPrefixWithRemoteFallback(ctx context.Context, errW io.Writer
 		return nil, lookup
 	}
 	return matchCheckpointPrefix(fresh, prefix), fresh
+}
+
+func shouldFetchV2Metadata(ctx context.Context, lookup *explainCheckpointLookup) bool {
+	if settings.IsCheckpointsV2Enabled(ctx) {
+		return true
+	}
+	if lookup == nil {
+		return false
+	}
+	switch lookup.store.(type) {
+	case *checkpoint.DualCheckpointReader:
+		return true
+	default:
+		return false
+	}
 }
 
 func matchCheckpointPrefix(lookup *explainCheckpointLookup, prefix string) []id.CheckpointID {
@@ -252,15 +287,20 @@ func resolveSessionIndex(summary *checkpoint.CheckpointSummary, requested int) (
 func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts explainExportOptions) error {
 	cpID, lookup, err := resolveExplainCheckpointID(ctx, errW, opts)
 	if err != nil {
+		if lookup != nil {
+			_ = lookup.Close()
+		}
 		return err
 	}
+	defer lookup.Close()
 
-	reader, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, cpID, lookup.v1Store, lookup.v2Store, lookup.preferCheckpointsV2)
+	store := lookup.store
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, cpID)
 	if err != nil {
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 
-	v2Reader, isV2 := reader.(*checkpoint.V2GitStore)
+	compactReader, hasCompact := store.(compactTranscriptReader)
 	wantCompact := !opts.rawTranscript
 
 	idx, err := resolveSessionIndex(summary, opts.sessionIndex)
@@ -270,13 +310,13 @@ func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts exp
 
 	// Compact transcripts are only stored on v2; transparently fall through
 	// to raw on v1 so consumers don't need to retry.
-	if wantCompact && !isV2 {
+	if wantCompact && !hasCompact {
 		fmt.Fprintln(errW, "note: compact transcript unavailable on v1 checkpoint, falling back to raw transcript")
 		wantCompact = false
 	}
 
 	if !wantCompact {
-		content, readErr := reader.ReadSessionContent(ctx, cpID, idx)
+		content, readErr := store.ReadSessionContent(ctx, cpID, idx)
 		if readErr != nil {
 			return fmt.Errorf("failed to read session content: %w", readErr)
 		}
@@ -286,8 +326,19 @@ func runExplainStreamTranscript(ctx context.Context, w, errW io.Writer, opts exp
 		return nil
 	}
 
-	compact, err := v2Reader.ReadSessionCompactTranscript(ctx, cpID, idx)
+	compact, err := compactReader.ReadSessionCompactTranscript(ctx, cpID, idx)
 	if err != nil {
+		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
+			fmt.Fprintln(errW, "note: compact transcript unavailable, falling back to raw transcript")
+			content, readErr := store.ReadSessionContent(ctx, cpID, idx)
+			if readErr != nil {
+				return fmt.Errorf("failed to read session content: %w", readErr)
+			}
+			if _, writeErr := w.Write(content.Transcript); writeErr != nil {
+				return fmt.Errorf("failed to write transcript: %w", writeErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("failed to read compact transcript: %w", err)
 	}
 	if _, err := w.Write(compact); err != nil {
@@ -312,6 +363,7 @@ type checkpointExportJSON struct {
 	CheckpointsCount int                     `json:"checkpoints_count"`
 	FilesTouched     []string                `json:"files_touched,omitempty"`
 	HasReview        bool                    `json:"has_review,omitempty"`
+	HasInvestigation bool                    `json:"has_investigation,omitempty"`
 	SessionCount     int                     `json:"session_count"`
 	Sessions         []checkpointSessionJSON `json:"sessions"`
 	Partial          bool                    `json:"partial,omitempty"`
@@ -331,6 +383,11 @@ type checkpointSessionJSON struct {
 	FilesTouched []string                  `json:"files_touched,omitempty"`
 	TokenUsage   *checkpointSessionTokens  `json:"token_usage,omitempty"`
 	Summary      *checkpointSessionSummary `json:"summary,omitempty"`
+
+	// Investigation tagging — set only on sessions whose Kind is an
+	// investigate kind.
+	InvestigateRunID string `json:"investigate_run_id,omitempty"`
+	InvestigateTopic string `json:"investigate_topic,omitempty"`
 
 	// Error is set when this session's metadata could not be read. The Index
 	// field remains valid; all other content fields are zero. Consumers can
@@ -356,15 +413,20 @@ type checkpointSessionSummary struct {
 func runExplainCheckpointJSON(ctx context.Context, w, errW io.Writer, opts explainExportOptions) error {
 	cpID, lookup, err := resolveExplainCheckpointID(ctx, errW, opts)
 	if err != nil {
+		if lookup != nil {
+			_ = lookup.Close()
+		}
 		return err
 	}
+	defer lookup.Close()
 
-	reader, summary, err := checkpoint.ResolveCommittedReaderForCheckpoint(ctx, cpID, lookup.v1Store, lookup.v2Store, lookup.preferCheckpointsV2)
+	store := lookup.store
+	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, cpID)
 	if err != nil {
 		return fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 
-	envelope, failedSessions := buildCheckpointJSONEnvelope(ctx, reader, summary, cpID)
+	envelope, failedSessions := buildCheckpointJSONEnvelope(ctx, store, summary, cpID)
 
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -399,6 +461,7 @@ func buildCheckpointJSONEnvelope(ctx context.Context, reader checkpoint.Committe
 		CheckpointsCount: summary.CheckpointsCount,
 		FilesTouched:     summary.FilesTouched,
 		HasReview:        summary.HasReview,
+		HasInvestigation: summary.HasInvestigation,
 		SessionCount:     len(summary.Sessions),
 	}
 
@@ -430,44 +493,40 @@ func buildCheckpointJSONEnvelope(ctx context.Context, reader checkpoint.Committe
 // cause an unrelated ErrNoTranscript on v1 checkpoints whose raw transcript
 // has been pruned).
 func readSessionMetadataForExport(ctx context.Context, reader checkpoint.CommittedReader, cpID id.CheckpointID, idx int) (*checkpoint.CommittedMetadata, error) {
-	switch r := reader.(type) {
-	case *checkpoint.V2GitStore:
+	if r, ok := reader.(interface {
+		ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.CommittedMetadata, error)
+	}); ok {
 		meta, err := r.ReadSessionMetadata(ctx, cpID, idx)
 		if err != nil {
-			return nil, fmt.Errorf("read v2 session metadata: %w", err)
+			return nil, fmt.Errorf("read session metadata: %w", err)
 		}
 		return meta, nil
-	case *checkpoint.GitStore:
-		meta, err := r.ReadSessionMetadata(ctx, cpID, idx)
-		if err != nil {
-			return nil, fmt.Errorf("read v1 session metadata: %w", err)
-		}
-		return meta, nil
-	default:
-		// CommittedReader doesn't promise a metadata-only method; fall back
-		// to the heavier ReadSessionContent path. Reachable only if a third
-		// store implementation is added without updating this switch.
-		content, err := reader.ReadSessionContent(ctx, cpID, idx)
-		if err != nil {
-			return nil, fmt.Errorf("read session content: %w", err)
-		}
-		meta := content.Metadata
-		return &meta, nil
 	}
+	// CommittedReader doesn't promise a metadata-only method; fall back
+	// to the heavier ReadSessionContent path. Reachable only if a third
+	// store implementation is added without exposing metadata reads.
+	content, err := reader.ReadSessionContent(ctx, cpID, idx)
+	if err != nil {
+		return nil, fmt.Errorf("read session content: %w", err)
+	}
+	meta := content.Metadata
+	return &meta, nil
 }
 
 func sessionMetadataToJSON(idx int, meta *checkpoint.CommittedMetadata) checkpointSessionJSON {
 	out := checkpointSessionJSON{
-		Index:        idx,
-		SessionID:    meta.SessionID,
-		Agent:        string(meta.Agent),
-		Model:        meta.Model,
-		Kind:         meta.Kind,
-		ReviewSkills: meta.ReviewSkills,
-		TurnID:       meta.TurnID,
-		IsTask:       meta.IsTask,
-		ToolUseID:    meta.ToolUseID,
-		FilesTouched: meta.FilesTouched,
+		Index:            idx,
+		SessionID:        meta.SessionID,
+		Agent:            string(meta.Agent),
+		Model:            meta.Model,
+		Kind:             meta.Kind,
+		ReviewSkills:     meta.ReviewSkills,
+		TurnID:           meta.TurnID,
+		IsTask:           meta.IsTask,
+		ToolUseID:        meta.ToolUseID,
+		FilesTouched:     meta.FilesTouched,
+		InvestigateRunID: meta.InvestigateRunID,
+		InvestigateTopic: meta.InvestigateTopic,
 	}
 	if !meta.CreatedAt.IsZero() {
 		ts := meta.CreatedAt
@@ -518,6 +577,7 @@ func runExplainListJSON(ctx context.Context, w, errW io.Writer, sessionFilter st
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
 	}
+	defer repo.Close()
 
 	limit := listLimit
 	if limit <= 0 {

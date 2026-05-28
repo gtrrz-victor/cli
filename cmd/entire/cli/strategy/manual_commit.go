@@ -6,9 +6,8 @@ import (
 	"sync"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
-	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/go-git/go-git/v6"
 )
 
 // ManualCommitStrategy implements the manual-commit strategy for session management.
@@ -22,21 +21,9 @@ type ManualCommitStrategy struct {
 	// stateStoreErr captures any error during initialization
 	stateStoreErr error
 
-	// checkpointStore manages checkpoint data in git
-	checkpointStore *checkpoint.GitStore
-	// checkpointStoreOnce ensures thread-safe lazy initialization
-	checkpointStoreOnce sync.Once
-	// checkpointStoreErr captures any error during initialization
-	checkpointStoreErr error
-
 	// blobFetcher, when set, is passed to the checkpoint store to enable
 	// on-demand blob fetching after treeless fetches. Set via SetBlobFetcher.
 	blobFetcher checkpoint.BlobFetchFunc
-
-	// v2CheckpointStore manages v2 checkpoint reads
-	v2CheckpointStore     *checkpoint.V2GitStore
-	v2CheckpointStoreOnce sync.Once
-	v2CheckpointStoreErr  error
 }
 
 // getStateStore returns the session state store, initializing it lazily if needed.
@@ -53,43 +40,23 @@ func (s *ManualCommitStrategy) getStateStore(_ context.Context) (*session.StateS
 	return s.stateStore, s.stateStoreErr
 }
 
-// getCheckpointStore returns the checkpoint store, initializing it lazily if needed.
-// Thread-safe via sync.Once.
-func (s *ManualCommitStrategy) getCheckpointStore() (*checkpoint.GitStore, error) {
-	s.checkpointStoreOnce.Do(func() {
-		repo, err := OpenRepository(context.Background())
-		if err != nil {
-			s.checkpointStoreErr = fmt.Errorf("failed to open repository: %w", err)
-			return
-		}
-		WarnIfMetadataDisconnected()
-		store := checkpoint.NewGitStore(repo)
-		if s.blobFetcher != nil {
-			store.SetBlobFetcher(s.blobFetcher)
-		}
-		s.checkpointStore = store
-	})
-	return s.checkpointStore, s.checkpointStoreErr
+func (s *ManualCommitStrategy) getCheckpointStore(repo *git.Repository) *checkpoint.GitStore {
+	store := checkpoint.NewGitStore(repo)
+	if s.blobFetcher != nil {
+		store.SetBlobFetcher(s.blobFetcher)
+	}
+	return store
 }
 
-// getV2CheckpointStore returns the v2 checkpoint store, initializing it lazily.
-// The context from the first call is used for initialization (settings loading, repo opening).
-func (s *ManualCommitStrategy) getV2CheckpointStore(ctx context.Context) (*checkpoint.V2GitStore, error) {
-	s.v2CheckpointStoreOnce.Do(func() {
-		repo, err := OpenRepository(ctx)
-		if err != nil {
-			s.v2CheckpointStoreErr = fmt.Errorf("failed to open repository: %w", err)
-			return
-		}
-		v2URL, err := remote.FetchURL(ctx)
-		if err != nil {
-			logging.Debug(ctx, "manual-commit: using origin for v2 store fetch remote",
-				"error", err.Error(),
-			)
-		}
-		s.v2CheckpointStore = checkpoint.NewV2GitStore(repo, v2URL)
+func (s *ManualCommitStrategy) committedCheckpointStore(ctx context.Context, repo *git.Repository) (checkpoint.CommittedListReader, error) { //nolint:ireturn // Strategy callers need the selected committed checkpoint reader implementation.
+	WarnIfMetadataDisconnected()
+	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{
+		BlobFetcher: s.blobFetcher,
 	})
-	return s.v2CheckpointStore, s.v2CheckpointStoreErr
+	if err != nil {
+		return nil, fmt.Errorf("prepare checkpoint store: %w", err)
+	}
+	return store, nil
 }
 
 // NewManualCommitStrategy creates a new manual-commit strategy instance.
@@ -115,6 +82,7 @@ func (s *ManualCommitStrategy) ValidateRepository() error {
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
 	}
+	defer repo.Close()
 
 	_, err = repo.Worktree()
 	if err != nil {

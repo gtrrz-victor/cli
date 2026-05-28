@@ -219,7 +219,13 @@ func resolveRemoteV1Tip(ctx context.Context, repo *git.Repository, target string
 		)
 		return plumbing.ZeroHash, nil
 	}
-	defer removeTempRefs(repo, []plumbing.ReferenceName{plumbing.ReferenceName(opfRewriteFetchTmpRef)})
+	defer func() {
+		if err := repo.Storer.RemoveReference(plumbing.ReferenceName(opfRewriteFetchTmpRef)); err != nil {
+			logging.Debug(ctx, "OPF rewrite: failed to clean up temp ref",
+				slog.String("error", err.Error()),
+			)
+		}
+	}()
 	ref, err := repo.Reference(plumbing.ReferenceName(opfRewriteFetchTmpRef), true)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {

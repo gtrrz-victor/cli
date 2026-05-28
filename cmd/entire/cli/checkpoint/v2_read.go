@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
@@ -92,41 +92,7 @@ func (s *V2GitStore) ListCommitted(ctx context.Context) ([]CommittedInfo, error)
 			return nil
 		}
 
-		info := CommittedInfo{CheckpointID: checkpointID}
-
-		if metadataFile, fileErr := checkpointTree.File(paths.MetadataFileName); fileErr == nil {
-			if content, contentErr := metadataFile.Contents(); contentErr == nil {
-				var summary CheckpointSummary
-				if unmarshalErr := json.Unmarshal([]byte(content), &summary); unmarshalErr != nil {
-					logging.Debug(ctx, "v2 ListCommitted: skipping malformed metadata",
-						slog.String("checkpoint_id", checkpointID.String()),
-						slog.String("error", unmarshalErr.Error()))
-				} else {
-					info.CheckpointsCount = summary.CheckpointsCount
-					info.FilesTouched = summary.FilesTouched
-					info.SessionCount = len(summary.Sessions)
-
-					if len(summary.Sessions) > 0 {
-						latestIndex := len(summary.Sessions) - 1
-						latestDir := strconv.Itoa(latestIndex)
-						if sessionTree, treeErr := checkpointTree.Tree(latestDir); treeErr == nil {
-							if sessionMetadataFile, smErr := sessionTree.File(paths.MetadataFileName); smErr == nil {
-								if sessionContent, scErr := sessionMetadataFile.Contents(); scErr == nil {
-									var sessionMetadata CommittedMetadata
-									if json.Unmarshal([]byte(sessionContent), &sessionMetadata) == nil {
-										info.Agent = sessionMetadata.Agent
-										info.SessionID = sessionMetadata.SessionID
-										info.CreatedAt = sessionMetadata.CreatedAt
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-		checkpoints = append(checkpoints, info)
+		checkpoints = append(checkpoints, readCommittedInfoFromCheckpointTree(checkpointID, checkpointTree))
 		return nil
 	})
 
@@ -232,7 +198,7 @@ func (s *V2GitStore) ReadSessionMetadata(ctx context.Context, checkpointID id.Ch
 }
 
 // ReadSessionMetadataAndPrompts reads a session's metadata and prompts from the
-// v2 /main ref without requiring the raw transcript from /full/* refs.
+// v2 /main ref without requiring the raw transcript from /full/current.
 // Used by explain when the raw transcript is unavailable but compact transcript
 // (transcript.jsonl) on /main can substitute for display.
 // Returns ErrCheckpointNotFound if the checkpoint or session doesn't exist on /main.
@@ -272,8 +238,35 @@ func (s *V2GitStore) ReadSessionMetadataAndPrompts(ctx context.Context, checkpoi
 	return result, nil
 }
 
+func (s *V2GitStore) ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error) {
+	sessionTree, err := s.sessionTreeFromMain(ctx, checkpointID, sessionIndex)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr //nolint:wrapcheck // Propagating context cancellation
+		}
+		return "", ErrCheckpointNotFound
+	}
+
+	sessionFT := s.wrapWithFetcher(ctx, sessionTree)
+	file, err := sessionFT.File(paths.PromptFileName)
+	if err != nil {
+		return "", nil //nolint:nilerr // Missing prompt.txt means no recorded prompts.
+	}
+	content, err := file.Contents()
+	if err != nil {
+		return "", nil //nolint:nilerr // Keep committed prompt reads best-effort.
+	}
+	return content, nil
+}
+
+// GetCheckpointAuthor retrieves the author of a checkpoint from the v2 /main
+// commit history.
+func (s *V2GitStore) GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error) {
+	return getCheckpointAuthorFromRef(ctx, s.repo, plumbing.ReferenceName(paths.V2MainRefName), checkpointID)
+}
+
 // ReadSessionContent reads a session's metadata and prompts from the v2 /main ref,
-// and the raw transcript (raw_transcript) from /full/* refs (current + archived generations).
+// and the raw transcript (raw_transcript) from /full/current.
 // This is the v2 equivalent of GitStore.ReadSessionContent — it reads the raw agent
 // transcript, not the compact transcript.jsonl. Used by resume and RestoreLogsOnly.
 // Returns ErrNoTranscript if the session exists but no raw transcript is available.
@@ -303,7 +296,7 @@ func (s *V2GitStore) ReadSessionContent(ctx context.Context, checkpointID id.Che
 
 	transcript, transcriptErr := s.readTranscriptFromFullRefs(ctx, checkpointID, sessionIndex, result.Metadata.Agent)
 	if transcriptErr != nil {
-		return nil, fmt.Errorf("failed to read transcript from /full/* refs: %w", transcriptErr)
+		return nil, fmt.Errorf("failed to read transcript from /full refs: %w", transcriptErr)
 	}
 	if len(transcript) == 0 {
 		return nil, ErrNoTranscript
@@ -345,7 +338,7 @@ func (s *V2GitStore) sessionTreeFromMain(ctx context.Context, checkpointID id.Ch
 
 // readTranscriptFromFullRefs reads the raw transcript for a checkpoint session
 // by searching /full/current first, then archived generations in reverse order.
-// If not found locally, attempts to discover and fetch remote /full/* refs.
+// If not found locally, it discovers and fetches remote /full/* refs.
 func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int, agentType types.AgentType) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
@@ -353,25 +346,23 @@ func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointI
 
 	sessionPath := fmt.Sprintf("%s/%d", checkpointID.Path(), sessionIndex)
 
-	// Search locally first
+	// Search locally first.
 	transcript, err := s.readTranscriptFromRef(plumbing.ReferenceName(paths.V2FullCurrentRefName), sessionPath, agentType)
 	if err == nil && len(transcript) > 0 {
 		return transcript, nil
 	}
 
-	archived, err := s.ListArchivedGenerations()
+	archived, err := s.listArchivedFullRefs()
 	if err != nil {
 		return nil, err
 	}
 	for i := len(archived) - 1; i >= 0; i-- {
-		refName := plumbing.ReferenceName(paths.V2FullRefPrefix + archived[i])
-		transcript, err := s.readTranscriptFromRef(refName, sessionPath, agentType)
+		transcript, err := s.readTranscriptFromRef(archived[i], sessionPath, agentType)
 		if err == nil && len(transcript) > 0 {
 			return transcript, nil
 		}
 	}
 
-	// Not found locally — try fetching remote /full/* refs
 	if fetchErr := s.fetchRemoteFullRefs(ctx); fetchErr != nil {
 		logging.Debug(ctx, "failed to fetch remote /full/* refs",
 			slog.String("error", fetchErr.Error()),
@@ -379,43 +370,87 @@ func (s *V2GitStore) readTranscriptFromFullRefs(ctx context.Context, checkpointI
 		return nil, nil
 	}
 
-	// Search newly fetched refs only
-	newArchived, err := s.ListArchivedGenerations()
-	if err != nil {
-		return nil, nil //nolint:nilerr // Best-effort: fetch-on-demand failure shouldn't block resume
-	}
-	existingSet := make(map[string]bool, len(archived))
-	for _, a := range archived {
-		existingSet[a] = true
-	}
-	for i := len(newArchived) - 1; i >= 0; i-- {
-		if existingSet[newArchived[i]] {
-			continue
-		}
-		refName := plumbing.ReferenceName(paths.V2FullRefPrefix + newArchived[i])
-		transcript, err := s.readTranscriptFromRef(refName, sessionPath, agentType)
-		if err == nil && len(transcript) > 0 {
-			return transcript, nil
-		}
-	}
-
-	// Also retry /full/current in case it was updated by the fetch
+	// Search again after fetching. Current is force-fetched so a stale or empty
+	// local /full/current can recover, while archived refs are fetched only when
+	// absent locally.
 	transcript, err = s.readTranscriptFromRef(plumbing.ReferenceName(paths.V2FullCurrentRefName), sessionPath, agentType)
 	if err == nil && len(transcript) > 0 {
 		return transcript, nil
 	}
 
+	// Skip refs already scanned pre-fetch. Use a membership set rather than a
+	// length boundary: archive ref names can interleave in lex order across
+	// machines (clocks diverge per the fetchRemoteFullRefs comment), so a new
+	// ref may sort before existing local ones.
+	checkedArchived := make(map[plumbing.ReferenceName]struct{}, len(archived))
+	for _, ref := range archived {
+		checkedArchived[ref] = struct{}{}
+	}
+	archived, err = s.listArchivedFullRefs()
+	if err != nil {
+		return nil, nil //nolint:nilerr // Best-effort: fetch-on-demand failure shouldn't block resume.
+	}
+	for i := len(archived) - 1; i >= 0; i-- {
+		ref := archived[i]
+		if _, checked := checkedArchived[ref]; checked {
+			continue
+		}
+		transcript, err := s.readTranscriptFromRef(ref, sessionPath, agentType)
+		if err == nil && len(transcript) > 0 {
+			return transcript, nil
+		}
+	}
+
 	return nil, nil
 }
 
-// fetchRemoteFullRefs discovers and fetches /full/* refs from the configured
-// FetchRemote that aren't local.
+func (s *V2GitStore) listArchivedFullRefs() ([]plumbing.ReferenceName, error) {
+	refs, err := s.repo.References()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list references: %w", err)
+	}
+
+	prefix := v2FullRefPrefix()
+	var archived []string
+	err = refs.ForEach(func(ref *plumbing.Reference) error {
+		name := ref.Name().String()
+		if !strings.HasPrefix(name, prefix) {
+			return nil
+		}
+		suffix := strings.TrimPrefix(name, prefix)
+		if !isV2ArchivedFullRefSuffix(suffix) {
+			return nil
+		}
+		archived = append(archived, name)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to iterate references: %w", err)
+	}
+
+	sort.Strings(archived)
+	result := make([]plumbing.ReferenceName, 0, len(archived))
+	for _, ref := range archived {
+		result = append(result, plumbing.ReferenceName(ref))
+	}
+	return result, nil
+}
+
+// fetchRemoteFullRefs discovers and fetches v2 /full/* refs from the effective
+// checkpoint fetch target. /full/current is force-fetched; archived generation
+// refs are fetched only when absent locally because old archives should be
+// immutable but may have diverged across machines.
 func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	lsCmd := exec.CommandContext(ctx, "git", "ls-remote", s.FetchRemote, paths.V2FullRefPrefix+"*")
-	output, err := lsCmd.Output()
+	repoRoot, _, err := s.gs.repoDirs(ctx)
+	if err != nil {
+		return err
+	}
+
+	fetchTarget := v2FullRefsFetchTarget(ctx, repoRoot)
+	output, err := remote.LsRemoteInDir(ctx, repoRoot, fetchTarget, v2FullRefPrefix()+"*")
 	if err != nil {
 		return fmt.Errorf("ls-remote failed: %w", err)
 	}
@@ -430,10 +465,14 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 			continue
 		}
 		remoteRefName := parts[1]
-
-		// Skip refs that already exist locally
-		if _, refErr := s.repo.Reference(plumbing.ReferenceName(remoteRefName), true); refErr == nil {
+		if !isV2FetchableFullRef(remoteRefName) {
 			continue
+		}
+
+		if remoteRefName != paths.V2FullCurrentRefName {
+			if _, refErr := s.repo.Reference(plumbing.ReferenceName(remoteRefName), true); refErr == nil {
+				continue
+			}
 		}
 
 		refSpecs = append(refSpecs, fmt.Sprintf("+%s:%s", remoteRefName, remoteRefName))
@@ -443,13 +482,54 @@ func (s *V2GitStore) fetchRemoteFullRefs(ctx context.Context) error {
 		return nil
 	}
 
-	args := append([]string{"fetch", "--no-tags", s.FetchRemote}, refSpecs...)
-	fetchCmd := exec.CommandContext(ctx, "git", args...)
-	if fetchOutput, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		return fmt.Errorf("fetch failed: %s", fetchOutput)
+	if fetchOutput, fetchErr := remote.Fetch(ctx, remote.FetchOptions{
+		Remote:   fetchTarget,
+		RefSpecs: refSpecs,
+		NoTags:   true,
+		NoFilter: true,
+		Dir:      repoRoot,
+	}); fetchErr != nil {
+		if output := strings.TrimSpace(string(fetchOutput)); output != "" {
+			return fmt.Errorf("fetch failed: %s: %w", output, fetchErr)
+		}
+		return fmt.Errorf("fetch failed: %w", fetchErr)
 	}
 
 	return nil
+}
+
+func v2FullRefsFetchTarget(ctx context.Context, repoRoot string) string {
+	target, err := remote.FetchURL(ctx, remote.FetchURLOptions{WorktreeRoot: repoRoot})
+	if err == nil && target != "" {
+		return target
+	}
+	return "origin"
+}
+
+func v2FullRefPrefix() string {
+	return strings.TrimSuffix(paths.V2FullCurrentRefName, "current")
+}
+
+func isV2FetchableFullRef(refName string) bool {
+	if refName == paths.V2FullCurrentRefName {
+		return true
+	}
+	if !strings.HasPrefix(refName, v2FullRefPrefix()) {
+		return false
+	}
+	return isV2ArchivedFullRefSuffix(strings.TrimPrefix(refName, v2FullRefPrefix()))
+}
+
+func isV2ArchivedFullRefSuffix(suffix string) bool {
+	if len(suffix) != 13 {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // readTranscriptFromRef reads the raw transcript from a specific /full/* ref.
