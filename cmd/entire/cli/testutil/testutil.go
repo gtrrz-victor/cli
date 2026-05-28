@@ -339,13 +339,13 @@ func gitEmptyConfigPath() string {
 //
 // See https://git-scm.com/docs/git#Documentation/git.txt-GITCONFIGGLOBAL
 //
-// Existing GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM entries are filtered out before
-// appending overrides to ensure they take effect regardless of parent env.
+// Existing GIT_CONFIG_* entries are filtered out before appending overrides to
+// ensure they take effect regardless of parent env.
 func GitIsolatedEnv() []string {
 	env := os.Environ()
 	filtered := make([]string, 0, len(env)+2)
 	for _, e := range env {
-		if strings.HasPrefix(e, "GIT_CONFIG_GLOBAL=") || strings.HasPrefix(e, "GIT_CONFIG_SYSTEM=") {
+		if isGitConfigEnv(e) {
 			continue
 		}
 		filtered = append(filtered, e)
@@ -354,4 +354,35 @@ func GitIsolatedEnv() []string {
 		"GIT_CONFIG_GLOBAL="+gitEmptyConfigPath(), // Isolate from user's global git config (e.g. global gitignore)
 		"GIT_CONFIG_SYSTEM="+gitEmptyConfigPath(), // Isolate from system git config
 	)
+}
+
+// IsolateGitConfigEnv applies the same git config isolation to the current
+// process. Use this in tests that exercise production code paths which invoke
+// git with os.Environ().
+func IsolateGitConfigEnv(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("GIT_CONFIG_GLOBAL", gitEmptyConfigPath())
+	t.Setenv("GIT_CONFIG_SYSTEM", gitEmptyConfigPath())
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+
+	for _, e := range os.Environ() {
+		key, _, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(key, "GIT_CONFIG_KEY_") || strings.HasPrefix(key, "GIT_CONFIG_VALUE_") {
+			t.Setenv(key, "")
+		}
+	}
+}
+
+func isGitConfigEnv(e string) bool {
+	return strings.HasPrefix(e, "GIT_CONFIG_GLOBAL=") ||
+		strings.HasPrefix(e, "GIT_CONFIG_SYSTEM=") ||
+		strings.HasPrefix(e, "GIT_CONFIG_NOSYSTEM=") ||
+		strings.HasPrefix(e, "GIT_CONFIG_COUNT=") ||
+		strings.HasPrefix(e, "GIT_CONFIG_KEY_") ||
+		strings.HasPrefix(e, "GIT_CONFIG_VALUE_")
 }
