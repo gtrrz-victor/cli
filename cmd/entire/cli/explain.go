@@ -686,7 +686,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		content, err = checkpoint.ReadLatestSessionContent(ctx, lookup.store, fullCheckpointID, summary)
 		if err != nil {
 			stopLoad(false)
-			return fmt.Errorf("failed to reload checkpoint: read latest session content: %w", err)
+			return fmt.Errorf("failed to reload checkpoint: %w", err)
 		}
 	}
 
@@ -743,7 +743,7 @@ func loadCheckpointForExplain(ctx context.Context, lookup *explainCheckpointLook
 
 	content, contentErr := checkpoint.ReadLatestSessionContent(ctx, store, cpID, summary)
 	if contentErr != nil {
-		return nil, nil, fmt.Errorf("failed to read checkpoint content: read latest session content: %w", contentErr)
+		return nil, nil, fmt.Errorf("failed to read checkpoint content: %w", contentErr)
 	}
 	return summary, content, nil
 }

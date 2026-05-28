@@ -217,7 +217,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 		if storeErr == nil {
 			metadata = storeInfo
 		} else {
-			logging.Debug(ctx, "checkpoint store metadata read failed, trying local metadata trees",
+			logging.Debug(ctx, "checkpoint store metadata read failed, trying metadata branch",
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("error", storeErr.Error()),
 			)
@@ -251,7 +251,7 @@ func resolveLatestCheckpoint(ctx context.Context, repo *git.Repository, store ch
 	for _, cpID := range checkpointIDs {
 		metadata, readErr := readCheckpointInfoFromStore(ctx, store, cpID)
 		if readErr != nil {
-			logging.Debug(ctx, "checkpoint store metadata read failed, trying local metadata trees",
+			logging.Debug(ctx, "checkpoint store metadata read failed, trying metadata branch",
 				slog.String("checkpoint_id", cpID.String()),
 				slog.String("error", readErr.Error()),
 			)
