@@ -44,13 +44,14 @@ func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Cli
 	token, err := auth.TokenForResource(ctx, api.OriginOnly(dataURL))
 	if err != nil {
 		if errors.Is(err, auth.ErrNotLoggedIn) {
-			// Wrap rather than replace so callers can still
-			// errors.Is(err, auth.ErrNotLoggedIn) to distinguish "no
-			// keyring entry" from other resolution failures (STS
-			// rejection, network error). Pre-wrap, every caller had to
-			// fall back to string-matching, and the activity command
-			// papered over real failures with a misleading login hint.
-			return nil, fmt.Errorf("not logged in (run 'entire login' first): %w", auth.ErrNotLoggedIn)
+			// Wrap the original err (not the sentinel) so any context
+			// the tokenmanager attached — keyring backend message,
+			// expired-token reason — survives to the caller. The
+			// errors.Is(err, auth.ErrNotLoggedIn) chain is preserved
+			// because err already wraps the sentinel; replacing it
+			// with the bare sentinel would drop that context for
+			// zero behavioural gain.
+			return nil, fmt.Errorf("not logged in (run 'entire login' first): %w", err)
 		}
 		return nil, fmt.Errorf("resolve API token: %w", err)
 	}
