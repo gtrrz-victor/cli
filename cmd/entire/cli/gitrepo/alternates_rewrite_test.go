@@ -77,6 +77,11 @@ func TestAbsolutizedAlternates(t *testing.T) {
 			wantOk:  false,
 		},
 		{
+			name:    "file containing only blank lines returns not ok",
+			content: "\n\n\n",
+			wantOk:  false,
+		},
+		{
 			name:    "two relative alternates are both rewritten",
 			content: relPathA + "\n" + relPathB + "\n",
 			want:    rewrittenA + "\n" + rewrittenB + "\n",
@@ -98,6 +103,12 @@ func TestAbsolutizedAlternates(t *testing.T) {
 			name:    "comment between alternates is preserved",
 			content: relPathA + "\n#note\n" + relPathB + "\n",
 			want:    rewrittenA + "\n#note\n" + rewrittenB + "\n",
+			wantOk:  true,
+		},
+		{
+			name:    "blank lines between alternates are preserved",
+			content: relPathA + "\n\n\n" + relPathB + "\n",
+			want:    rewrittenA + "\n\n\n" + rewrittenB + "\n",
 			wantOk:  true,
 		},
 		{
