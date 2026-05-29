@@ -32,11 +32,11 @@ func TestInvariant_NoSpuriousAckOnTransportError(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 		serviceRPCResp: func(string, []byte) (io.ReadCloser, error) {
@@ -51,7 +51,7 @@ func TestInvariant_NoSpuriousAckOnTransportError(t *testing.T) {
 	stdin.WriteString("PACK fakepackdata")
 
 	var out bytes.Buffer
-	err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out)
+	err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out)
 	if err == nil {
 		t.Fatal("expected error on transport failure")
 	}
@@ -70,7 +70,7 @@ func TestInvariant_RequestBodyContainsOnlyClientRefspecs(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
@@ -78,7 +78,7 @@ func TestInvariant_RequestBodyContainsOnlyClientRefspecs(t *testing.T) {
 			// its push batch. If the helper synthesised a refspec
 			// from the advertisement, refs/heads/other would appear
 			// in the captured POST body.
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n",
 				strings.Repeat("c", 40)+" refs/heads/other\n")), nil
 		},
@@ -94,7 +94,7 @@ func TestInvariant_RequestBodyContainsOnlyClientRefspecs(t *testing.T) {
 	stdin.WriteString("PACK")
 
 	var out bytes.Buffer
-	if err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out); err != nil {
+	if err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out); err != nil {
 		t.Fatalf("handleConnect: %v", err)
 	}
 	if len(ft.rpcCalls) != 1 {
@@ -133,11 +133,11 @@ func assertDeleteOnlyPushOmitsPackData(t *testing.T, oidLen int, extraCapabiliti
 
 	oldSHA := strings.Repeat("a", oidLen)
 	zeroSHA := strings.Repeat("0", oidLen)
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status delete-refs"+extraCapabilities+"\n")), nil
 		},
 		serviceRPCResp: func(string, []byte) (io.ReadCloser, error) {
@@ -152,7 +152,7 @@ func assertDeleteOnlyPushOmitsPackData(t *testing.T, oidLen int, extraCapabiliti
 	// No PACK bytes — delete-only push.
 
 	var out bytes.Buffer
-	if err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out); err != nil {
+	if err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out); err != nil {
 		t.Fatalf("handleConnect: %v", err)
 	}
 	if len(ft.rpcCalls) != 1 {
@@ -180,11 +180,11 @@ func TestInvariant_AckOnlyAfterFullResponse(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 		serviceRPCResp: func(string, []byte) (io.ReadCloser, error) {
@@ -202,7 +202,7 @@ func TestInvariant_AckOnlyAfterFullResponse(t *testing.T) {
 	stdin.WriteString("PACK fakepackdata")
 
 	var out bytes.Buffer
-	if err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out); err != nil {
+	if err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out); err != nil {
 		t.Fatalf("handleConnect: %v", err)
 	}
 	if strings.Contains(out.String(), "ok ") {
@@ -221,12 +221,12 @@ func TestInvariant_PartialRefBatchAllOrNothing(t *testing.T) {
 	newA := strings.Repeat("b", 40)
 	oldB := strings.Repeat("c", 40)
 	newB := strings.Repeat("d", 40)
-	refA := "refs/heads/main"
+	refA := testRefMain
 	refB := "refs/heads/feature"
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldA+" "+refA+"\x00 report-status\n",
 				oldB+" "+refB+"\n")), nil
 		},
@@ -246,7 +246,7 @@ func TestInvariant_PartialRefBatchAllOrNothing(t *testing.T) {
 	stdin.WriteString("PACK fakepackdata")
 
 	var out bytes.Buffer
-	if err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out); err != nil {
+	if err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out); err != nil {
 		t.Fatalf("handleConnect: %v", err)
 	}
 

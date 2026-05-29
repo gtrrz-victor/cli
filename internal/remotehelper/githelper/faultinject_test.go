@@ -95,7 +95,7 @@ func TestHandleStatelessConnect_FallbackOnNonV2(t *testing.T) {
 		},
 	}
 	var out bytes.Buffer
-	if err := handleStatelessConnect(context.Background(), ft, "git-upload-pack", strings.NewReader(""), &out); err != nil {
+	if err := handleStatelessConnect(context.Background(), ft, serviceUploadPack, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("handleStatelessConnect: %v", err)
 	}
 	if out.String() != "fallback\n" {
@@ -118,7 +118,7 @@ func TestHandleStatelessConnect_InfoRefsErrorSurfacesNoOutput(t *testing.T) {
 		},
 	}
 	var out bytes.Buffer
-	err := handleStatelessConnect(context.Background(), ft, "git-upload-pack", strings.NewReader(""), &out)
+	err := handleStatelessConnect(context.Background(), ft, serviceUploadPack, strings.NewReader(""), &out)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -137,11 +137,11 @@ func TestHandleConnect_TruncatedReceivePackRequestErrors(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 	}
@@ -150,7 +150,7 @@ func TestHandleConnect_TruncatedReceivePackRequestErrors(t *testing.T) {
 	stdin := strings.NewReader(pktLine(cmd))
 
 	var out bytes.Buffer
-	err := handleConnect(context.Background(), ft, "git-receive-pack", stdin, &out)
+	err := handleConnect(context.Background(), ft, serviceReceivePack, stdin, &out)
 	if err == nil {
 		t.Fatal("expected error on truncated request")
 	}
@@ -167,16 +167,16 @@ func TestHandleConnect_TruncatedReceivePackRequestErrors(t *testing.T) {
 func TestHandleConnect_EmptyReceivePackRequestNoPOST(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 	}
 	var out bytes.Buffer
-	if err := handleConnect(context.Background(), ft, "git-receive-pack", strings.NewReader(""), &out); err != nil {
+	if err := handleConnect(context.Background(), ft, serviceReceivePack, strings.NewReader(""), &out); err != nil {
 		t.Fatalf("handleConnect: %v", err)
 	}
 	if len(ft.rpcCalls) != 0 {
@@ -193,11 +193,11 @@ func TestHandleConnect_ServiceRPCFailurePropagates(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 		serviceRPCResp: func(string, []byte) (io.ReadCloser, error) {
@@ -211,7 +211,7 @@ func TestHandleConnect_ServiceRPCFailurePropagates(t *testing.T) {
 	stdin.WriteString("PACK fake")
 
 	var out bytes.Buffer
-	err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out)
+	err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out)
 	if err == nil {
 		t.Fatal("expected error to propagate to caller")
 	}
@@ -252,11 +252,11 @@ func TestHandleConnect_TruncatedResponseSurfacesError(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	ft := &fakeTransport{
 		infoRefsResp: func() (io.ReadCloser, error) {
-			return stringRC(serviceAnnouncement("git-receive-pack",
+			return stringRC(serviceAnnouncement(serviceReceivePack,
 				oldSHA+" "+ref+"\x00 report-status\n")), nil
 		},
 		serviceRPCResp: func(string, []byte) (io.ReadCloser, error) {
@@ -271,7 +271,7 @@ func TestHandleConnect_TruncatedResponseSurfacesError(t *testing.T) {
 	stdin.WriteString("PACK fake")
 
 	var out bytes.Buffer
-	err := handleConnect(context.Background(), ft, "git-receive-pack", &stdin, &out)
+	err := handleConnect(context.Background(), ft, serviceReceivePack, &stdin, &out)
 	if err == nil {
 		t.Fatal("expected error on truncated response")
 	}
@@ -286,15 +286,15 @@ func TestHandleConnect_Real5xxNoSpuriousAck(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
 			w.Header().Set("Content-Type", "application/x-git-receive-pack-advertisement")
-			_, _ = w.Write([]byte(serviceAnnouncement("git-receive-pack", //nolint:errcheck // test
+			_, _ = w.Write([]byte(serviceAnnouncement(serviceReceivePack, //nolint:errcheck // test
 				oldSHA+" "+ref+"\x00 report-status\n")))
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-receive-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceReceivePack):
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprint(w, "upstream dead")
 		default:
@@ -311,7 +311,7 @@ func TestHandleConnect_Real5xxNoSpuriousAck(t *testing.T) {
 	stdin.WriteString("PACK fake")
 
 	var out bytes.Buffer
-	err := handleConnect(context.Background(), testTransport(server), "git-receive-pack", &stdin, &out)
+	err := handleConnect(context.Background(), testTransport(server), serviceReceivePack, &stdin, &out)
 	if err == nil {
 		t.Fatal("expected error on 502")
 	}
@@ -336,7 +336,7 @@ func TestHandleConnect_ServerHangsTimesOutViaCtx(t *testing.T) {
 	t.Parallel()
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	hold := make(chan struct{})
 
@@ -344,7 +344,7 @@ func TestHandleConnect_ServerHangsTimesOutViaCtx(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
 			w.Header().Set("Content-Type", "application/x-git-receive-pack-advertisement")
-			_, _ = w.Write([]byte(serviceAnnouncement("git-receive-pack", //nolint:errcheck // test
+			_, _ = w.Write([]byte(serviceAnnouncement(serviceReceivePack, //nolint:errcheck // test
 				oldSHA+" "+ref+"\x00 report-status\n")))
 		default:
 			select {
@@ -368,7 +368,7 @@ func TestHandleConnect_ServerHangsTimesOutViaCtx(t *testing.T) {
 	var out bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- handleConnect(ctx, testTransport(server), "git-receive-pack", &stdin, &out)
+		done <- handleConnect(ctx, testTransport(server), serviceReceivePack, &stdin, &out)
 	}()
 	select {
 	case err := <-done:

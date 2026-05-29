@@ -64,7 +64,7 @@ func TestRun_CtxCancelDuringFetchSurfacesError(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-			_, _ = w.Write([]byte(serviceAnnouncement("git-upload-pack", //nolint:errcheck // test
+			_, _ = w.Write([]byte(serviceAnnouncement(serviceUploadPack, //nolint:errcheck // test
 				strings.Repeat("a", 40)+" refs/heads/main\x00multi_ack\n")))
 		default:
 			select {

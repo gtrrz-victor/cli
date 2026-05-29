@@ -48,7 +48,7 @@ func handlePush(ctx context.Context, t Transport, firstLine string, opts *Option
 		return err
 	}
 
-	refsResp, err := t.InfoRefs(ctx, "git-receive-pack")
+	refsResp, err := t.InfoRefs(ctx, serviceReceivePack)
 	if err != nil {
 		return fmt.Errorf("fetching receive-pack info/refs: %w", err)
 	}
@@ -67,7 +67,7 @@ func handlePush(ctx context.Context, t Transport, firstLine string, opts *Option
 	args := append([]string{"send-pack", "--stateless-rpc", "--helper-status", "--stdin"},
 		opts.SendPackArgs()...)
 	args = append(args, t.ErrorBaseURL())
-	sp := exec.CommandContext(ctx, "git", args...) //nolint:gosec // fixed executable; args are constrained git send-pack flags/refspecs from Git's helper protocol.
+	sp := exec.CommandContext(ctx, "git", args...)
 	sp.Stderr = os.Stderr
 	spIn, err := sp.StdinPipe()
 	if err != nil {
@@ -119,7 +119,7 @@ func handlePush(ctx context.Context, t Transport, firstLine string, opts *Option
 		return fmt.Errorf("amending receive-pack agent: %w", err)
 	}
 
-	resp, err := t.ServiceRPC(ctx, "git-receive-pack", bytes.NewReader(amendedBody))
+	resp, err := t.ServiceRPC(ctx, serviceReceivePack, bytes.NewReader(amendedBody))
 	if err != nil {
 		close(respCh)
 		killAndWaitSendPack(sp, "after posting receive-pack failed")

@@ -21,7 +21,7 @@ func TestHandleStatelessConnect_UploadPack(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
-			if r.URL.Query().Get("service") != "git-upload-pack" {
+			if r.URL.Query().Get("service") != serviceUploadPack {
 				t.Errorf("service = %q", r.URL.Query().Get("service"))
 			}
 			if r.Header.Get("Git-Protocol") != "version=2" {
@@ -30,7 +30,7 @@ func TestHandleStatelessConnect_UploadPack(t *testing.T) {
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 			fmt.Fprint(w, advertisement)
 
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-upload-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceUploadPack):
 			if r.Header.Get("Git-Protocol") != "version=2" {
 				t.Errorf("Git-Protocol = %q", r.Header.Get("Git-Protocol"))
 			}
@@ -49,7 +49,7 @@ func TestHandleStatelessConnect_UploadPack(t *testing.T) {
 	input := strings.NewReader(requestBody)
 
 	var stdout bytes.Buffer
-	if err := handleStatelessConnect(context.Background(), testTransport(server), "git-upload-pack", input, &stdout); err != nil {
+	if err := handleStatelessConnect(context.Background(), testTransport(server), serviceUploadPack, input, &stdout); err != nil {
 		t.Fatalf("handleStatelessConnect failed: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestHandleStatelessConnect_AmendsClientAgent(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 			fmt.Fprint(w, advertisement)
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-upload-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceUploadPack):
 			post, _ = io.ReadAll(r.Body) //nolint:errcheck // test
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 			fmt.Fprint(w, "0000")
@@ -92,7 +92,7 @@ func TestHandleStatelessConnect_AmendsClientAgent(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	if err := handleStatelessConnect(context.Background(), testTransport(server), "git-upload-pack", strings.NewReader(requestBody), &stdout); err != nil {
+	if err := handleStatelessConnect(context.Background(), testTransport(server), serviceUploadPack, strings.NewReader(requestBody), &stdout); err != nil {
 		t.Fatalf("handleStatelessConnect failed: %v", err)
 	}
 	if string(post) != wantBody {
@@ -110,7 +110,7 @@ func TestHandleStatelessConnect_EmptyBundleURIResponseSynthesizesFlush(t *testin
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 			fmt.Fprint(w, advertisement)
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-upload-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceUploadPack):
 			body, _ := io.ReadAll(r.Body) //nolint:errcheck // test
 			if string(body) != requestBody {
 				t.Errorf("POST body = %q, want %q", body, requestBody)
@@ -125,7 +125,7 @@ func TestHandleStatelessConnect_EmptyBundleURIResponseSynthesizesFlush(t *testin
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	if err := handleStatelessConnect(context.Background(), testTransport(server), "git-upload-pack", strings.NewReader(requestBody), &stdout); err != nil {
+	if err := handleStatelessConnect(context.Background(), testTransport(server), serviceUploadPack, strings.NewReader(requestBody), &stdout); err != nil {
 		t.Fatalf("handleStatelessConnect failed: %v", err)
 	}
 
@@ -148,9 +148,9 @@ func TestHandleStatelessConnect_FallbackForUnsupportedService(t *testing.T) {
 
 func TestHandleStatelessConnect_ReceivePack(t *testing.T) {
 	t.Parallel()
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	ref := "refs/heads/main"
+	ref := testRefMain
 	packData := "PACK fake pack data here"
 
 	refLine := oldSHA + " " + ref + "\x00 report-status\n"
@@ -164,7 +164,7 @@ func TestHandleStatelessConnect_ReceivePack(t *testing.T) {
 	stdin.WriteString(packData)
 
 	var stdout bytes.Buffer
-	if err := handleStatelessConnect(context.Background(), testTransport(server), "git-receive-pack", &stdin, &stdout); err != nil {
+	if err := handleStatelessConnect(context.Background(), testTransport(server), serviceReceivePack, &stdin, &stdout); err != nil {
 		t.Fatalf("handleStatelessConnect failed: %v", err)
 	}
 

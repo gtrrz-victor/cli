@@ -104,12 +104,12 @@ func TestRun_ConnectUploadPackUsesV0(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "info/refs"):
-			if r.URL.Query().Get("service") != "git-upload-pack" {
+			if r.URL.Query().Get("service") != serviceUploadPack {
 				t.Errorf("service = %s", r.URL.Query().Get("service"))
 			}
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 			fmt.Fprint(w, pktLine("# service=git-upload-pack\n")+"0000"+refsAdvertisement)
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-upload-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceUploadPack):
 			body, _ := io.ReadAll(r.Body) //nolint:errcheck // test
 			posts = append(posts, body)
 			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")

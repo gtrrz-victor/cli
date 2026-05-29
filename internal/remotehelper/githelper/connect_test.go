@@ -14,9 +14,9 @@ import (
 
 func TestHandleConnect_DeleteBranch(t *testing.T) {
 	t.Parallel()
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	zeroSHA := "0000000000000000000000000000000000000000"
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 
 	var receivedBody []byte
 
@@ -31,7 +31,7 @@ func TestHandleConnect_DeleteBranch(t *testing.T) {
 			fmt.Fprintf(w, "%04x%s", len(refLine)+4, refLine)
 			fmt.Fprint(w, "0000")
 
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-receive-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceReceivePack):
 			receivedBody, _ = io.ReadAll(r.Body) //nolint:errcheck // test
 			w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 			fmt.Fprint(w, pktLine("unpack ok\n"))
@@ -51,7 +51,7 @@ func TestHandleConnect_DeleteBranch(t *testing.T) {
 	stdin.WriteString("0000")
 
 	var stdout bytes.Buffer
-	err := handleConnect(context.Background(), testTransport(server), "git-receive-pack", &stdin, &stdout)
+	err := handleConnect(context.Background(), testTransport(server), serviceReceivePack, &stdin, &stdout)
 	if err != nil {
 		t.Fatalf("handleConnect failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func receivePackServer(t *testing.T, refLine, ref string) (*httptest.Server, *st
 			fmt.Fprintf(w, "%04x%s", len(refLine)+4, refLine)
 			fmt.Fprint(w, "0000")
 
-		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "git-receive-pack"):
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, serviceReceivePack):
 			receivedPushSize = r.Header.Get("X-Entire-Push-Size")
 			_, _ = io.ReadAll(r.Body) //nolint:errcheck // test
 			w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
@@ -107,9 +107,9 @@ func receivePackServer(t *testing.T, refLine, ref string) (*httptest.Server, *st
 
 func TestHandleConnect_PushSizeHeader(t *testing.T) {
 	t.Parallel()
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	ref := "refs/heads/main"
+	ref := testRefMain
 	packData := "PACK fake pack data here"
 
 	refLine := oldSHA + " " + ref + "\x00 report-status\n"
@@ -125,7 +125,7 @@ func TestHandleConnect_PushSizeHeader(t *testing.T) {
 	expectedSize := len(pktLine(cmd)) + 4 + len(packData)
 
 	var stdout bytes.Buffer
-	err := handleConnect(context.Background(), testTransport(server), "git-receive-pack", &stdin, &stdout)
+	err := handleConnect(context.Background(), testTransport(server), serviceReceivePack, &stdin, &stdout)
 	if err != nil {
 		t.Fatalf("handleConnect failed: %v", err)
 	}
@@ -141,9 +141,9 @@ func TestHandleConnect_PushSizeHeader(t *testing.T) {
 
 func TestHandleConnect_DeletePushSizeHeader(t *testing.T) {
 	t.Parallel()
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	zeroSHA := "0000000000000000000000000000000000000000"
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 
 	refLine := oldSHA + " " + ref + "\x00 report-status delete-refs\n"
 	server, receivedPushSize := receivePackServer(t, refLine, ref)
@@ -157,7 +157,7 @@ func TestHandleConnect_DeletePushSizeHeader(t *testing.T) {
 	expectedSize := strconv.Itoa(len(pktLine(cmd)) + 4)
 
 	var stdout bytes.Buffer
-	err := handleConnect(context.Background(), testTransport(server), "git-receive-pack", &stdin, &stdout)
+	err := handleConnect(context.Background(), testTransport(server), serviceReceivePack, &stdin, &stdout)
 	if err != nil {
 		t.Fatalf("handleConnect failed: %v", err)
 	}

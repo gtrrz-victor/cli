@@ -80,7 +80,7 @@ func Run(ctx context.Context, t Transport, mode Mode, stdin io.Reader, stdout io
 
 		case strings.HasPrefix(line, "connect "):
 			service := strings.TrimPrefix(line, "connect ")
-			if service != "git-upload-pack" && service != "git-receive-pack" {
+			if service != serviceUploadPack && service != serviceReceivePack {
 				return fmt.Errorf("unsupported service: %s", service)
 			}
 			fmt.Fprintln(stdout)

@@ -12,8 +12,8 @@ func TestHandleList(t *testing.T) {
 	t.Parallel()
 
 	const (
-		headSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		mainSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		headSHA = testHeadSHA
+		mainSHA = testHeadSHA
 		fooSHA  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	)
 
@@ -27,7 +27,7 @@ func TestHandleList(t *testing.T) {
 	}{
 		{
 			name:     "list with HEAD symref",
-			service:  "git-upload-pack",
+			service:  serviceUploadPack,
 			firstRef: headSHA + " HEAD\x00multi_ack symref=HEAD:refs/heads/main object-format=sha1\n",
 			more: []string{
 				mainSHA + " refs/heads/main\n",
@@ -41,7 +41,7 @@ func TestHandleList(t *testing.T) {
 		{
 			name:     "list for-push hits receive-pack",
 			forPush:  true,
-			service:  "git-receive-pack",
+			service:  serviceReceivePack,
 			firstRef: mainSHA + " refs/heads/main\x00report-status delete-refs object-format=sha1\n",
 			more: []string{
 				fooSHA + " refs/heads/foo\n",
@@ -52,7 +52,7 @@ func TestHandleList(t *testing.T) {
 		},
 		{
 			name:     "detached HEAD",
-			service:  "git-upload-pack",
+			service:  serviceUploadPack,
 			firstRef: headSHA + " HEAD\x00multi_ack object-format=sha1\n",
 			more: []string{
 				mainSHA + " refs/heads/main\n",
@@ -63,7 +63,7 @@ func TestHandleList(t *testing.T) {
 		},
 		{
 			name:     "multiple symrefs",
-			service:  "git-upload-pack",
+			service:  serviceUploadPack,
 			firstRef: headSHA + " HEAD\x00multi_ack symref=HEAD:refs/heads/main symref=refs/remotes/origin/HEAD:refs/remotes/origin/main object-format=sha1\n",
 			more: []string{
 				mainSHA + " refs/heads/main\n",
@@ -78,7 +78,7 @@ func TestHandleList(t *testing.T) {
 		},
 		{
 			name:     "empty repo with unborn HEAD",
-			service:  "git-upload-pack",
+			service:  serviceUploadPack,
 			firstRef: "0000000000000000000000000000000000000000 capabilities^{}\x00symref=HEAD:refs/heads/main object-format=sha1 multi_ack\n",
 			more:     nil,
 			want: ":object-format sha1\n" +

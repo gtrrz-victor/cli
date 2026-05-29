@@ -19,9 +19,9 @@ import (
 // terminator. HEAD is emitted as "@<target> HEAD" when the symref
 // capability resolves; detached HEAD falls back to "<sha> HEAD".
 func handleList(ctx context.Context, t Transport, forPush bool, stdout io.Writer) error {
-	service := "git-upload-pack"
+	service := serviceUploadPack
 	if forPush {
-		service = "git-receive-pack"
+		service = serviceReceivePack
 	}
 	refs, err := t.InfoRefs(ctx, service)
 	if err != nil {

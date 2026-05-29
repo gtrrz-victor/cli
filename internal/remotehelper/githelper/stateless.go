@@ -19,8 +19,8 @@ import (
 // independent POST.
 func handleStatelessConnect(ctx context.Context, t Transport, service string, stdin io.Reader, stdout io.Writer) error {
 	switch service {
-	case "git-upload-pack":
-	case "git-receive-pack":
+	case serviceUploadPack:
+	case serviceReceivePack:
 		fmt.Fprintln(stdout)
 		return handleConnect(ctx, t, service, stdin, stdout)
 	default:

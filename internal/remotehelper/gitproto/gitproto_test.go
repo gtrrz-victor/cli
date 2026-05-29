@@ -203,7 +203,7 @@ func TestAppendAgentToReceivePackRequest(t *testing.T) {
 
 	oldSHA := strings.Repeat("a", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 	cmd := oldSHA + " " + newSHA + " " + ref + "\x00 report-status agent=git/2.54.0\n"
 	in := pktLine(cmd) + "0000PACK"
 
@@ -222,9 +222,9 @@ func TestAppendAgentToReceivePackRequest(t *testing.T) {
 func TestReadReceivePackRequest_DeleteOnly(t *testing.T) {
 	t.Parallel()
 
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	zeroSHA := "0000000000000000000000000000000000000000"
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 
 	var input bytes.Buffer
 	cmd := oldSHA + " " + zeroSHA + " " + ref + "\x00 report-status delete-refs\n"
@@ -257,7 +257,7 @@ func TestReceivePackCommandNeedsPack(t *testing.T) {
 	sha256Old := strings.Repeat("a", 64)
 	sha256New := strings.Repeat("b", 64)
 	sha256Zero := strings.Repeat("0", 64)
-	ref := "refs/heads/main"
+	ref := testRefMain
 
 	tests := []struct {
 		name string
@@ -286,7 +286,7 @@ func TestReadReceivePackRequest_DeleteOnlySHA256(t *testing.T) {
 
 	oldSHA := strings.Repeat("a", 64)
 	zeroSHA := strings.Repeat("0", 64)
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 	packData := "PACK must not be consumed on delete-only push"
 
 	var input bytes.Buffer
@@ -313,8 +313,8 @@ func TestReadReceivePackRequest_WithPackDataSHA256(t *testing.T) {
 
 	oldSHA := strings.Repeat("a", 64)
 	newSHA := strings.Repeat("b", 64)
-	ref := "refs/heads/main"
-	packData := "PACK fake pack data here"
+	ref := testRefMain
+	packData := testFakePackData
 
 	var input bytes.Buffer
 	cmd := oldSHA + " " + newSHA + " " + ref + "\x00 report-status\n"
@@ -335,10 +335,10 @@ func TestReadReceivePackRequest_WithPackDataSHA256(t *testing.T) {
 func TestReadReceivePackRequest_WithPackData(t *testing.T) {
 	t.Parallel()
 
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	ref := "refs/heads/main"
-	packData := "PACK fake pack data here"
+	ref := testRefMain
+	packData := testFakePackData
 
 	var input bytes.Buffer
 	cmd := oldSHA + " " + newSHA + " " + ref + "\x00 report-status\n"
@@ -367,7 +367,7 @@ func TestReadReceivePackRequest_TruncatedFails(t *testing.T) {
 	// of the expected flush packet — must not be treated as a clean end
 	// (otherwise a network truncation could look like a successful no-op
 	// to the caller).
-	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	oldSHA := testHeadSHA
 	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	cmd := oldSHA + " " + newSHA + " refs/heads/main\x00 report-status\n"
 	body := pktLine(cmd) // no trailing flush
@@ -383,11 +383,11 @@ func TestReadSendPackRequest_IncludesPackData(t *testing.T) {
 
 	oldSHA := strings.Repeat("0", 40)
 	newSHA := strings.Repeat("b", 40)
-	ref := "refs/heads/main"
+	ref := testRefMain
 	cmd := oldSHA + " " + newSHA + " " + ref + "\x00 report-status push-options\n"
 	commandSection := pktLine(cmd) + "0000"
 	pushOptions := pktLine("ci.skip") + "0000"
-	packData := "PACK fake pack data here"
+	packData := testFakePackData
 	trailingStatus := "0000ok " + ref + "\n"
 
 	var input bytes.Buffer
@@ -420,7 +420,7 @@ func TestReadSendPackRequest_DeleteOnly(t *testing.T) {
 
 	oldSHA := strings.Repeat("a", 40)
 	zeroSHA := strings.Repeat("0", 40)
-	ref := "refs/heads/feature-branch"
+	ref := testRefFeatureBranch
 	cmd := oldSHA + " " + zeroSHA + " " + ref + "\x00 report-status delete-refs\n"
 	commandSection := pktLine(cmd) + "0000"
 	trailingStatus := "0000ok " + ref + "\n"

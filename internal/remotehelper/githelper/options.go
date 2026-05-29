@@ -25,13 +25,13 @@ type Options struct {
 func (o *Options) Set(name, value string) string {
 	switch name {
 	case "dry-run":
-		o.dryRun = value == "true"
+		o.dryRun = value == optionValueTrue
 	case "atomic":
-		o.atomic = value == "true"
+		o.atomic = value == optionValueTrue
 	case "push-cert":
 		o.pushCert = value
 	case "force-if-includes":
-		o.forceIfIncludes = value == "true"
+		o.forceIfIncludes = value == optionValueTrue
 	case "push-option":
 		o.pushOptions = append(o.pushOptions, value)
 	case "cas":
@@ -58,7 +58,7 @@ func (o *Options) SendPackArgs() []string {
 		args = append(args, "--atomic")
 	}
 	switch o.pushCert {
-	case "true":
+	case optionValueTrue:
 		args = append(args, "--signed=true")
 	case "if-asked":
 		args = append(args, "--signed=if-asked")

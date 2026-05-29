@@ -37,9 +37,9 @@ func handleConnect(ctx context.Context, t Transport, service string, stdin io.Re
 	}
 
 	switch service {
-	case "git-upload-pack":
+	case serviceUploadPack:
 		return handleFetch(ctx, t, stdin, stdout)
-	case "git-receive-pack":
+	case serviceReceivePack:
 		// fall through
 	default:
 		return fmt.Errorf("unsupported service: %s", service)
@@ -185,7 +185,7 @@ func postRound(ctx context.Context, t Transport, stdout io.Writer, wantsBuf, hav
 		return fmt.Errorf("amending upload-pack agent: %w", err)
 	}
 
-	resp, err := t.ServiceRPC(ctx, "git-upload-pack", bytes.NewReader(body))
+	resp, err := t.ServiceRPC(ctx, serviceUploadPack, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("connect fetch round %d POST: %w", roundNumber, err)
 	}
