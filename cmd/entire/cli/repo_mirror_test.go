@@ -1,0 +1,96 @@
+package cli
+
+import (
+	"testing"
+
+	"github.com/entireio/cli/internal/coreapi"
+)
+
+// TestParseGitHubURL is ported from entiredb's cmd/entire-repo/cli
+// mirror_test.go, since parseGitHubURL was carried over verbatim.
+func TestParseGitHubURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		url       string
+		wantOwner string
+		wantRepo  string
+		wantErr   bool
+	}{
+		{name: "HTTPS", url: "https://github.com/entirehq/entiredb", wantOwner: "entirehq", wantRepo: "entiredb"},
+		{name: "HTTPS with .git", url: "https://github.com/entirehq/entiredb.git", wantOwner: "entirehq", wantRepo: "entiredb"},
+		{name: "SSH", url: "git@github.com:entirehq/entiredb", wantOwner: "entirehq", wantRepo: "entiredb"},
+		{name: "SSH with .git", url: "git@github.com:entirehq/entiredb.git", wantOwner: "entirehq", wantRepo: "entiredb"},
+		{name: "HTTP", url: "http://github.com/owner/repo", wantOwner: "owner", wantRepo: "repo"},
+		{name: "bare with github.com prefix", url: "github.com/octocat/hello-world", wantOwner: "octocat", wantRepo: "hello-world"},
+		{name: "bare github.com prefix with .git", url: "github.com/octocat/hello-world.git", wantOwner: "octocat", wantRepo: "hello-world"},
+		{name: "bare owner/repo", url: "octocat/hello-world", wantOwner: "octocat", wantRepo: "hello-world"},
+		{name: "bare lowercased", url: "OctoCat/Hello-World", wantOwner: "octocat", wantRepo: "hello-world"},
+		{name: "GitLab", url: "https://gitlab.com/owner/repo", wantErr: true},
+		{name: "missing repo", url: "https://github.com/owner", wantErr: true},
+		{name: "not a URL", url: "not-a-url", wantErr: true},
+		{name: "entire URL", url: "entire://host/git/owner/repo", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			owner, repo, err := parseGitHubURL(tt.url)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseGitHubURL(%q) expected error, got %q/%q", tt.url, owner, repo)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGitHubURL(%q) unexpected error: %v", tt.url, err)
+			}
+			if owner != tt.wantOwner || repo != tt.wantRepo {
+				t.Errorf("parseGitHubURL(%q) = %q/%q, want %q/%q", tt.url, owner, repo, tt.wantOwner, tt.wantRepo)
+			}
+		})
+	}
+}
+
+func TestMirrorRow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mirror coreapi.Mirror
+		want   []string
+	}{
+		{
+			name:   "private mirror synthesises clone URL",
+			mirror: coreapi.Mirror{Owner: "entirehq", Repo: "entire.io", ClusterHost: "aws-us-east-2.entire.io", IsPrivate: coreapi.NewOptBool(true)},
+			want:   []string{"entirehq/entire.io", "entire://aws-us-east-2.entire.io/gh/entirehq/entire.io", "yes"},
+		},
+		{
+			name:   "public mirror, unset IsPrivate defaults to no",
+			mirror: coreapi.Mirror{Owner: "octocat", Repo: "hello", ClusterHost: "eu-west-1.entire.io"},
+			want:   []string{"octocat/hello", "entire://eu-west-1.entire.io/gh/octocat/hello", "no"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mirrorRow(tt.mirror)
+			if len(got) != len(tt.want) {
+				t.Fatalf("mirrorRow len = %d, want %d (%v)", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("mirrorRow[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestClusterArg(t *testing.T) {
+	t.Parallel()
+	if got := clusterArg([]string{"github.com/o/r", "eu-west-1.entire.io"}); got != "eu-west-1.entire.io" {
+		t.Errorf("explicit cluster = %q, want eu-west-1.entire.io", got)
+	}
+	if got := clusterArg([]string{"github.com/o/r"}); got != defaultClusterHost {
+		t.Errorf("omitted cluster = %q, want default %q", got, defaultClusterHost)
+	}
+}

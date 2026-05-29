@@ -34,11 +34,11 @@ func mirrorRow(m coreapi.Mirror) []string {
 // from config/context rather than a constant.
 const defaultClusterHost = "aws-us-east-2.entire.io"
 
-// clusterArg returns the cluster host from args[idx], or defaultClusterHost
-// when that positional was omitted.
-func clusterArg(args []string, idx int) string {
-	if idx < len(args) {
-		return args[idx]
+// clusterArg returns the cluster host from the optional second positional
+// (after <github-url>), or defaultClusterHost when it was omitted.
+func clusterArg(args []string) string {
+	if len(args) > 1 {
+		return args[1]
 	}
 	return defaultClusterHost
 }
@@ -84,7 +84,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
 			}
-			clusterHost := clusterArg(args, 1)
+			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
 				sc, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
 					Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
@@ -185,7 +185,7 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
 			}
-			clusterHost := clusterArg(args, 1)
+			clusterHost := clusterArg(args)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
 				// Resolve the mirror's ULID from its GitHub coords, then
 				// delete by that id. The generated API offers no delete-by-
