@@ -250,6 +250,32 @@ func (s *BatchLookupOutputBody) SetRefs(val []LookupRefResult) {
 	s.Refs = val
 }
 
+// BatchLookupOutputBodyStatusCode wraps BatchLookupOutputBody with StatusCode.
+type BatchLookupOutputBodyStatusCode struct {
+	StatusCode int
+	Response   BatchLookupOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *BatchLookupOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *BatchLookupOutputBodyStatusCode) GetResponse() BatchLookupOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *BatchLookupOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *BatchLookupOutputBodyStatusCode) SetResponse(val BatchLookupOutputBody) {
+	s.Response = val
+}
+
 type BearerAuth struct {
 	Token string
 	Roles []string
@@ -344,6 +370,32 @@ func (s *Binding) SetID(val string) {
 // SetProviderId sets the value of ProviderId.
 func (s *Binding) SetProviderId(val string) {
 	s.ProviderId = val
+}
+
+// BindingStatusCode wraps Binding with StatusCode.
+type BindingStatusCode struct {
+	StatusCode int
+	Response   Binding
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *BindingStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *BindingStatusCode) GetResponse() Binding {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *BindingStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *BindingStatusCode) SetResponse(val Binding) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/CreateBindingInputBody
@@ -825,17 +877,91 @@ func (s *CreatedMirror) SetPublicUrl(val string) {
 	s.PublicUrl = val
 }
 
-// DeleteBindingNoContent is response for DeleteBinding operation.
-type DeleteBindingNoContent struct{}
+// CreatedMirrorStatusCode wraps CreatedMirror with StatusCode.
+type CreatedMirrorStatusCode struct {
+	StatusCode int
+	Response   CreatedMirror
+}
 
-// DeleteMirrorNoContent is response for DeleteMirror operation.
-type DeleteMirrorNoContent struct{}
+// GetStatusCode returns the value of StatusCode.
+func (s *CreatedMirrorStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
 
-// DeleteRepoNoContent is response for DeleteRepo operation.
-type DeleteRepoNoContent struct{}
+// GetResponse returns the value of Response.
+func (s *CreatedMirrorStatusCode) GetResponse() CreatedMirror {
+	return s.Response
+}
 
-// DeleteServiceAccountNoContent is response for DeleteServiceAccount operation.
-type DeleteServiceAccountNoContent struct{}
+// SetStatusCode sets the value of StatusCode.
+func (s *CreatedMirrorStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *CreatedMirrorStatusCode) SetResponse(val CreatedMirror) {
+	s.Response = val
+}
+
+// DeleteBinding2XX is 2XX pattern response for DeleteBinding operation.
+type DeleteBinding2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *DeleteBinding2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *DeleteBinding2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// DeleteMirror2XX is 2XX pattern response for DeleteMirror operation.
+type DeleteMirror2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *DeleteMirror2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *DeleteMirror2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// DeleteRepo2XX is 2XX pattern response for DeleteRepo operation.
+type DeleteRepo2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *DeleteRepo2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *DeleteRepo2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// DeleteServiceAccount2XX is 2XX pattern response for DeleteServiceAccount operation.
+type DeleteServiceAccount2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *DeleteServiceAccount2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *DeleteServiceAccount2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
 
 // Ref: #/components/schemas/ErrorDetail
 type ErrorDetail struct {
@@ -1122,6 +1248,32 @@ func (s *GetMeOutputBodyMode) UnmarshalText(data []byte) error {
 	}
 }
 
+// GetMeOutputBodyStatusCode wraps GetMeOutputBody with StatusCode.
+type GetMeOutputBodyStatusCode struct {
+	StatusCode int
+	Response   GetMeOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *GetMeOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *GetMeOutputBodyStatusCode) GetResponse() GetMeOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *GetMeOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetMeOutputBodyStatusCode) SetResponse(val GetMeOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/GetPermissionsOutputBody
 type GetPermissionsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1191,6 +1343,32 @@ func (s *GetPermissionsOutputBodyExplain) init() GetPermissionsOutputBodyExplain
 		*s = m
 	}
 	return m
+}
+
+// GetPermissionsOutputBodyStatusCode wraps GetPermissionsOutputBody with StatusCode.
+type GetPermissionsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   GetPermissionsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *GetPermissionsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *GetPermissionsOutputBodyStatusCode) GetResponse() GetPermissionsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *GetPermissionsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetPermissionsOutputBodyStatusCode) SetResponse(val GetPermissionsOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/GrantProjectAccessInputBody
@@ -1328,6 +1506,32 @@ func (s *GrantProjectAccessOutputBody) SetStatus(val string) {
 	s.Status = val
 }
 
+// GrantProjectAccessOutputBodyStatusCode wraps GrantProjectAccessOutputBody with StatusCode.
+type GrantProjectAccessOutputBodyStatusCode struct {
+	StatusCode int
+	Response   GrantProjectAccessOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *GrantProjectAccessOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *GrantProjectAccessOutputBodyStatusCode) GetResponse() GrantProjectAccessOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *GrantProjectAccessOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GrantProjectAccessOutputBodyStatusCode) SetResponse(val GrantProjectAccessOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/GrantRepoAccessInputBody
 type GrantRepoAccessInputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1463,6 +1667,32 @@ func (s *GrantRepoAccessOutputBody) SetStatus(val string) {
 	s.Status = val
 }
 
+// GrantRepoAccessOutputBodyStatusCode wraps GrantRepoAccessOutputBody with StatusCode.
+type GrantRepoAccessOutputBodyStatusCode struct {
+	StatusCode int
+	Response   GrantRepoAccessOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *GrantRepoAccessOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *GrantRepoAccessOutputBodyStatusCode) GetResponse() GrantRepoAccessOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *GrantRepoAccessOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GrantRepoAccessOutputBodyStatusCode) SetResponse(val GrantRepoAccessOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/GrantServiceAccountAccessInputBody
 type GrantServiceAccountAccessInputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1580,6 +1810,32 @@ func (s *GrantServiceAccountAccessOutputBody) SetStatus(val string) {
 	s.Status = val
 }
 
+// GrantServiceAccountAccessOutputBodyStatusCode wraps GrantServiceAccountAccessOutputBody with StatusCode.
+type GrantServiceAccountAccessOutputBodyStatusCode struct {
+	StatusCode int
+	Response   GrantServiceAccountAccessOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *GrantServiceAccountAccessOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *GrantServiceAccountAccessOutputBodyStatusCode) GetResponse() GrantServiceAccountAccessOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *GrantServiceAccountAccessOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GrantServiceAccountAccessOutputBodyStatusCode) SetResponse(val GrantServiceAccountAccessOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListAuditEventsOutputBody
 type ListAuditEventsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1605,6 +1861,32 @@ func (s *ListAuditEventsOutputBody) SetSchema(val OptURI) {
 // SetEvents sets the value of Events.
 func (s *ListAuditEventsOutputBody) SetEvents(val []AuditEvent) {
 	s.Events = val
+}
+
+// ListAuditEventsOutputBodyStatusCode wraps ListAuditEventsOutputBody with StatusCode.
+type ListAuditEventsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListAuditEventsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListAuditEventsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListAuditEventsOutputBodyStatusCode) GetResponse() ListAuditEventsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListAuditEventsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListAuditEventsOutputBodyStatusCode) SetResponse(val ListAuditEventsOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ListBindingsOutputBody
@@ -1634,6 +1916,32 @@ func (s *ListBindingsOutputBody) SetBindings(val []Binding) {
 	s.Bindings = val
 }
 
+// ListBindingsOutputBodyStatusCode wraps ListBindingsOutputBody with StatusCode.
+type ListBindingsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListBindingsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListBindingsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListBindingsOutputBodyStatusCode) GetResponse() ListBindingsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListBindingsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListBindingsOutputBodyStatusCode) SetResponse(val ListBindingsOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListMirrorsOutputBody
 type ListMirrorsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1659,6 +1967,32 @@ func (s *ListMirrorsOutputBody) SetSchema(val OptURI) {
 // SetMirrors sets the value of Mirrors.
 func (s *ListMirrorsOutputBody) SetMirrors(val []Mirror) {
 	s.Mirrors = val
+}
+
+// ListMirrorsOutputBodyStatusCode wraps ListMirrorsOutputBody with StatusCode.
+type ListMirrorsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListMirrorsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListMirrorsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListMirrorsOutputBodyStatusCode) GetResponse() ListMirrorsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListMirrorsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListMirrorsOutputBodyStatusCode) SetResponse(val ListMirrorsOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ListOIDCProvidersOutputBody
@@ -1688,6 +2022,32 @@ func (s *ListOIDCProvidersOutputBody) SetProviders(val []OIDCProvider) {
 	s.Providers = val
 }
 
+// ListOIDCProvidersOutputBodyStatusCode wraps ListOIDCProvidersOutputBody with StatusCode.
+type ListOIDCProvidersOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListOIDCProvidersOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListOIDCProvidersOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListOIDCProvidersOutputBodyStatusCode) GetResponse() ListOIDCProvidersOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListOIDCProvidersOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListOIDCProvidersOutputBodyStatusCode) SetResponse(val ListOIDCProvidersOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListOrgMembersOutputBody
 type ListOrgMembersOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1713,6 +2073,32 @@ func (s *ListOrgMembersOutputBody) SetSchema(val OptURI) {
 // SetMembers sets the value of Members.
 func (s *ListOrgMembersOutputBody) SetMembers(val []Membership) {
 	s.Members = val
+}
+
+// ListOrgMembersOutputBodyStatusCode wraps ListOrgMembersOutputBody with StatusCode.
+type ListOrgMembersOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListOrgMembersOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListOrgMembersOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListOrgMembersOutputBodyStatusCode) GetResponse() ListOrgMembersOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListOrgMembersOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListOrgMembersOutputBodyStatusCode) SetResponse(val ListOrgMembersOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ListOrgProjectsOutputBody
@@ -1742,6 +2128,32 @@ func (s *ListOrgProjectsOutputBody) SetProjects(val []Project) {
 	s.Projects = val
 }
 
+// ListOrgProjectsOutputBodyStatusCode wraps ListOrgProjectsOutputBody with StatusCode.
+type ListOrgProjectsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListOrgProjectsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListOrgProjectsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListOrgProjectsOutputBodyStatusCode) GetResponse() ListOrgProjectsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListOrgProjectsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListOrgProjectsOutputBodyStatusCode) SetResponse(val ListOrgProjectsOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListOrgsOutputBody
 type ListOrgsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1767,6 +2179,32 @@ func (s *ListOrgsOutputBody) SetSchema(val OptURI) {
 // SetOrgs sets the value of Orgs.
 func (s *ListOrgsOutputBody) SetOrgs(val []Org) {
 	s.Orgs = val
+}
+
+// ListOrgsOutputBodyStatusCode wraps ListOrgsOutputBody with StatusCode.
+type ListOrgsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListOrgsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListOrgsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListOrgsOutputBodyStatusCode) GetResponse() ListOrgsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListOrgsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListOrgsOutputBodyStatusCode) SetResponse(val ListOrgsOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ListProjectMembersOutputBody
@@ -1796,6 +2234,32 @@ func (s *ListProjectMembersOutputBody) SetMembers(val []ProjectGrant) {
 	s.Members = val
 }
 
+// ListProjectMembersOutputBodyStatusCode wraps ListProjectMembersOutputBody with StatusCode.
+type ListProjectMembersOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListProjectMembersOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListProjectMembersOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListProjectMembersOutputBodyStatusCode) GetResponse() ListProjectMembersOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListProjectMembersOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListProjectMembersOutputBodyStatusCode) SetResponse(val ListProjectMembersOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListProjectReposOutputBody
 type ListProjectReposOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1821,6 +2285,32 @@ func (s *ListProjectReposOutputBody) SetSchema(val OptURI) {
 // SetRepos sets the value of Repos.
 func (s *ListProjectReposOutputBody) SetRepos(val []Repo) {
 	s.Repos = val
+}
+
+// ListProjectReposOutputBodyStatusCode wraps ListProjectReposOutputBody with StatusCode.
+type ListProjectReposOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListProjectReposOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListProjectReposOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListProjectReposOutputBodyStatusCode) GetResponse() ListProjectReposOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListProjectReposOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListProjectReposOutputBodyStatusCode) SetResponse(val ListProjectReposOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ListProjectsOutputBody
@@ -1861,6 +2351,32 @@ func (s *ListProjectsOutputBody) SetProjects(val []Project) {
 	s.Projects = val
 }
 
+// ListProjectsOutputBodyStatusCode wraps ListProjectsOutputBody with StatusCode.
+type ListProjectsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListProjectsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListProjectsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListProjectsOutputBodyStatusCode) GetResponse() ListProjectsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListProjectsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListProjectsOutputBodyStatusCode) SetResponse(val ListProjectsOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListServiceAccountGrantsOutputBody
 type ListServiceAccountGrantsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1888,6 +2404,32 @@ func (s *ListServiceAccountGrantsOutputBody) SetGrants(val []ServiceAccountGrant
 	s.Grants = val
 }
 
+// ListServiceAccountGrantsOutputBodyStatusCode wraps ListServiceAccountGrantsOutputBody with StatusCode.
+type ListServiceAccountGrantsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListServiceAccountGrantsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListServiceAccountGrantsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListServiceAccountGrantsOutputBodyStatusCode) GetResponse() ListServiceAccountGrantsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListServiceAccountGrantsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListServiceAccountGrantsOutputBodyStatusCode) SetResponse(val ListServiceAccountGrantsOutputBody) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ListServiceAccountsOutputBody
 type ListServiceAccountsOutputBody struct {
 	// A URL to the JSON Schema for this object.
@@ -1913,6 +2455,32 @@ func (s *ListServiceAccountsOutputBody) SetSchema(val OptURI) {
 // SetServiceAccounts sets the value of ServiceAccounts.
 func (s *ListServiceAccountsOutputBody) SetServiceAccounts(val []ServiceAccountWithGrants) {
 	s.ServiceAccounts = val
+}
+
+// ListServiceAccountsOutputBodyStatusCode wraps ListServiceAccountsOutputBody with StatusCode.
+type ListServiceAccountsOutputBodyStatusCode struct {
+	StatusCode int
+	Response   ListServiceAccountsOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ListServiceAccountsOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ListServiceAccountsOutputBodyStatusCode) GetResponse() ListServiceAccountsOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ListServiceAccountsOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ListServiceAccountsOutputBodyStatusCode) SetResponse(val ListServiceAccountsOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/LookupRef
@@ -2122,6 +2690,32 @@ func (s *LookupResourcesOutputBody) SetResourceType(val string) {
 // SetResources sets the value of Resources.
 func (s *LookupResourcesOutputBody) SetResources(val []ResourceAccess) {
 	s.Resources = val
+}
+
+// LookupResourcesOutputBodyStatusCode wraps LookupResourcesOutputBody with StatusCode.
+type LookupResourcesOutputBodyStatusCode struct {
+	StatusCode int
+	Response   LookupResourcesOutputBody
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *LookupResourcesOutputBodyStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *LookupResourcesOutputBodyStatusCode) GetResponse() LookupResourcesOutputBody {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *LookupResourcesOutputBodyStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *LookupResourcesOutputBodyStatusCode) SetResponse(val LookupResourcesOutputBody) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/MeAuth
@@ -2485,6 +3079,32 @@ func (s *Membership) SetWorkosOrgMembershipId(val OptString) {
 	s.WorkosOrgMembershipId = val
 }
 
+// MembershipStatusCode wraps Membership with StatusCode.
+type MembershipStatusCode struct {
+	StatusCode int
+	Response   Membership
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *MembershipStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *MembershipStatusCode) GetResponse() Membership {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *MembershipStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *MembershipStatusCode) SetResponse(val Membership) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/Mirror
 type Mirror struct {
 	// A URL to the JSON Schema for this object.
@@ -2660,6 +3280,58 @@ func (s *MirrorRepoPath) SetRepoId(val string) {
 // SetRepoPath sets the value of RepoPath.
 func (s *MirrorRepoPath) SetRepoPath(val string) {
 	s.RepoPath = val
+}
+
+// MirrorRepoPathStatusCode wraps MirrorRepoPath with StatusCode.
+type MirrorRepoPathStatusCode struct {
+	StatusCode int
+	Response   MirrorRepoPath
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *MirrorRepoPathStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *MirrorRepoPathStatusCode) GetResponse() MirrorRepoPath {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *MirrorRepoPathStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *MirrorRepoPathStatusCode) SetResponse(val MirrorRepoPath) {
+	s.Response = val
+}
+
+// MirrorStatusCode wraps Mirror with StatusCode.
+type MirrorStatusCode struct {
+	StatusCode int
+	Response   Mirror
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *MirrorStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *MirrorStatusCode) GetResponse() Mirror {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *MirrorStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *MirrorStatusCode) SetResponse(val Mirror) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/OIDCProvider
@@ -3655,6 +4327,32 @@ func (s *Org) SetWorkosOrganizationId(val OptString) {
 	s.WorkosOrganizationId = val
 }
 
+// OrgStatusCode wraps Org with StatusCode.
+type OrgStatusCode struct {
+	StatusCode int
+	Response   Org
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *OrgStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *OrgStatusCode) GetResponse() Org {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *OrgStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *OrgStatusCode) SetResponse(val Org) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/Project
 type Project struct {
 	// A URL to the JSON Schema for this object.
@@ -3815,8 +4513,46 @@ func (s *ProjectOwnerType) UnmarshalText(data []byte) error {
 	}
 }
 
-// RemoveOrgMemberNoContent is response for RemoveOrgMember operation.
-type RemoveOrgMemberNoContent struct{}
+// ProjectStatusCode wraps Project with StatusCode.
+type ProjectStatusCode struct {
+	StatusCode int
+	Response   Project
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ProjectStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ProjectStatusCode) GetResponse() Project {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ProjectStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ProjectStatusCode) SetResponse(val Project) {
+	s.Response = val
+}
+
+// RemoveOrgMember2XX is 2XX pattern response for RemoveOrgMember operation.
+type RemoveOrgMember2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *RemoveOrgMember2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *RemoveOrgMember2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
 
 // Ref: #/components/schemas/Repo
 type Repo struct {
@@ -4103,6 +4839,32 @@ func (s *RepoState) UnmarshalText(data []byte) error {
 	}
 }
 
+// RepoStatusCode wraps Repo with StatusCode.
+type RepoStatusCode struct {
+	StatusCode int
+	Response   Repo
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *RepoStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *RepoStatusCode) GetResponse() Repo {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *RepoStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *RepoStatusCode) SetResponse(val Repo) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ResolvedIdentity
 type ResolvedIdentity struct {
 	// A URL to the JSON Schema for this object.
@@ -4163,6 +4925,32 @@ func (s *ResolvedIdentity) SetProviderUserId(val string) {
 	s.ProviderUserId = val
 }
 
+// ResolvedIdentityStatusCode wraps ResolvedIdentity with StatusCode.
+type ResolvedIdentityStatusCode struct {
+	StatusCode int
+	Response   ResolvedIdentity
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ResolvedIdentityStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ResolvedIdentityStatusCode) GetResponse() ResolvedIdentity {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ResolvedIdentityStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ResolvedIdentityStatusCode) SetResponse(val ResolvedIdentity) {
+	s.Response = val
+}
+
 // Ref: #/components/schemas/ResourceAccess
 type ResourceAccess struct {
 	Permissions []string `json:"permissions"`
@@ -4189,14 +4977,50 @@ func (s *ResourceAccess) SetResourceId(val string) {
 	s.ResourceId = val
 }
 
-// RevokeProjectAccessByProviderNoContent is response for RevokeProjectAccessByProvider operation.
-type RevokeProjectAccessByProviderNoContent struct{}
+// RevokeProjectAccess2XX is 2XX pattern response for RevokeProjectAccess operation.
+type RevokeProjectAccess2XX struct {
+	StatusCode int
+}
 
-// RevokeProjectAccessNoContent is response for RevokeProjectAccess operation.
-type RevokeProjectAccessNoContent struct{}
+// GetStatusCode returns the value of StatusCode.
+func (s *RevokeProjectAccess2XX) GetStatusCode() int {
+	return s.StatusCode
+}
 
-// RevokeServiceAccountAccessNoContent is response for RevokeServiceAccountAccess operation.
-type RevokeServiceAccountAccessNoContent struct{}
+// SetStatusCode sets the value of StatusCode.
+func (s *RevokeProjectAccess2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// RevokeProjectAccessByProvider2XX is 2XX pattern response for RevokeProjectAccessByProvider operation.
+type RevokeProjectAccessByProvider2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *RevokeProjectAccessByProvider2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *RevokeProjectAccessByProvider2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// RevokeServiceAccountAccess2XX is 2XX pattern response for RevokeServiceAccountAccess operation.
+type RevokeServiceAccountAccess2XX struct {
+	StatusCode int
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *RevokeServiceAccountAccess2XX) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *RevokeServiceAccountAccess2XX) SetStatusCode(val int) {
+	s.StatusCode = val
+}
 
 type RevokeServiceAccountAccessResourceType string
 
@@ -4367,6 +5191,32 @@ func (s *ServiceAccountGrant) SetResourceType(val string) {
 // SetRole sets the value of Role.
 func (s *ServiceAccountGrant) SetRole(val string) {
 	s.Role = val
+}
+
+// ServiceAccountStatusCode wraps ServiceAccount with StatusCode.
+type ServiceAccountStatusCode struct {
+	StatusCode int
+	Response   ServiceAccount
+}
+
+// GetStatusCode returns the value of StatusCode.
+func (s *ServiceAccountStatusCode) GetStatusCode() int {
+	return s.StatusCode
+}
+
+// GetResponse returns the value of Response.
+func (s *ServiceAccountStatusCode) GetResponse() ServiceAccount {
+	return s.Response
+}
+
+// SetStatusCode sets the value of StatusCode.
+func (s *ServiceAccountStatusCode) SetStatusCode(val int) {
+	s.StatusCode = val
+}
+
+// SetResponse sets the value of Response.
+func (s *ServiceAccountStatusCode) SetResponse(val ServiceAccount) {
+	s.Response = val
 }
 
 // Ref: #/components/schemas/ServiceAccountWithGrants

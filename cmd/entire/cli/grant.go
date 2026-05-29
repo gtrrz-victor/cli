@@ -72,7 +72,11 @@ func newGrantOrgAddCmd() *cobra.Command {
 				if role != "" {
 					body.Role = coreapi.NewOptAddOrgMemberInputBodyRole(coreapi.AddOrgMemberInputBodyRole(role))
 				}
-				return c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: args[0]})
+				sc, err := c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: args[0]})
+				if err != nil {
+					return nil, err
+				}
+				return sc.Response, nil
 			})
 		},
 	}
@@ -92,7 +96,7 @@ func newGrantOrgListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Members, nil
+				return out.Response.Members, nil
 			})
 		},
 	}
@@ -106,7 +110,7 @@ func newGrantOrgRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				if err := c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
+				if _, err := c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
 					OrgId:          args[0],
 					Provider:       provider,
 					ProviderUserId: providerUserID,
@@ -151,7 +155,11 @@ func newGrantProjectAddCmd() *cobra.Command {
 				if granteeType != "" {
 					body.GranteeType = coreapi.NewOptGrantProjectAccessInputBodyGranteeType(coreapi.GrantProjectAccessInputBodyGranteeType(granteeType))
 				}
-				return c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: args[0]})
+				sc, err := c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: args[0]})
+				if err != nil {
+					return nil, err
+				}
+				return sc.Response, nil
 			})
 		},
 	}
@@ -173,7 +181,7 @@ func newGrantProjectListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Members, nil
+				return out.Response.Members, nil
 			})
 		},
 	}
@@ -187,7 +195,7 @@ func newGrantProjectRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				if err := c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
+				if _, err := c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
 					ProjectId:   args[0],
 					GranteeType: granteeType,
 					GranteeId:   granteeID,
@@ -232,7 +240,11 @@ func newGrantRepoAddCmd() *cobra.Command {
 				if granteeType != "" {
 					body.GranteeType = coreapi.NewOptGrantRepoAccessInputBodyGranteeType(coreapi.GrantRepoAccessInputBodyGranteeType(granteeType))
 				}
-				return c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: args[0]})
+				sc, err := c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: args[0]})
+				if err != nil {
+					return nil, err
+				}
+				return sc.Response, nil
 			})
 		},
 	}

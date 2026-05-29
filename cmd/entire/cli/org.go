@@ -43,7 +43,11 @@ func newOrgCreateCmd() *cobra.Command {
 				if region != "" {
 					body.Region = coreapi.NewOptString(region)
 				}
-				return c.CreateOrg(ctx, body)
+				sc, err := c.CreateOrg(ctx, body)
+				if err != nil {
+					return nil, err
+				}
+				return sc.Response, nil
 			})
 		},
 	}
@@ -62,7 +66,7 @@ func newOrgListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Orgs, nil
+				return out.Response.Orgs, nil
 			})
 		},
 	}

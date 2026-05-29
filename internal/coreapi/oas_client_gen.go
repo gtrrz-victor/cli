@@ -26,235 +26,235 @@ type Invoker interface {
 	// Add a member to an organization.
 	//
 	// POST /orgs/{orgId}/members
-	AddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (*Membership, error)
+	AddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (*MembershipStatusCode, error)
 	// BatchLookup invokes batchLookup operation.
 	//
 	// Batch-resolve (type, id) refs to enriched records.
 	//
 	// POST /lookup
-	BatchLookup(ctx context.Context, request *BatchLookupInputBody) (*BatchLookupOutputBody, error)
+	BatchLookup(ctx context.Context, request *BatchLookupInputBody) (*BatchLookupOutputBodyStatusCode, error)
 	// CreateBinding invokes createBinding operation.
 	//
 	// Create OIDC binding.
 	//
 	// POST /service-accounts/{accountId}/bindings
-	CreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (*Binding, error)
+	CreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (*BindingStatusCode, error)
 	// CreateMirror invokes createMirror operation.
 	//
 	// Create GitHub mirror.
 	//
 	// POST /mirrors
-	CreateMirror(ctx context.Context, request *CreateMirrorInputBody) (*CreatedMirror, error)
+	CreateMirror(ctx context.Context, request *CreateMirrorInputBody) (*CreatedMirrorStatusCode, error)
 	// CreateOrg invokes createOrg operation.
 	//
 	// Create organization.
 	//
 	// POST /orgs
-	CreateOrg(ctx context.Context, request *CreateOrgInputBody) (*Org, error)
+	CreateOrg(ctx context.Context, request *CreateOrgInputBody) (*OrgStatusCode, error)
 	// CreateProject invokes createProject operation.
 	//
 	// Create project.
 	//
 	// POST /projects
-	CreateProject(ctx context.Context, request *CreateProjectInputBody) (*Project, error)
+	CreateProject(ctx context.Context, request *CreateProjectInputBody) (*ProjectStatusCode, error)
 	// CreateRepo invokes createRepo operation.
 	//
 	// Create repository.
 	//
 	// POST /repos
-	CreateRepo(ctx context.Context, request *CreateRepoInputBody) (*Repo, error)
+	CreateRepo(ctx context.Context, request *CreateRepoInputBody) (*RepoStatusCode, error)
 	// CreateServiceAccount invokes createServiceAccount operation.
 	//
 	// Create service account.
 	//
 	// POST /service-accounts
-	CreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (*ServiceAccount, error)
+	CreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (*ServiceAccountStatusCode, error)
 	// DeleteBinding invokes deleteBinding operation.
 	//
 	// Delete OIDC binding.
 	//
 	// DELETE /service-accounts/{accountId}/bindings/{bindingId}
-	DeleteBinding(ctx context.Context, params DeleteBindingParams) error
+	DeleteBinding(ctx context.Context, params DeleteBindingParams) (*DeleteBinding2XX, error)
 	// DeleteMirror invokes deleteMirror operation.
 	//
 	// Delete mirror by id.
 	//
 	// DELETE /mirrors/{mirrorId}
-	DeleteMirror(ctx context.Context, params DeleteMirrorParams) error
+	DeleteMirror(ctx context.Context, params DeleteMirrorParams) (*DeleteMirror2XX, error)
 	// DeleteRepo invokes deleteRepo operation.
 	//
 	// Delete repository.
 	//
 	// DELETE /repos/{repoId}
-	DeleteRepo(ctx context.Context, params DeleteRepoParams) error
+	DeleteRepo(ctx context.Context, params DeleteRepoParams) (*DeleteRepo2XX, error)
 	// DeleteServiceAccount invokes deleteServiceAccount operation.
 	//
 	// Delete service account.
 	//
 	// DELETE /service-accounts/{accountId}
-	DeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) error
+	DeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) (*DeleteServiceAccount2XX, error)
 	// GetMe invokes getMe operation.
 	//
 	// Get the calling account's identity and profile.
 	//
 	// GET /me
-	GetMe(ctx context.Context) (*GetMeOutputBody, error)
+	GetMe(ctx context.Context) (*GetMeOutputBodyStatusCode, error)
 	// GetMirror invokes getMirror operation.
 	//
 	// Get mirror by id.
 	//
 	// GET /mirrors/{mirrorId}
-	GetMirror(ctx context.Context, params GetMirrorParams) (*Mirror, error)
+	GetMirror(ctx context.Context, params GetMirrorParams) (*MirrorStatusCode, error)
 	// GetPermissions invokes getPermissions operation.
 	//
 	// List the caller's permissions on a single resource.
 	//
 	// GET /access/{resourceType}/{resourceId}
-	GetPermissions(ctx context.Context, params GetPermissionsParams) (*GetPermissionsOutputBody, error)
+	GetPermissions(ctx context.Context, params GetPermissionsParams) (*GetPermissionsOutputBodyStatusCode, error)
 	// GetRepo invokes getRepo operation.
 	//
 	// Get repository.
 	//
 	// GET /repos/{repoId}
-	GetRepo(ctx context.Context, params GetRepoParams) (*Repo, error)
+	GetRepo(ctx context.Context, params GetRepoParams) (*RepoStatusCode, error)
 	// GetServiceAccount invokes getServiceAccount operation.
 	//
 	// Get service account.
 	//
 	// GET /service-accounts/{accountId}
-	GetServiceAccount(ctx context.Context, params GetServiceAccountParams) (*ServiceAccount, error)
+	GetServiceAccount(ctx context.Context, params GetServiceAccountParams) (*ServiceAccountStatusCode, error)
 	// GrantProjectAccess invokes grantProjectAccess operation.
 	//
 	// Grant project access to an identity.
 	//
 	// POST /projects/{projectId}/grants
-	GrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (*GrantProjectAccessOutputBody, error)
+	GrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (*GrantProjectAccessOutputBodyStatusCode, error)
 	// GrantRepoAccess invokes grantRepoAccess operation.
 	//
 	// Grant repo access to an identity.
 	//
 	// POST /repos/{repoId}/grants
-	GrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (*GrantRepoAccessOutputBody, error)
+	GrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (*GrantRepoAccessOutputBodyStatusCode, error)
 	// GrantServiceAccountAccess invokes grantServiceAccountAccess operation.
 	//
 	// Grant service account access on a repo or project.
 	//
 	// POST /service-accounts/{accountId}/grants
-	GrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (*GrantServiceAccountAccessOutputBody, error)
+	GrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (*GrantServiceAccountAccessOutputBodyStatusCode, error)
 	// ListAuditEvents invokes listAuditEvents operation.
 	//
 	// List the calling account's recent audit events.
 	//
 	// GET /audit
-	ListAuditEvents(ctx context.Context) (*ListAuditEventsOutputBody, error)
+	ListAuditEvents(ctx context.Context) (*ListAuditEventsOutputBodyStatusCode, error)
 	// ListBindings invokes listBindings operation.
 	//
 	// List OIDC bindings.
 	//
 	// GET /service-accounts/{accountId}/bindings
-	ListBindings(ctx context.Context, params ListBindingsParams) (*ListBindingsOutputBody, error)
+	ListBindings(ctx context.Context, params ListBindingsParams) (*ListBindingsOutputBodyStatusCode, error)
 	// ListMirrors invokes listMirrors operation.
 	//
 	// List mirrors visible to the caller.
 	//
 	// GET /mirrors
-	ListMirrors(ctx context.Context, params ListMirrorsParams) (*ListMirrorsOutputBody, error)
+	ListMirrors(ctx context.Context, params ListMirrorsParams) (*ListMirrorsOutputBodyStatusCode, error)
 	// ListOIDCProviders invokes listOIDCProviders operation.
 	//
 	// List federated OIDC identity providers.
 	//
 	// GET /oidc-providers
-	ListOIDCProviders(ctx context.Context) (*ListOIDCProvidersOutputBody, error)
+	ListOIDCProviders(ctx context.Context) (*ListOIDCProvidersOutputBodyStatusCode, error)
 	// ListOrgMembers invokes listOrgMembers operation.
 	//
 	// List members of an organization.
 	//
 	// GET /orgs/{orgId}/members
-	ListOrgMembers(ctx context.Context, params ListOrgMembersParams) (*ListOrgMembersOutputBody, error)
+	ListOrgMembers(ctx context.Context, params ListOrgMembersParams) (*ListOrgMembersOutputBodyStatusCode, error)
 	// ListOrgProjects invokes listOrgProjects operation.
 	//
 	// List projects owned by an organization.
 	//
 	// GET /orgs/{orgId}/projects
-	ListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (*ListOrgProjectsOutputBody, error)
+	ListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (*ListOrgProjectsOutputBodyStatusCode, error)
 	// ListOrgs invokes listOrgs operation.
 	//
 	// List organizations the caller can see.
 	//
 	// GET /orgs
-	ListOrgs(ctx context.Context) (*ListOrgsOutputBody, error)
+	ListOrgs(ctx context.Context) (*ListOrgsOutputBodyStatusCode, error)
 	// ListProjectMembers invokes listProjectMembers operation.
 	//
 	// List project members and their roles.
 	//
 	// GET /projects/{projectId}/members
-	ListProjectMembers(ctx context.Context, params ListProjectMembersParams) (*ListProjectMembersOutputBody, error)
+	ListProjectMembers(ctx context.Context, params ListProjectMembersParams) (*ListProjectMembersOutputBodyStatusCode, error)
 	// ListProjectRepos invokes listProjectRepos operation.
 	//
 	// List repositories in a project.
 	//
 	// GET /projects/{projectId}/repos
-	ListProjectRepos(ctx context.Context, params ListProjectReposParams) (*ListProjectReposOutputBody, error)
+	ListProjectRepos(ctx context.Context, params ListProjectReposParams) (*ListProjectReposOutputBodyStatusCode, error)
 	// ListProjects invokes listProjects operation.
 	//
 	// List projects accessible to the caller (or one by name).
 	//
 	// GET /projects
-	ListProjects(ctx context.Context, params ListProjectsParams) (*ListProjectsOutputBody, error)
+	ListProjects(ctx context.Context, params ListProjectsParams) (*ListProjectsOutputBodyStatusCode, error)
 	// ListServiceAccountGrants invokes listServiceAccountGrants operation.
 	//
 	// List service account grants.
 	//
 	// GET /service-accounts/{accountId}/grants
-	ListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (*ListServiceAccountGrantsOutputBody, error)
+	ListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (*ListServiceAccountGrantsOutputBodyStatusCode, error)
 	// ListServiceAccounts invokes listServiceAccounts operation.
 	//
 	// List service accounts in an org.
 	//
 	// GET /service-accounts
-	ListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (*ListServiceAccountsOutputBody, error)
+	ListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (*ListServiceAccountsOutputBodyStatusCode, error)
 	// LookupRepoByMirror invokes lookupRepoByMirror operation.
 	//
 	// Look up a repo by external mirror coords.
 	//
 	// GET /repos/by-mirror/{provider}/{owner}/{repo}
-	LookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (*MirrorRepoPath, error)
+	LookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (*MirrorRepoPathStatusCode, error)
 	// LookupResources invokes lookupResources operation.
 	//
 	// List resources of a type the caller can access.
 	//
 	// GET /access/{resourceType}
-	LookupResources(ctx context.Context, params LookupResourcesParams) (*LookupResourcesOutputBody, error)
+	LookupResources(ctx context.Context, params LookupResourcesParams) (*LookupResourcesOutputBodyStatusCode, error)
 	// RemoveOrgMember invokes removeOrgMember operation.
 	//
 	// Remove a member from an organization.
 	//
 	// DELETE /orgs/{orgId}/members/{provider}/{providerUserId}
-	RemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) error
+	RemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) (*RemoveOrgMember2XX, error)
 	// ResolveHandle invokes resolveHandle operation.
 	//
 	// Resolve account by external provider handle.
 	//
 	// GET /identity/handles/{provider}/{handle}
-	ResolveHandle(ctx context.Context, params ResolveHandleParams) (*ResolvedIdentity, error)
+	ResolveHandle(ctx context.Context, params ResolveHandleParams) (*ResolvedIdentityStatusCode, error)
 	// RevokeProjectAccess invokes revokeProjectAccess operation.
 	//
 	// Revoke project access by grantee id.
 	//
 	// DELETE /projects/{projectId}/grants/{granteeType}/{granteeId}
-	RevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) error
+	RevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) (*RevokeProjectAccess2XX, error)
 	// RevokeProjectAccessByProvider invokes revokeProjectAccessByProvider operation.
 	//
 	// Revoke project access by provider identity.
 	//
 	// DELETE /projects/{projectId}/grants/account/{provider}/{providerUserId}
-	RevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) error
+	RevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) (*RevokeProjectAccessByProvider2XX, error)
 	// RevokeServiceAccountAccess invokes revokeServiceAccountAccess operation.
 	//
 	// Revoke service account access.
 	//
 	// DELETE /service-accounts/{accountId}/grants/{resourceType}/{resourceId}
-	RevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) error
+	RevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) (*RevokeServiceAccountAccess2XX, error)
 }
 
 // Client implements OAS client.
@@ -303,12 +303,12 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 // Add a member to an organization.
 //
 // POST /orgs/{orgId}/members
-func (c *Client) AddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (*Membership, error) {
+func (c *Client) AddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (*MembershipStatusCode, error) {
 	res, err := c.sendAddOrgMember(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendAddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (res *Membership, err error) {
+func (c *Client) sendAddOrgMember(ctx context.Context, request *AddOrgMemberInputBody, params AddOrgMemberParams) (res *MembershipStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -407,12 +407,12 @@ func (c *Client) sendAddOrgMember(ctx context.Context, request *AddOrgMemberInpu
 // Batch-resolve (type, id) refs to enriched records.
 //
 // POST /lookup
-func (c *Client) BatchLookup(ctx context.Context, request *BatchLookupInputBody) (*BatchLookupOutputBody, error) {
+func (c *Client) BatchLookup(ctx context.Context, request *BatchLookupInputBody) (*BatchLookupOutputBodyStatusCode, error) {
 	res, err := c.sendBatchLookup(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendBatchLookup(ctx context.Context, request *BatchLookupInputBody) (res *BatchLookupOutputBody, err error) {
+func (c *Client) sendBatchLookup(ctx context.Context, request *BatchLookupInputBody) (res *BatchLookupOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -492,12 +492,12 @@ func (c *Client) sendBatchLookup(ctx context.Context, request *BatchLookupInputB
 // Create OIDC binding.
 //
 // POST /service-accounts/{accountId}/bindings
-func (c *Client) CreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (*Binding, error) {
+func (c *Client) CreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (*BindingStatusCode, error) {
 	res, err := c.sendCreateBinding(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendCreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (res *Binding, err error) {
+func (c *Client) sendCreateBinding(ctx context.Context, request *CreateBindingInputBody, params CreateBindingParams) (res *BindingStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -596,12 +596,12 @@ func (c *Client) sendCreateBinding(ctx context.Context, request *CreateBindingIn
 // Create GitHub mirror.
 //
 // POST /mirrors
-func (c *Client) CreateMirror(ctx context.Context, request *CreateMirrorInputBody) (*CreatedMirror, error) {
+func (c *Client) CreateMirror(ctx context.Context, request *CreateMirrorInputBody) (*CreatedMirrorStatusCode, error) {
 	res, err := c.sendCreateMirror(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateMirror(ctx context.Context, request *CreateMirrorInputBody) (res *CreatedMirror, err error) {
+func (c *Client) sendCreateMirror(ctx context.Context, request *CreateMirrorInputBody) (res *CreatedMirrorStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -681,12 +681,12 @@ func (c *Client) sendCreateMirror(ctx context.Context, request *CreateMirrorInpu
 // Create organization.
 //
 // POST /orgs
-func (c *Client) CreateOrg(ctx context.Context, request *CreateOrgInputBody) (*Org, error) {
+func (c *Client) CreateOrg(ctx context.Context, request *CreateOrgInputBody) (*OrgStatusCode, error) {
 	res, err := c.sendCreateOrg(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateOrg(ctx context.Context, request *CreateOrgInputBody) (res *Org, err error) {
+func (c *Client) sendCreateOrg(ctx context.Context, request *CreateOrgInputBody) (res *OrgStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -766,12 +766,12 @@ func (c *Client) sendCreateOrg(ctx context.Context, request *CreateOrgInputBody)
 // Create project.
 //
 // POST /projects
-func (c *Client) CreateProject(ctx context.Context, request *CreateProjectInputBody) (*Project, error) {
+func (c *Client) CreateProject(ctx context.Context, request *CreateProjectInputBody) (*ProjectStatusCode, error) {
 	res, err := c.sendCreateProject(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateProject(ctx context.Context, request *CreateProjectInputBody) (res *Project, err error) {
+func (c *Client) sendCreateProject(ctx context.Context, request *CreateProjectInputBody) (res *ProjectStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -851,12 +851,12 @@ func (c *Client) sendCreateProject(ctx context.Context, request *CreateProjectIn
 // Create repository.
 //
 // POST /repos
-func (c *Client) CreateRepo(ctx context.Context, request *CreateRepoInputBody) (*Repo, error) {
+func (c *Client) CreateRepo(ctx context.Context, request *CreateRepoInputBody) (*RepoStatusCode, error) {
 	res, err := c.sendCreateRepo(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateRepo(ctx context.Context, request *CreateRepoInputBody) (res *Repo, err error) {
+func (c *Client) sendCreateRepo(ctx context.Context, request *CreateRepoInputBody) (res *RepoStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -936,12 +936,12 @@ func (c *Client) sendCreateRepo(ctx context.Context, request *CreateRepoInputBod
 // Create service account.
 //
 // POST /service-accounts
-func (c *Client) CreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (*ServiceAccount, error) {
+func (c *Client) CreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (*ServiceAccountStatusCode, error) {
 	res, err := c.sendCreateServiceAccount(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (res *ServiceAccount, err error) {
+func (c *Client) sendCreateServiceAccount(ctx context.Context, request *CreateServiceAccountInputBody) (res *ServiceAccountStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -1021,12 +1021,12 @@ func (c *Client) sendCreateServiceAccount(ctx context.Context, request *CreateSe
 // Delete OIDC binding.
 //
 // DELETE /service-accounts/{accountId}/bindings/{bindingId}
-func (c *Client) DeleteBinding(ctx context.Context, params DeleteBindingParams) error {
-	_, err := c.sendDeleteBinding(ctx, params)
-	return err
+func (c *Client) DeleteBinding(ctx context.Context, params DeleteBindingParams) (*DeleteBinding2XX, error) {
+	res, err := c.sendDeleteBinding(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendDeleteBinding(ctx context.Context, params DeleteBindingParams) (res *DeleteBindingNoContent, err error) {
+func (c *Client) sendDeleteBinding(ctx context.Context, params DeleteBindingParams) (res *DeleteBinding2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [4]string
@@ -1140,12 +1140,12 @@ func (c *Client) sendDeleteBinding(ctx context.Context, params DeleteBindingPara
 // Delete mirror by id.
 //
 // DELETE /mirrors/{mirrorId}
-func (c *Client) DeleteMirror(ctx context.Context, params DeleteMirrorParams) error {
-	_, err := c.sendDeleteMirror(ctx, params)
-	return err
+func (c *Client) DeleteMirror(ctx context.Context, params DeleteMirrorParams) (*DeleteMirror2XX, error) {
+	res, err := c.sendDeleteMirror(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendDeleteMirror(ctx context.Context, params DeleteMirrorParams) (res *DeleteMirrorNoContent, err error) {
+func (c *Client) sendDeleteMirror(ctx context.Context, params DeleteMirrorParams) (res *DeleteMirror2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1240,12 +1240,12 @@ func (c *Client) sendDeleteMirror(ctx context.Context, params DeleteMirrorParams
 // Delete repository.
 //
 // DELETE /repos/{repoId}
-func (c *Client) DeleteRepo(ctx context.Context, params DeleteRepoParams) error {
-	_, err := c.sendDeleteRepo(ctx, params)
-	return err
+func (c *Client) DeleteRepo(ctx context.Context, params DeleteRepoParams) (*DeleteRepo2XX, error) {
+	res, err := c.sendDeleteRepo(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendDeleteRepo(ctx context.Context, params DeleteRepoParams) (res *DeleteRepoNoContent, err error) {
+func (c *Client) sendDeleteRepo(ctx context.Context, params DeleteRepoParams) (res *DeleteRepo2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1340,12 +1340,12 @@ func (c *Client) sendDeleteRepo(ctx context.Context, params DeleteRepoParams) (r
 // Delete service account.
 //
 // DELETE /service-accounts/{accountId}
-func (c *Client) DeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) error {
-	_, err := c.sendDeleteServiceAccount(ctx, params)
-	return err
+func (c *Client) DeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) (*DeleteServiceAccount2XX, error) {
+	res, err := c.sendDeleteServiceAccount(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendDeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) (res *DeleteServiceAccountNoContent, err error) {
+func (c *Client) sendDeleteServiceAccount(ctx context.Context, params DeleteServiceAccountParams) (res *DeleteServiceAccount2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1440,12 +1440,12 @@ func (c *Client) sendDeleteServiceAccount(ctx context.Context, params DeleteServ
 // Get the calling account's identity and profile.
 //
 // GET /me
-func (c *Client) GetMe(ctx context.Context) (*GetMeOutputBody, error) {
+func (c *Client) GetMe(ctx context.Context) (*GetMeOutputBodyStatusCode, error) {
 	res, err := c.sendGetMe(ctx)
 	return res, err
 }
 
-func (c *Client) sendGetMe(ctx context.Context) (res *GetMeOutputBody, err error) {
+func (c *Client) sendGetMe(ctx context.Context) (res *GetMeOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -1522,12 +1522,12 @@ func (c *Client) sendGetMe(ctx context.Context) (res *GetMeOutputBody, err error
 // Get mirror by id.
 //
 // GET /mirrors/{mirrorId}
-func (c *Client) GetMirror(ctx context.Context, params GetMirrorParams) (*Mirror, error) {
+func (c *Client) GetMirror(ctx context.Context, params GetMirrorParams) (*MirrorStatusCode, error) {
 	res, err := c.sendGetMirror(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendGetMirror(ctx context.Context, params GetMirrorParams) (res *Mirror, err error) {
+func (c *Client) sendGetMirror(ctx context.Context, params GetMirrorParams) (res *MirrorStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1622,12 +1622,12 @@ func (c *Client) sendGetMirror(ctx context.Context, params GetMirrorParams) (res
 // List the caller's permissions on a single resource.
 //
 // GET /access/{resourceType}/{resourceId}
-func (c *Client) GetPermissions(ctx context.Context, params GetPermissionsParams) (*GetPermissionsOutputBody, error) {
+func (c *Client) GetPermissions(ctx context.Context, params GetPermissionsParams) (*GetPermissionsOutputBodyStatusCode, error) {
 	res, err := c.sendGetPermissions(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendGetPermissions(ctx context.Context, params GetPermissionsParams) (res *GetPermissionsOutputBody, err error) {
+func (c *Client) sendGetPermissions(ctx context.Context, params GetPermissionsParams) (res *GetPermissionsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [4]string
@@ -1761,12 +1761,12 @@ func (c *Client) sendGetPermissions(ctx context.Context, params GetPermissionsPa
 // Get repository.
 //
 // GET /repos/{repoId}
-func (c *Client) GetRepo(ctx context.Context, params GetRepoParams) (*Repo, error) {
+func (c *Client) GetRepo(ctx context.Context, params GetRepoParams) (*RepoStatusCode, error) {
 	res, err := c.sendGetRepo(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendGetRepo(ctx context.Context, params GetRepoParams) (res *Repo, err error) {
+func (c *Client) sendGetRepo(ctx context.Context, params GetRepoParams) (res *RepoStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1861,12 +1861,12 @@ func (c *Client) sendGetRepo(ctx context.Context, params GetRepoParams) (res *Re
 // Get service account.
 //
 // GET /service-accounts/{accountId}
-func (c *Client) GetServiceAccount(ctx context.Context, params GetServiceAccountParams) (*ServiceAccount, error) {
+func (c *Client) GetServiceAccount(ctx context.Context, params GetServiceAccountParams) (*ServiceAccountStatusCode, error) {
 	res, err := c.sendGetServiceAccount(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendGetServiceAccount(ctx context.Context, params GetServiceAccountParams) (res *ServiceAccount, err error) {
+func (c *Client) sendGetServiceAccount(ctx context.Context, params GetServiceAccountParams) (res *ServiceAccountStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -1961,12 +1961,12 @@ func (c *Client) sendGetServiceAccount(ctx context.Context, params GetServiceAcc
 // Grant project access to an identity.
 //
 // POST /projects/{projectId}/grants
-func (c *Client) GrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (*GrantProjectAccessOutputBody, error) {
+func (c *Client) GrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (*GrantProjectAccessOutputBodyStatusCode, error) {
 	res, err := c.sendGrantProjectAccess(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendGrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (res *GrantProjectAccessOutputBody, err error) {
+func (c *Client) sendGrantProjectAccess(ctx context.Context, request *GrantProjectAccessInputBody, params GrantProjectAccessParams) (res *GrantProjectAccessOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2065,12 +2065,12 @@ func (c *Client) sendGrantProjectAccess(ctx context.Context, request *GrantProje
 // Grant repo access to an identity.
 //
 // POST /repos/{repoId}/grants
-func (c *Client) GrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (*GrantRepoAccessOutputBody, error) {
+func (c *Client) GrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (*GrantRepoAccessOutputBodyStatusCode, error) {
 	res, err := c.sendGrantRepoAccess(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendGrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (res *GrantRepoAccessOutputBody, err error) {
+func (c *Client) sendGrantRepoAccess(ctx context.Context, request *GrantRepoAccessInputBody, params GrantRepoAccessParams) (res *GrantRepoAccessOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2169,12 +2169,12 @@ func (c *Client) sendGrantRepoAccess(ctx context.Context, request *GrantRepoAcce
 // Grant service account access on a repo or project.
 //
 // POST /service-accounts/{accountId}/grants
-func (c *Client) GrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (*GrantServiceAccountAccessOutputBody, error) {
+func (c *Client) GrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (*GrantServiceAccountAccessOutputBodyStatusCode, error) {
 	res, err := c.sendGrantServiceAccountAccess(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendGrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (res *GrantServiceAccountAccessOutputBody, err error) {
+func (c *Client) sendGrantServiceAccountAccess(ctx context.Context, request *GrantServiceAccountAccessInputBody, params GrantServiceAccountAccessParams) (res *GrantServiceAccountAccessOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2273,12 +2273,12 @@ func (c *Client) sendGrantServiceAccountAccess(ctx context.Context, request *Gra
 // List the calling account's recent audit events.
 //
 // GET /audit
-func (c *Client) ListAuditEvents(ctx context.Context) (*ListAuditEventsOutputBody, error) {
+func (c *Client) ListAuditEvents(ctx context.Context) (*ListAuditEventsOutputBodyStatusCode, error) {
 	res, err := c.sendListAuditEvents(ctx)
 	return res, err
 }
 
-func (c *Client) sendListAuditEvents(ctx context.Context) (res *ListAuditEventsOutputBody, err error) {
+func (c *Client) sendListAuditEvents(ctx context.Context) (res *ListAuditEventsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -2355,12 +2355,12 @@ func (c *Client) sendListAuditEvents(ctx context.Context) (res *ListAuditEventsO
 // List OIDC bindings.
 //
 // GET /service-accounts/{accountId}/bindings
-func (c *Client) ListBindings(ctx context.Context, params ListBindingsParams) (*ListBindingsOutputBody, error) {
+func (c *Client) ListBindings(ctx context.Context, params ListBindingsParams) (*ListBindingsOutputBodyStatusCode, error) {
 	res, err := c.sendListBindings(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListBindings(ctx context.Context, params ListBindingsParams) (res *ListBindingsOutputBody, err error) {
+func (c *Client) sendListBindings(ctx context.Context, params ListBindingsParams) (res *ListBindingsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2456,12 +2456,12 @@ func (c *Client) sendListBindings(ctx context.Context, params ListBindingsParams
 // List mirrors visible to the caller.
 //
 // GET /mirrors
-func (c *Client) ListMirrors(ctx context.Context, params ListMirrorsParams) (*ListMirrorsOutputBody, error) {
+func (c *Client) ListMirrors(ctx context.Context, params ListMirrorsParams) (*ListMirrorsOutputBodyStatusCode, error) {
 	res, err := c.sendListMirrors(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListMirrors(ctx context.Context, params ListMirrorsParams) (res *ListMirrorsOutputBody, err error) {
+func (c *Client) sendListMirrors(ctx context.Context, params ListMirrorsParams) (res *ListMirrorsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -2592,12 +2592,12 @@ func (c *Client) sendListMirrors(ctx context.Context, params ListMirrorsParams) 
 // List federated OIDC identity providers.
 //
 // GET /oidc-providers
-func (c *Client) ListOIDCProviders(ctx context.Context) (*ListOIDCProvidersOutputBody, error) {
+func (c *Client) ListOIDCProviders(ctx context.Context) (*ListOIDCProvidersOutputBodyStatusCode, error) {
 	res, err := c.sendListOIDCProviders(ctx)
 	return res, err
 }
 
-func (c *Client) sendListOIDCProviders(ctx context.Context) (res *ListOIDCProvidersOutputBody, err error) {
+func (c *Client) sendListOIDCProviders(ctx context.Context) (res *ListOIDCProvidersOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -2674,12 +2674,12 @@ func (c *Client) sendListOIDCProviders(ctx context.Context) (res *ListOIDCProvid
 // List members of an organization.
 //
 // GET /orgs/{orgId}/members
-func (c *Client) ListOrgMembers(ctx context.Context, params ListOrgMembersParams) (*ListOrgMembersOutputBody, error) {
+func (c *Client) ListOrgMembers(ctx context.Context, params ListOrgMembersParams) (*ListOrgMembersOutputBodyStatusCode, error) {
 	res, err := c.sendListOrgMembers(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListOrgMembers(ctx context.Context, params ListOrgMembersParams) (res *ListOrgMembersOutputBody, err error) {
+func (c *Client) sendListOrgMembers(ctx context.Context, params ListOrgMembersParams) (res *ListOrgMembersOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2775,12 +2775,12 @@ func (c *Client) sendListOrgMembers(ctx context.Context, params ListOrgMembersPa
 // List projects owned by an organization.
 //
 // GET /orgs/{orgId}/projects
-func (c *Client) ListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (*ListOrgProjectsOutputBody, error) {
+func (c *Client) ListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (*ListOrgProjectsOutputBodyStatusCode, error) {
 	res, err := c.sendListOrgProjects(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (res *ListOrgProjectsOutputBody, err error) {
+func (c *Client) sendListOrgProjects(ctx context.Context, params ListOrgProjectsParams) (res *ListOrgProjectsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -2876,12 +2876,12 @@ func (c *Client) sendListOrgProjects(ctx context.Context, params ListOrgProjects
 // List organizations the caller can see.
 //
 // GET /orgs
-func (c *Client) ListOrgs(ctx context.Context) (*ListOrgsOutputBody, error) {
+func (c *Client) ListOrgs(ctx context.Context) (*ListOrgsOutputBodyStatusCode, error) {
 	res, err := c.sendListOrgs(ctx)
 	return res, err
 }
 
-func (c *Client) sendListOrgs(ctx context.Context) (res *ListOrgsOutputBody, err error) {
+func (c *Client) sendListOrgs(ctx context.Context) (res *ListOrgsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -2958,12 +2958,12 @@ func (c *Client) sendListOrgs(ctx context.Context) (res *ListOrgsOutputBody, err
 // List project members and their roles.
 //
 // GET /projects/{projectId}/members
-func (c *Client) ListProjectMembers(ctx context.Context, params ListProjectMembersParams) (*ListProjectMembersOutputBody, error) {
+func (c *Client) ListProjectMembers(ctx context.Context, params ListProjectMembersParams) (*ListProjectMembersOutputBodyStatusCode, error) {
 	res, err := c.sendListProjectMembers(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListProjectMembers(ctx context.Context, params ListProjectMembersParams) (res *ListProjectMembersOutputBody, err error) {
+func (c *Client) sendListProjectMembers(ctx context.Context, params ListProjectMembersParams) (res *ListProjectMembersOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -3059,12 +3059,12 @@ func (c *Client) sendListProjectMembers(ctx context.Context, params ListProjectM
 // List repositories in a project.
 //
 // GET /projects/{projectId}/repos
-func (c *Client) ListProjectRepos(ctx context.Context, params ListProjectReposParams) (*ListProjectReposOutputBody, error) {
+func (c *Client) ListProjectRepos(ctx context.Context, params ListProjectReposParams) (*ListProjectReposOutputBodyStatusCode, error) {
 	res, err := c.sendListProjectRepos(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListProjectRepos(ctx context.Context, params ListProjectReposParams) (res *ListProjectReposOutputBody, err error) {
+func (c *Client) sendListProjectRepos(ctx context.Context, params ListProjectReposParams) (res *ListProjectReposOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -3160,12 +3160,12 @@ func (c *Client) sendListProjectRepos(ctx context.Context, params ListProjectRep
 // List projects accessible to the caller (or one by name).
 //
 // GET /projects
-func (c *Client) ListProjects(ctx context.Context, params ListProjectsParams) (*ListProjectsOutputBody, error) {
+func (c *Client) ListProjects(ctx context.Context, params ListProjectsParams) (*ListProjectsOutputBodyStatusCode, error) {
 	res, err := c.sendListProjects(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListProjects(ctx context.Context, params ListProjectsParams) (res *ListProjectsOutputBody, err error) {
+func (c *Client) sendListProjects(ctx context.Context, params ListProjectsParams) (res *ListProjectsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -3262,12 +3262,12 @@ func (c *Client) sendListProjects(ctx context.Context, params ListProjectsParams
 // List service account grants.
 //
 // GET /service-accounts/{accountId}/grants
-func (c *Client) ListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (*ListServiceAccountGrantsOutputBody, error) {
+func (c *Client) ListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (*ListServiceAccountGrantsOutputBodyStatusCode, error) {
 	res, err := c.sendListServiceAccountGrants(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (res *ListServiceAccountGrantsOutputBody, err error) {
+func (c *Client) sendListServiceAccountGrants(ctx context.Context, params ListServiceAccountGrantsParams) (res *ListServiceAccountGrantsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
@@ -3363,12 +3363,12 @@ func (c *Client) sendListServiceAccountGrants(ctx context.Context, params ListSe
 // List service accounts in an org.
 //
 // GET /service-accounts
-func (c *Client) ListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (*ListServiceAccountsOutputBody, error) {
+func (c *Client) ListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (*ListServiceAccountsOutputBodyStatusCode, error) {
 	res, err := c.sendListServiceAccounts(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (res *ListServiceAccountsOutputBody, err error) {
+func (c *Client) sendListServiceAccounts(ctx context.Context, params ListServiceAccountsParams) (res *ListServiceAccountsOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
@@ -3462,12 +3462,12 @@ func (c *Client) sendListServiceAccounts(ctx context.Context, params ListService
 // Look up a repo by external mirror coords.
 //
 // GET /repos/by-mirror/{provider}/{owner}/{repo}
-func (c *Client) LookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (*MirrorRepoPath, error) {
+func (c *Client) LookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (*MirrorRepoPathStatusCode, error) {
 	res, err := c.sendLookupRepoByMirror(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendLookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (res *MirrorRepoPath, err error) {
+func (c *Client) sendLookupRepoByMirror(ctx context.Context, params LookupRepoByMirrorParams) (res *MirrorRepoPathStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [6]string
@@ -3617,12 +3617,12 @@ func (c *Client) sendLookupRepoByMirror(ctx context.Context, params LookupRepoBy
 // List resources of a type the caller can access.
 //
 // GET /access/{resourceType}
-func (c *Client) LookupResources(ctx context.Context, params LookupResourcesParams) (*LookupResourcesOutputBody, error) {
+func (c *Client) LookupResources(ctx context.Context, params LookupResourcesParams) (*LookupResourcesOutputBodyStatusCode, error) {
 	res, err := c.sendLookupResources(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendLookupResources(ctx context.Context, params LookupResourcesParams) (res *LookupResourcesOutputBody, err error) {
+func (c *Client) sendLookupResources(ctx context.Context, params LookupResourcesParams) (res *LookupResourcesOutputBodyStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [2]string
@@ -3737,12 +3737,12 @@ func (c *Client) sendLookupResources(ctx context.Context, params LookupResources
 // Remove a member from an organization.
 //
 // DELETE /orgs/{orgId}/members/{provider}/{providerUserId}
-func (c *Client) RemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) error {
-	_, err := c.sendRemoveOrgMember(ctx, params)
-	return err
+func (c *Client) RemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) (*RemoveOrgMember2XX, error) {
+	res, err := c.sendRemoveOrgMember(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendRemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) (res *RemoveOrgMemberNoContent, err error) {
+func (c *Client) sendRemoveOrgMember(ctx context.Context, params RemoveOrgMemberParams) (res *RemoveOrgMember2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [6]string
@@ -3875,12 +3875,12 @@ func (c *Client) sendRemoveOrgMember(ctx context.Context, params RemoveOrgMember
 // Resolve account by external provider handle.
 //
 // GET /identity/handles/{provider}/{handle}
-func (c *Client) ResolveHandle(ctx context.Context, params ResolveHandleParams) (*ResolvedIdentity, error) {
+func (c *Client) ResolveHandle(ctx context.Context, params ResolveHandleParams) (*ResolvedIdentityStatusCode, error) {
 	res, err := c.sendResolveHandle(ctx, params)
 	return res, err
 }
 
-func (c *Client) sendResolveHandle(ctx context.Context, params ResolveHandleParams) (res *ResolvedIdentity, err error) {
+func (c *Client) sendResolveHandle(ctx context.Context, params ResolveHandleParams) (res *ResolvedIdentityStatusCode, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [4]string
@@ -3994,12 +3994,12 @@ func (c *Client) sendResolveHandle(ctx context.Context, params ResolveHandlePara
 // Revoke project access by grantee id.
 //
 // DELETE /projects/{projectId}/grants/{granteeType}/{granteeId}
-func (c *Client) RevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) error {
-	_, err := c.sendRevokeProjectAccess(ctx, params)
-	return err
+func (c *Client) RevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) (*RevokeProjectAccess2XX, error) {
+	res, err := c.sendRevokeProjectAccess(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendRevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) (res *RevokeProjectAccessNoContent, err error) {
+func (c *Client) sendRevokeProjectAccess(ctx context.Context, params RevokeProjectAccessParams) (res *RevokeProjectAccess2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [6]string
@@ -4132,12 +4132,12 @@ func (c *Client) sendRevokeProjectAccess(ctx context.Context, params RevokeProje
 // Revoke project access by provider identity.
 //
 // DELETE /projects/{projectId}/grants/account/{provider}/{providerUserId}
-func (c *Client) RevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) error {
-	_, err := c.sendRevokeProjectAccessByProvider(ctx, params)
-	return err
+func (c *Client) RevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) (*RevokeProjectAccessByProvider2XX, error) {
+	res, err := c.sendRevokeProjectAccessByProvider(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendRevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) (res *RevokeProjectAccessByProviderNoContent, err error) {
+func (c *Client) sendRevokeProjectAccessByProvider(ctx context.Context, params RevokeProjectAccessByProviderParams) (res *RevokeProjectAccessByProvider2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [6]string
@@ -4270,12 +4270,12 @@ func (c *Client) sendRevokeProjectAccessByProvider(ctx context.Context, params R
 // Revoke service account access.
 //
 // DELETE /service-accounts/{accountId}/grants/{resourceType}/{resourceId}
-func (c *Client) RevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) error {
-	_, err := c.sendRevokeServiceAccountAccess(ctx, params)
-	return err
+func (c *Client) RevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) (*RevokeServiceAccountAccess2XX, error) {
+	res, err := c.sendRevokeServiceAccountAccess(ctx, params)
+	return res, err
 }
 
-func (c *Client) sendRevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) (res *RevokeServiceAccountAccessNoContent, err error) {
+func (c *Client) sendRevokeServiceAccountAccess(ctx context.Context, params RevokeServiceAccountAccessParams) (res *RevokeServiceAccountAccess2XX, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [6]string

@@ -28,6 +28,21 @@ func mirrorRow(m coreapi.Mirror) []string {
 	return []string{repo, cloneURL, private}
 }
 
+// defaultClusterHost is the cluster the mirror commands target when the
+// caller omits the <cluster-host> argument. A pragmatic single-region
+// default for now — once multi-cluster selection lands this should come
+// from config/context rather than a constant.
+const defaultClusterHost = "aws-us-east-2.entire.io"
+
+// clusterArg returns the cluster host from args[idx], or defaultClusterHost
+// when that positional was omitted.
+func clusterArg(args []string, idx int) string {
+	if idx < len(args) {
+		return args[idx]
+	}
+	return defaultClusterHost
+}
+
 // newRepoMirrorCmd is the `entire repo mirror` subtree: manage EntireDB
 // GitHub-mirror placements on a cluster. Mirrors the standalone entiredb
 // CLI's `entire repo mirror` surface for the server-side half (create /
@@ -52,24 +67,26 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 		waitTimeout time.Duration
 	)
 	cmd := &cobra.Command{
-		Use:   "create <github-url> <cluster-host>",
+		Use:   "create <github-url> [cluster-host]",
 		Short: "Register a GitHub mirror on a cluster",
-		Long: "Registers a mirror placement for a GitHub repo on the named " +
+		Long: "Registers a mirror placement for a GitHub repo on the target " +
 			"cluster, then waits for the initial GitHub→EntireDB clone to " +
 			"finish so `git clone` works on return. Pass --no-wait to return " +
 			"as soon as the placement is registered. Idempotent on " +
-			"(upstream, cluster).",
-		Example: "  entire repo mirror create github.com/octocat/hello-world aws-us-east-2.entire.io",
-		Args:    cobra.ExactArgs(2),
+			"(upstream, cluster). The cluster-host defaults to " +
+			defaultClusterHost + " when omitted.",
+		Example: "  entire repo mirror create github.com/octocat/hello-world\n" +
+			"  entire repo mirror create github.com/octocat/hello-world eu-west-1.entire.io",
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			owner, repo, err := parseGitHubURL(args[0])
 			if err != nil {
 				cmd.SilenceUsage = true
 				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
 			}
-			clusterHost := args[1]
+			clusterHost := clusterArg(args, 1)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
+				sc, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
 					Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
 					Owner:       owner,
 					Repo:        repo,
@@ -78,6 +95,7 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				created := sc.Response
 				out := cmd.OutOrStdout()
 				if created.Created {
 					fmt.Fprintf(out, "Registered mirror %s\n", created.MirrorId)
@@ -124,7 +142,7 @@ func newRepoMirrorListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Mirrors, nil
+				return out.Response.Mirrors, nil
 			})
 		},
 	}
@@ -141,7 +159,11 @@ func newRepoMirrorGetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCoreObject(cmd, mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) (*coreapi.Mirror, error) {
-				return c.GetMirror(ctx, coreapi.GetMirrorParams{MirrorId: args[0]})
+				sc, err := c.GetMirror(ctx, coreapi.GetMirrorParams{MirrorId: args[0]})
+				if err != nil {
+					return nil, err
+				}
+				return &sc.Response, nil
 			})
 		},
 	}
@@ -149,20 +171,21 @@ func newRepoMirrorGetCmd() *cobra.Command {
 
 func newRepoMirrorRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <github-url> <cluster-host>",
+		Use:   "remove <github-url> [cluster-host]",
 		Short: "Un-register a GitHub mirror from a cluster",
-		Long: "Removes a mirror placement for a GitHub repo from the named " +
+		Long: "Removes a mirror placement for a GitHub repo from the target " +
 			"cluster. Other clusters' placements of the same upstream are " +
-			"unaffected.",
-		Example: "  entire repo mirror remove github.com/octocat/hello-world aws-us-east-2.entire.io",
-		Args:    cobra.ExactArgs(2),
+			"unaffected. The cluster-host defaults to " + defaultClusterHost +
+			" when omitted.",
+		Example: "  entire repo mirror remove github.com/octocat/hello-world",
+		Args:    cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			owner, repo, err := parseGitHubURL(args[0])
 			if err != nil {
 				cmd.SilenceUsage = true
 				return NewSilentError(fmt.Errorf("invalid <github-url>: %w", err))
 			}
-			clusterHost := args[1]
+			clusterHost := clusterArg(args, 1)
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
 				// The mirror's data-plane ULID is resolved from its GitHub
 				// coords; DeleteMirror then takes that id.
@@ -175,7 +198,7 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{MirrorId: resolved.RepoId}); err != nil {
+				if _, err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{MirrorId: resolved.Response.RepoId}); err != nil {
 					return err
 				}
 				cmd.Printf("Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)

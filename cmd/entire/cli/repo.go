@@ -78,7 +78,7 @@ func newRepoListCmd() *cobra.Command {
 				if err != nil {
 					return nil, err
 				}
-				return out.Repos, nil
+				return out.Response.Repos, nil
 			})
 		},
 	}
@@ -91,7 +91,11 @@ func newRepoGetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCoreObject(cmd, repoColumns, repoRow, func(ctx context.Context, c *coreapi.Client) (*coreapi.Repo, error) {
-				return c.GetRepo(ctx, coreapi.GetRepoParams{RepoId: args[0]})
+				sc, err := c.GetRepo(ctx, coreapi.GetRepoParams{RepoId: args[0]})
+				if err != nil {
+					return nil, err
+				}
+				return &sc.Response, nil
 			})
 		},
 	}
@@ -104,7 +108,7 @@ func newRepoDeleteCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				if err := c.DeleteRepo(ctx, coreapi.DeleteRepoParams{RepoId: args[0]}); err != nil {
+				if _, err := c.DeleteRepo(ctx, coreapi.DeleteRepoParams{RepoId: args[0]}); err != nil {
 					return err
 				}
 				cmd.Printf("Deleted repo %s\n", args[0])

@@ -1771,7 +1771,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1840,7 +1840,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1879,7 +1879,7 @@
       "get": {
         "operationId": "listAuditEvents",
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1942,7 +1942,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1991,7 +1991,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2030,7 +2030,7 @@
       "get": {
         "operationId": "getMe",
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2101,7 +2101,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2148,7 +2148,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2198,7 +2198,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -2239,7 +2239,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2278,7 +2278,7 @@
       "get": {
         "operationId": "listOIDCProviders",
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2317,7 +2317,7 @@
       "get": {
         "operationId": "listOrgs",
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2364,7 +2364,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2414,7 +2414,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2472,7 +2472,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2540,7 +2540,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -2583,7 +2583,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2634,7 +2634,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2681,7 +2681,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2741,7 +2741,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2809,7 +2809,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -2870,7 +2870,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -2913,7 +2913,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2963,7 +2963,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3012,7 +3012,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3091,7 +3091,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3141,7 +3141,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -3182,7 +3182,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3242,7 +3242,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3293,7 +3293,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3340,7 +3340,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3390,7 +3390,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -3431,7 +3431,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3481,7 +3481,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3539,7 +3539,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3598,7 +3598,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
@@ -3641,7 +3641,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3699,7 +3699,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "2XX": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3770,7 +3770,7 @@
           }
         ],
         "responses": {
-          "204": {
+          "2XX": {
             "description": "No Content"
           },
           "default": {
