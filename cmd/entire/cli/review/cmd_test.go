@@ -81,45 +81,39 @@ func TestNewReviewCmd_NoHiddenFlags(t *testing.T) {
 	}
 }
 
-func TestReviewFindings_NotGitRepoReturnsSilentError(t *testing.T) {
-	t.Chdir(t.TempDir())
-
-	rootCmd := cli.NewRootCmd()
-	errBuf := &bytes.Buffer{}
-	rootCmd.SetErr(errBuf)
-	rootCmd.SetArgs([]string{"review", "--findings"})
-
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected error outside a git repo")
+// TestReview_NotGitRepoReturnsSilentError verifies the not-a-git-repo guard
+// (which fires before any flag-specific logic) returns a SilentError and prints
+// "Not a git repository" exactly once, regardless of which review mode flag is used.
+func TestReview_NotGitRepoReturnsSilentError(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"findings", []string{"review", "--findings"}},
+		{"fix", []string{"review", "--fix", "review-session"}},
 	}
-	var silentErr *cli.SilentError
-	if !errors.As(err, &silentErr) {
-		t.Fatalf("expected SilentError, got %T: %v", err, err)
-	}
-	if got := strings.Count(errBuf.String(), "Not a git repository"); got != 1 {
-		t.Fatalf("not-git message count = %d, want 1; stderr:\n%s", got, errBuf.String())
-	}
-}
 
-func TestReviewFix_NotGitRepoReturnsSilentError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
 
-	rootCmd := cli.NewRootCmd()
-	errBuf := &bytes.Buffer{}
-	rootCmd.SetErr(errBuf)
-	rootCmd.SetArgs([]string{"review", "--fix", "review-session"})
+			rootCmd := cli.NewRootCmd()
+			errBuf := &bytes.Buffer{}
+			rootCmd.SetErr(errBuf)
+			rootCmd.SetArgs(tt.args)
 
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected error outside a git repo")
-	}
-	var silentErr *cli.SilentError
-	if !errors.As(err, &silentErr) {
-		t.Fatalf("expected SilentError, got %T: %v", err, err)
-	}
-	if got := strings.Count(errBuf.String(), "Not a git repository"); got != 1 {
-		t.Fatalf("not-git message count = %d, want 1; stderr:\n%s", got, errBuf.String())
+			err := rootCmd.Execute()
+			if err == nil {
+				t.Fatal("expected error outside a git repo")
+			}
+			var silentErr *cli.SilentError
+			if !errors.As(err, &silentErr) {
+				t.Fatalf("expected SilentError, got %T: %v", err, err)
+			}
+			if got := strings.Count(errBuf.String(), "Not a git repository"); got != 1 {
+				t.Fatalf("not-git message count = %d, want 1; stderr:\n%s", got, errBuf.String())
+			}
+		})
 	}
 }
 
