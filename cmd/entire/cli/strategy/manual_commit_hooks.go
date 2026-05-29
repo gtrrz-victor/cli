@@ -1155,6 +1155,10 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
 
+	// Combined attribution is a committed write in the post-commit hook, so the
+	// v1 custom ref must track it too when opted in (local-only, never pushed).
+	mirrorMetadataToV1CustomRef(ctx, repo)
+
 	return nil
 }
 

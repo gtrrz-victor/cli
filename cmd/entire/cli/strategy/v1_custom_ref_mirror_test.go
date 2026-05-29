@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	git "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -205,6 +206,45 @@ func TestMirrorMetadataToV1CustomRef_V1MissingNoOp(t *testing.T) {
 
 	_, ok := v1CustomRefHash(t, repo)
 	assert.False(t, ok, "v1 custom ref must not be created when v1 metadata branch is absent")
+}
+
+// Not parallel: uses t.Chdir().
+func TestUpdateCombinedAttribution_MirrorsV1CustomRefWhenEnabled(t *testing.T) {
+	dir := setupGitRepo(t)
+	t.Chdir(dir)
+	enableV1CustomRefMirror(t, dir)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	s := &ManualCommitStrategy{}
+	// Two sessions overlapping the same commit make the checkpoint hold >1
+	// session, which triggers combined-attribution persistence — a second v1
+	// write that lands after per-session condensation has already mirrored.
+	sessions := []struct{ id, file string }{
+		{"combined-a", "a.txt"},
+		{"combined-b", "b.txt"},
+	}
+	files := make([]string, 0, len(sessions))
+	for _, sess := range sessions {
+		setupSessionWithCheckpointAndFile(t, s, dir, sess.id, sess.file)
+		state, loadErr := s.loadSessionState(t.Context(), sess.id)
+		require.NoError(t, loadErr)
+		now := time.Now()
+		state.Phase = session.PhaseEnded
+		state.EndedAt = &now
+		state.FilesTouched = []string{sess.file}
+		require.NoError(t, s.saveSessionState(t.Context(), state))
+		files = append(files, sess.file)
+	}
+
+	commitFilesWithTrailer(t, repo, dir, "ccddee112233", files...)
+	require.NoError(t, s.PostCommit(t.Context()))
+
+	v1Hash := v1MetadataBranchHash(t, repo)
+	got, ok := v1CustomRefHash(t, repo)
+	require.True(t, ok, "expected %s to exist", paths.MetadataRefName)
+	assert.Equal(t, v1Hash, got, "custom ref must track v1 after combined-attribution write")
 }
 
 // TestPrePush_DoesNotPushV1CustomRef proves the phase-1 invariant: even with the
