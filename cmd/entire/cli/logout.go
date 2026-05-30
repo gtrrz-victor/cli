@@ -25,6 +25,12 @@ type tokenStore interface {
 // entry through.
 type revokeCurrentFunc func(ctx context.Context) error
 
+// clearContextFunc removes the active contexts.json context (and its
+// keyring token) so logout actually logs out under the contexts model.
+// Injected so logout stays unit-testable without touching the real
+// config dir.
+type clearContextFunc func() error
+
 func newLogoutCmd() *cobra.Command {
 	var insecureHTTPAuth bool
 	cmd := &cobra.Command{
@@ -35,7 +41,7 @@ func newLogoutCmd() *cobra.Command {
 				return err
 			}
 			return runLogout(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				auth.NewStore(), defaultRevokeCurrentToken, api.AuthBaseURL())
+				auth.NewContextStore(), defaultRevokeCurrentToken, auth.RemoveCurrentContext, api.AuthBaseURL())
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
@@ -50,7 +56,7 @@ func defaultRevokeCurrentToken(ctx context.Context) error {
 	return newAPITokensClient(token).RevokeCurrentToken(ctx) //nolint:wrapcheck // RevokeCurrentToken already wraps with action context
 }
 
-func runLogout(ctx context.Context, outW, errW io.Writer, store tokenStore, revoke revokeCurrentFunc, baseURL string) error {
+func runLogout(ctx context.Context, outW, errW io.Writer, store tokenStore, revoke revokeCurrentFunc, clearContext clearContextFunc, baseURL string) error {
 	token, err := store.GetToken(baseURL)
 	if err != nil {
 		// Fall through to the local delete: we still want the keyring entry
@@ -68,6 +74,12 @@ func runLogout(ctx context.Context, outW, errW io.Writer, store tokenStore, revo
 
 	if err := store.DeleteToken(baseURL); err != nil {
 		return fmt.Errorf("remove auth token: %w", err)
+	}
+
+	// Remove the active context so the context-preferring readers no longer
+	// report a login. Best-effort: the legacy entry is already gone above.
+	if err := clearContext(); err != nil {
+		fmt.Fprintf(errW, "Warning: failed to clear current context: %v\n", err)
 	}
 
 	fmt.Fprintln(outW, "Logged out.")

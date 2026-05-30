@@ -152,6 +152,8 @@ func newAuthCmd() *cobra.Command {
 	cmd.AddCommand(newAuthStatusCmd())
 	cmd.AddCommand(newAuthListCmd())
 	cmd.AddCommand(newAuthRevokeCmd())
+	cmd.AddCommand(newAuthContextsCmd())
+	cmd.AddCommand(newAuthUseCmd())
 	return cmd
 }
 
@@ -167,7 +169,7 @@ func newAuthStatusCmd() *cobra.Command {
 				return err
 			}
 			return runAuthStatus(cmd.Context(), cmd.OutOrStdout(),
-				auth.NewStore(), defaultListTokens, api.AuthBaseURL())
+				auth.NewContextStore(), defaultListTokens, api.AuthBaseURL())
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
@@ -222,7 +224,7 @@ func newAuthListCmd() *cobra.Command {
 				return err
 			}
 			return runAuthList(cmd.Context(), cmd.OutOrStdout(),
-				auth.NewStore(), defaultListTokens, api.AuthBaseURL(), jsonOut)
+				auth.NewContextStore(), defaultListTokens, api.AuthBaseURL(), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print tokens as JSON")
@@ -532,8 +534,8 @@ func runAuthRevoke(
 
 	if current {
 		// Revoking our own token is just logout — reuse that path so behavior
-		// stays identical (best-effort revoke + local delete).
-		return runLogout(ctx, outW, errW, store, revokeCurrent, baseURL)
+		// stays identical (best-effort revoke + local delete + context clear).
+		return runLogout(ctx, outW, errW, store, revokeCurrent, auth.RemoveCurrentContext, baseURL)
 	}
 
 	if err := revokeByID(ctx, id); err != nil {

@@ -152,6 +152,114 @@ func TestLoginTokenForContext(t *testing.T) {
 	}
 }
 
+func TestContextStore_PrefersCurrentContextThenLegacy(t *testing.T) {
+	keyring.MockInit()
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	store := NewContextStore()
+
+	// No context yet: falls back to the legacy entry.
+	if err := store.SaveToken(api.AuthBaseURL(), "legacy-token"); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	legacyGot, err := store.GetToken(api.AuthBaseURL())
+	if err != nil {
+		t.Fatalf("GetToken (legacy): %v", err)
+	}
+	if legacyGot != "legacy-token" {
+		t.Fatalf("with no context, GetToken = %q, want legacy-token", legacyGot)
+	}
+
+	// Record a context: its token now wins over the legacy entry.
+	exp := time.Now().Add(time.Hour).Unix()
+	ctxToken := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
+	if _, err := RecordLoginContext(ctxToken); err != nil {
+		t.Fatalf("RecordLoginContext: %v", err)
+	}
+	got, err := store.GetToken(api.AuthBaseURL())
+	if err != nil {
+		t.Fatalf("GetToken: %v", err)
+	}
+	if got != ctxToken {
+		t.Fatal("with a current context, GetToken should return the context token")
+	}
+}
+
+func TestRemoveCurrentContext(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(time.Hour).Unix()
+	token := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
+	if _, err := RecordLoginContext(token); err != nil {
+		t.Fatalf("RecordLoginContext: %v", err)
+	}
+	if _, ok := CurrentContextToken(); !ok {
+		t.Fatal("precondition: expected a current context token")
+	}
+
+	if err := RemoveCurrentContext(); err != nil {
+		t.Fatalf("RemoveCurrentContext: %v", err)
+	}
+	if _, ok := CurrentContextToken(); ok {
+		t.Fatal("after RemoveCurrentContext, expected no current context token")
+	}
+
+	// Idempotent: a second call with nothing current is a no-op.
+	if err := RemoveCurrentContext(); err != nil {
+		t.Fatalf("second RemoveCurrentContext: %v", err)
+	}
+}
+
+func TestSetCurrentContext(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	// Two contexts from two cores; the second becomes current on login.
+	exp := time.Now().Add(time.Hour).Unix()
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp))); err != nil {
+		t.Fatalf("record a: %v", err)
+	}
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"alice","exp":%d}`, exp))); err != nil {
+		t.Fatalf("record b: %v", err)
+	}
+
+	all, current, err := Contexts()
+	if err != nil {
+		t.Fatalf("Contexts: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d contexts, want 2", len(all))
+	}
+	if current != "b.example.com" {
+		t.Fatalf("current = %q, want b.example.com (most recent login)", current)
+	}
+
+	// Switch back to the first.
+	if err := SetCurrentContext("a.example.com"); err != nil {
+		t.Fatalf("SetCurrentContext: %v", err)
+	}
+	_, current, err = Contexts()
+	if err != nil {
+		t.Fatalf("Contexts after switch: %v", err)
+	}
+	if current != "a.example.com" {
+		t.Fatalf("after switch, current = %q, want a.example.com", current)
+	}
+
+	// Unknown context errors.
+	if err := SetCurrentContext("nope"); err == nil {
+		t.Fatal("expected error switching to unknown context")
+	}
+}
+
 func TestRecordLoginContext_RejectsTokenWithoutIssuer(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
