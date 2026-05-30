@@ -216,6 +216,49 @@ func TestRemoveCurrentContext(t *testing.T) {
 	}
 }
 
+func TestRemoveAllContexts(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(time.Hour).Unix()
+	a, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), true)
+	if err != nil {
+		t.Fatalf("record a: %v", err)
+	}
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"bob","exp":%d}`, exp)), true); err != nil {
+		t.Fatalf("record b: %v", err)
+	}
+	if err := contexts.BindCluster(cfgDir, "cluster.example.com", a); err != nil {
+		t.Fatalf("bind cluster: %v", err)
+	}
+
+	n, err := RemoveAllContexts()
+	if err != nil {
+		t.Fatalf("RemoveAllContexts: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("removed %d, want 2", n)
+	}
+	f, err := contexts.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(f.Contexts) != 0 || f.CurrentContext != "" || len(f.ClusterContexts) != 0 {
+		t.Fatalf("expected fully cleared, got contexts=%d current=%q bindings=%d", len(f.Contexts), f.CurrentContext, len(f.ClusterContexts))
+	}
+
+	// Idempotent.
+	n2, err := RemoveAllContexts()
+	if err != nil {
+		t.Fatalf("second RemoveAllContexts: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second call removed %d, want 0", n2)
+	}
+}
+
 func TestRemoveCurrentContext_DoesNotSwitchToAnother(t *testing.T) {
 	cfgDir := t.TempDir()
 	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)

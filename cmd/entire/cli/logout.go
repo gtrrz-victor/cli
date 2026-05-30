@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
@@ -33,19 +34,54 @@ type clearContextFunc func() error
 
 func newLogoutCmd() *cobra.Command {
 	var insecureHTTPAuth bool
+	var all bool
 	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "Log out of Entire",
+		Long: "Log out of Entire.\n\n" +
+			"By default this removes the active login only. Other saved logins (contexts)\n" +
+			"remain and can still authenticate `git clone entire://…` against clusters they\n" +
+			"are bound to. Use --all to remove every saved login and its cluster bindings.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
 				return err
 			}
-			return runLogout(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				auth.NewContextStore(), defaultRevokeCurrentToken, auth.RemoveCurrentContext, api.AuthBaseURL())
+			outW, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			clearFn := auth.RemoveCurrentContext
+			if all {
+				clearFn = func() error { _, err := auth.RemoveAllContexts(); return err } //nolint:wrapcheck // RemoveAllContexts already returns a contextual error
+			}
+			if err := runLogout(cmd.Context(), outW, errW,
+				auth.NewContextStore(), defaultRevokeCurrentToken, clearFn, api.AuthBaseURL()); err != nil {
+				return err
+			}
+			if !all {
+				noteRemainingLogins(errW)
+			}
+			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Remove all saved logins (contexts) and their cluster bindings, not just the active one")
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 	return cmd
+}
+
+// noteRemainingLogins warns when other saved contexts survive a default
+// logout — they can still authenticate clone/push against clusters bound to
+// them, so "Logged out." alone would overstate the result.
+func noteRemainingLogins(errW io.Writer) {
+	all, _, err := auth.Contexts()
+	if err != nil || len(all) == 0 {
+		return
+	}
+	names := make([]string, 0, len(all))
+	for _, c := range all {
+		names = append(names, c.Name)
+	}
+	fmt.Fprintf(errW,
+		"Note: %d other saved login(s) remain and can still authenticate clones: %s\n"+
+			"Run `entire logout --all` to remove them, or `entire auth use <context>` to switch.\n",
+		len(all), strings.Join(names, ", "))
 }
 
 func defaultRevokeCurrentToken(ctx context.Context) error {

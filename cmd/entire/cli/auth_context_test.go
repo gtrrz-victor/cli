@@ -86,3 +86,28 @@ func TestWarnIfCrossCoreContext(t *testing.T) {
 		t.Fatalf("cross-core context should warn, got: %q", diff.String())
 	}
 }
+
+func TestNoteRemainingLogins(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	// No contexts: silent.
+	var empty bytes.Buffer
+	noteRemainingLogins(&empty)
+	if empty.Len() != 0 {
+		t.Fatalf("no remaining contexts should be silent, got %q", empty.String())
+	}
+
+	// A surviving context: names it and points at --all.
+	exp := time.Now().Add(time.Hour).Unix()
+	if _, err := auth.RecordLoginContext(makeContextJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	var buf bytes.Buffer
+	noteRemainingLogins(&buf)
+	if !strings.Contains(buf.String(), "core.example.com") || !strings.Contains(buf.String(), "--all") {
+		t.Fatalf("expected note naming the context and --all, got %q", buf.String())
+	}
+}

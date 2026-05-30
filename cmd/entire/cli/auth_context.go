@@ -11,12 +11,14 @@ import (
 
 // newAuthUseCmd switches the active login context.
 //
-// The active context determines which login `git clone entire://…` prefers
-// when a cluster has several. Control-plane commands (auth status/list/
-// revoke, org/project/repo/grant) currently target the configured auth host
-// (ENTIRE_AUTH_BASE_URL / the default) regardless of the active context's
-// core, so switching to a context on a *different* core does not yet
-// retarget them — auth use warns when that's the case.
+// For `git clone entire://…` the active context is only a fallback: a
+// cluster already bound to a context (cluster_contexts) keeps using that
+// binding, and the active context is consulted only the first time a
+// not-yet-bound cluster is resolved. Control-plane commands (auth status/
+// list/revoke, org/project/repo/grant) currently target the configured auth
+// host (ENTIRE_AUTH_BASE_URL / the default) regardless of the active
+// context's core, so switching to a context on a *different* core does not
+// yet retarget them — auth use warns when that's the case.
 func newAuthUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <context>",
@@ -53,8 +55,8 @@ func warnIfCrossCoreContext(errW io.Writer, name string) {
 			return
 		}
 		fmt.Fprintf(errW,
-			"Note: %q authenticates against %s, but control-plane commands still target %s.\n"+
-				"Cross-core control-plane switching isn't supported yet; `git clone entire://…` uses this context regardless.\n",
+			"Note: %q authenticates against %s, but control-plane commands still target %s — cross-core control-plane switching isn't supported yet.\n"+
+				"For `git clone entire://…`, a cluster already bound to another context keeps using it; the active context applies only to clusters not yet bound.\n",
 			name, c.CoreURL, authHost)
 		return
 	}
