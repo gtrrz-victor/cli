@@ -37,7 +37,7 @@ func TestRecordLoginContext_WritesContextAndToken(t *testing.T) {
 	exp := time.Now().Add(2 * time.Hour).Unix()
 	token := makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":%q,"exp":%d}`, coreURL, handle, exp))
 
-	name, err := RecordLoginContext(token)
+	name, err := RecordLoginContext(token, true)
 	if err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestContextStore_PrefersCurrentContextThenLegacy(t *testing.T) {
 	// Record a context: its token now wins over the legacy entry.
 	exp := time.Now().Add(time.Hour).Unix()
 	ctxToken := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := RecordLoginContext(ctxToken); err != nil {
+	if _, err := RecordLoginContext(ctxToken, true); err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
 	got, err := store.GetToken(api.AuthBaseURL())
@@ -196,7 +196,7 @@ func TestRemoveCurrentContext(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour).Unix()
 	token := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := RecordLoginContext(token); err != nil {
+	if _, err := RecordLoginContext(token, true); err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
 	if _, ok := CurrentContextToken(); !ok {
@@ -224,10 +224,10 @@ func TestSetCurrentContext(t *testing.T) {
 
 	// Two contexts from two cores; the second becomes current on login.
 	exp := time.Now().Add(time.Hour).Unix()
-	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp))); err != nil {
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
 		t.Fatalf("record a: %v", err)
 	}
-	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"alice","exp":%d}`, exp))); err != nil {
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"alice","exp":%d}`, exp)), true); err != nil {
 		t.Fatalf("record b: %v", err)
 	}
 
@@ -260,12 +260,109 @@ func TestSetCurrentContext(t *testing.T) {
 	}
 }
 
+func TestRecordLoginContext_SameCoreDifferentHandlesCoexist(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	const coreURL = "https://core.example.com"
+	exp := time.Now().Add(time.Hour).Unix()
+
+	aliceName, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":"alice","exp":%d}`, coreURL, exp)), true)
+	if err != nil {
+		t.Fatalf("record alice: %v", err)
+	}
+	bobName, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":"bob","exp":%d}`, coreURL, exp)), true)
+	if err != nil {
+		t.Fatalf("record bob: %v", err)
+	}
+
+	// Two distinct contexts for the same core — bob must not clobber alice.
+	if aliceName == bobName {
+		t.Fatalf("both logins got the same context name %q", aliceName)
+	}
+	if aliceName != "core.example.com" {
+		t.Fatalf("first login name = %q, want bare host core.example.com", aliceName)
+	}
+	if bobName != "bob@core.example.com" {
+		t.Fatalf("second login name = %q, want bob@core.example.com", bobName)
+	}
+
+	f, err := contexts.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := f.ContextsForIssuer(coreURL); len(got) != 2 {
+		t.Fatalf("contexts for issuer = %d, want 2", len(got))
+	}
+	if a := f.Find(aliceName); a == nil || a.Handle != "alice" {
+		t.Fatalf("alice context lost or wrong handle: %+v", a)
+	}
+
+	// Re-login as alice updates her context in place (no third entry).
+	again, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":"alice","exp":%d}`, coreURL, exp)), true)
+	if err != nil {
+		t.Fatalf("re-login alice: %v", err)
+	}
+	if again != aliceName {
+		t.Fatalf("re-login produced new name %q, want %q", again, aliceName)
+	}
+	reloaded, err := contexts.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(reloaded.Contexts) != 2 {
+		t.Fatalf("re-login created a duplicate; want 2 contexts")
+	}
+}
+
+func TestMigrateLegacyLoginContext_PreservesCurrentContext(t *testing.T) {
+	keyring.MockInit()
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(time.Hour).Unix()
+
+	// An existing, active context for one core.
+	active, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://active.example.com","handle":"alice","exp":%d}`, exp)), true)
+	if err != nil {
+		t.Fatalf("seed active context: %v", err)
+	}
+
+	// A legacy keyring login for a *different* core, not yet migrated.
+	legacy := makeJWT(t, fmt.Sprintf(`{"iss":"https://legacy.example.com","handle":"alice","exp":%d}`, exp))
+	if err := NewStore().SaveToken(api.AuthBaseURL(), legacy); err != nil {
+		t.Fatalf("seed legacy token: %v", err)
+	}
+
+	migrated, err := MigrateLegacyLoginContext()
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration to run")
+	}
+
+	// Migration recorded the legacy context but must NOT have switched away
+	// from the already-active one.
+	_, current, err := Contexts()
+	if err != nil {
+		t.Fatalf("Contexts: %v", err)
+	}
+	if current != active {
+		t.Fatalf("current_context = %q, want unchanged %q after migration", current, active)
+	}
+}
+
 func TestRecordLoginContext_RejectsTokenWithoutIssuer(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
 	token := makeJWT(t, `{"handle":"alice"}`)
-	if _, err := RecordLoginContext(token); err == nil {
+	if _, err := RecordLoginContext(token, true); err == nil {
 		t.Fatal("expected error for token without iss claim, got nil")
 	}
 }

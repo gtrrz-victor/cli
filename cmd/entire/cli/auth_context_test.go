@@ -38,7 +38,7 @@ func TestRunAuthContexts(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour).Unix()
 	token := makeContextJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := auth.RecordLoginContext(token); err != nil {
+	if _, err := auth.RecordLoginContext(token, true); err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
 

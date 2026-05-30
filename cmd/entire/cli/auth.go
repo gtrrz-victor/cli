@@ -497,8 +497,8 @@ func newAuthRevokeCmd() *cobra.Command {
 				return err
 			}
 			return runAuthRevoke(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				auth.NewStore(), defaultListTokens, defaultRevokeTokenByID, defaultRevokeCurrentToken,
-				api.AuthBaseURL(), id, revokeCurrent)
+				auth.NewContextStore(), defaultListTokens, defaultRevokeTokenByID, defaultRevokeCurrentToken,
+				auth.RemoveCurrentContext, api.AuthBaseURL(), id, revokeCurrent)
 		},
 	}
 	cmd.Flags().BoolVar(&revokeCurrent, "current", false, "Revoke the token used by this CLI and remove the local copy")
@@ -521,6 +521,7 @@ func runAuthRevoke(
 	list authTokenLister,
 	revokeByID authTokenRevoker,
 	revokeCurrent revokeCurrentFunc,
+	clearContext clearContextFunc,
 	baseURL, id string,
 	current bool,
 ) error {
@@ -535,7 +536,7 @@ func runAuthRevoke(
 	if current {
 		// Revoking our own token is just logout — reuse that path so behavior
 		// stays identical (best-effort revoke + local delete + context clear).
-		return runLogout(ctx, outW, errW, store, revokeCurrent, auth.RemoveCurrentContext, baseURL)
+		return runLogout(ctx, outW, errW, store, revokeCurrent, clearContext, baseURL)
 	}
 
 	if err := revokeByID(ctx, id); err != nil {
@@ -543,11 +544,15 @@ func runAuthRevoke(
 	}
 
 	// The list endpoint requires bearer auth, so a 401 here means the id we
-	// just revoked was the same one this CLI is using — the keychain entry is
-	// now stale and would otherwise produce confusing 401s on every command.
+	// just revoked was the same one this CLI is using — the local copy is now
+	// stale and would otherwise produce confusing 401s on every command, so
+	// remove both the legacy keyring entry and the active context.
 	if _, listErr := list(ctx); listErr != nil && api.IsHTTPErrorStatus(listErr, http.StatusUnauthorized) {
 		if delErr := store.DeleteToken(baseURL); delErr != nil {
 			return fmt.Errorf("revoked token %s but failed to remove local copy: %w", id, delErr)
+		}
+		if ctxErr := clearContext(); ctxErr != nil {
+			fmt.Fprintf(errW, "Warning: revoked token %s but failed to clear current context: %v\n", id, ctxErr)
 		}
 		fmt.Fprintf(outW, "Revoked token %s (this was your local token; removed from keychain).\n", id)
 		return nil

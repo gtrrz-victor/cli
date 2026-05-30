@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/entireio/auth-go/tokens"
@@ -23,7 +24,17 @@ const defaultContextTokenTTL = time.Hour
 // shared contexts.json credential model: it derives the issuer (core
 // URL), handle, and expiry from the token's own claims, stores the token
 // in the OS keyring under the entire-core:<issuer> service scheme entiredb
-// uses, and writes (or updates) the matching context — making it current.
+// uses, and writes (or updates) the matching context.
+//
+// Contexts are keyed by identity (core URL + handle): re-logging into the
+// same identity updates its context in place, while a second identity on
+// the same core gets its own context (named handle@host) instead of
+// clobbering the first.
+//
+// activate controls current_context: login passes true (the just-completed
+// login becomes active, kubectl use-context style); read-time migration
+// passes false so it never silently switches the user's active account —
+// it still sets current_context when none exists yet.
 //
 // This is the contexts.json half of login's dual-write: the legacy
 // entire-cli/<authBaseURL> keyring entry is still written by the caller so
@@ -33,7 +44,7 @@ const defaultContextTokenTTL = time.Hour
 //
 // Returns the context name on success. Errors are returned (not swallowed)
 // so the caller can warn; login still succeeds on the legacy entry.
-func RecordLoginContext(rawToken string) (string, error) {
+func RecordLoginContext(rawToken string, activate bool) (string, error) {
 	claims, err := tokens.ParseClaims(rawToken)
 	if err != nil {
 		return "", fmt.Errorf("parse login token claims: %w", err)
@@ -64,25 +75,59 @@ func RecordLoginContext(rawToken string) (string, error) {
 		return "", fmt.Errorf("store login token in keyring: %w", err)
 	}
 
-	name := contextNameForCoreURL(coreURL)
+	var name string
 	cfgDir := contexts.DefaultConfigDir()
 	if modErr := contexts.Modify(cfgDir, func(f *contexts.File) (bool, error) {
+		name = pickContextName(f, coreURL, handle)
 		f.Upsert(&contexts.Context{
 			Name:            name,
 			CoreURL:         coreURL,
 			Handle:          handle,
 			KeychainService: keychainService,
 		})
-		// The just-completed login becomes the active context (kubectl
-		// use-context semantics). Upsert only sets current when empty, so
-		// set it explicitly to cover re-login into an existing context.
-		f.CurrentContext = name
+		if activate || f.CurrentContext == "" {
+			f.CurrentContext = name
+		}
 		return true, nil
 	}); modErr != nil {
-		return "", fmt.Errorf("write context %q: %w", name, modErr)
+		return "", fmt.Errorf("write context: %w", modErr)
 	}
 
 	return name, nil
+}
+
+// pickContextName chooses the contexts.json name for an (coreURL, handle)
+// identity within f. An existing context for the same identity keeps its
+// name (re-login updates in place). A fresh identity prefers the bare core
+// host; if a *different* identity already holds that name, it's qualified
+// with the handle (handle@host) so the two don't collide — and, in the
+// pathological case that's taken too, a numeric suffix guarantees
+// uniqueness.
+func pickContextName(f *contexts.File, coreURL, handle string) string {
+	for _, c := range f.Contexts {
+		if sameIssuer(c.CoreURL, coreURL) && c.Handle == handle {
+			return c.Name
+		}
+	}
+	host := contextNameForCoreURL(coreURL)
+	if f.Find(host) == nil {
+		return host
+	}
+	qualified := handle + "@" + host
+	if f.Find(qualified) == nil {
+		return qualified
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", qualified, i)
+		if f.Find(candidate) == nil {
+			return candidate
+		}
+	}
+}
+
+// sameIssuer compares two core URLs ignoring a trailing slash.
+func sameIssuer(a, b string) bool {
+	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
 // MigrateLegacyLoginContext bridges users who logged in before the
@@ -115,7 +160,10 @@ func MigrateLegacyLoginContext() (migrated bool, err error) {
 	if len(f.ContextsForIssuer(claims.Issuer)) > 0 {
 		return false, nil // already represented
 	}
-	if _, err := RecordLoginContext(legacy); err != nil {
+	// activate=false: migrating an old login (e.g. on first `git clone`) must
+	// not silently switch the user's active context. RecordLoginContext still
+	// sets current_context when none exists yet.
+	if _, err := RecordLoginContext(legacy, false); err != nil {
 		return false, err
 	}
 	return true, nil
