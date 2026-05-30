@@ -24,7 +24,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
-	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/cmd/entire/cli/vercelconfig"
 	"github.com/entireio/cli/redact"
 
@@ -1509,72 +1508,6 @@ func DeleteBranchCLI(ctx context.Context, branchName string) error {
 	return nil
 }
 
-// DeleteRefCLI deletes an arbitrary ref using the git CLI.
-// Uses `git update-ref -d` instead of go-git's RemoveReference because go-git
-// ref deletion is unreliable with packed refs and worktrees.
-//
-// When expectedOID is non-empty, it is passed to `git update-ref -d <ref> <old-oid>`
-// as a compare-and-swap guard: git will refuse the deletion if the ref no longer
-// points to expectedOID, and ErrRefChanged is returned.
-//
-// Returns ErrRefNotFound if the ref does not exist, allowing callers to use
-// errors.Is for idempotent deletion patterns.
-func DeleteRefCLI(ctx context.Context, refName string, expectedOID string) error {
-	exists, _, err := refStateCLI(ctx, refName)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%w: %s", ErrRefNotFound, refName)
-	}
-
-	args := []string{"update-ref", "-d", refName}
-	if expectedOID != "" {
-		args = append(args, expectedOID)
-	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return classifyDeleteRefFailure(ctx, refName, expectedOID, output, err)
-	}
-	return nil
-}
-
-func classifyDeleteRefFailure(ctx context.Context, refName string, expectedOID string, output []byte, updateErr error) error {
-	baseErr := fmt.Errorf("failed to delete ref %s: %s: %w", refName, strings.TrimSpace(string(output)), updateErr)
-
-	exists, currentOID, stateErr := refStateCLI(ctx, refName)
-	if stateErr != nil {
-		return baseErr
-	}
-	if !exists {
-		return fmt.Errorf("%w: %s", ErrRefNotFound, refName)
-	}
-	if expectedOID != "" && currentOID != expectedOID {
-		return fmt.Errorf("%w: %s (expected %s)", ErrRefChanged, refName, expectedOID)
-	}
-
-	return baseErr
-}
-
-func refStateCLI(ctx context.Context, refName string) (exists bool, oid string, err error) {
-	check := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", refName)
-	if err := check.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return false, "", nil
-		}
-		return false, "", fmt.Errorf("failed to check ref %s: %w", refName, err)
-	}
-
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", refName)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return false, "", fmt.Errorf("failed to resolve ref %s: %s: %w", refName, strings.TrimSpace(string(output)), err)
-	}
-
-	return true, strings.TrimSpace(string(output)), nil
-}
-
 // branchExistsCLI checks if a branch exists using git CLI.
 // Returns nil if the branch exists, or an error if it does not.
 func branchExistsCLI(ctx context.Context, branchName string) error {
@@ -1640,24 +1573,6 @@ func collectUntrackedFiles(ctx context.Context) ([]string, error) {
 		}
 	}
 	return files, nil
-}
-
-// ExtractSessionIDFromCommit extracts the session ID from a commit's trailers.
-// It checks the Entire-Session trailer first, then falls back to extracting from
-// the metadata directory path in the Entire-Metadata trailer.
-// Returns empty string if no session ID is found.
-func ExtractSessionIDFromCommit(commit *object.Commit) string {
-	// Try Entire-Session trailer first
-	if sessionID, found := trailers.ParseSession(commit.Message); found {
-		return sessionID
-	}
-
-	// Try extracting from metadata directory (last path component)
-	if metadataDir, found := trailers.ParseMetadata(commit.Message); found {
-		return filepath.Base(metadataDir)
-	}
-
-	return ""
 }
 
 // NOTE: The following git tree helper functions have been moved to checkpoint/ package:
