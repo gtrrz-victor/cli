@@ -1,3 +1,22 @@
+// Command git-remote-entire is the git remote helper for entire:// URLs.
+//
+// Git resolves `git clone entire://host/project/repo` by exec'ing a binary
+// named git-remote-entire on PATH, handing it the remote-helper protocol on
+// stdin and reading responses from stdout. This is a small, dedicated
+// binary (no cobra command tree) that shares the protocol, transport, and
+// auth packages with the main entire CLI.
+//
+// IMPORTANT: nothing here may write to stdout except the helper protocol
+// itself — git parses stdout as a strict pkt-line stream, so a stray banner
+// or log line corrupts the transfer. Diagnostics go to stderr (and the
+// ENTIRE_DEBUG-gated debuglog).
+//
+// Authentication resolves the login context for the target cluster from the
+// shared contexts.json (an explicit cluster binding, else
+// /.well-known discovery matched against local contexts), then mints
+// repo-scoped tokens by exchanging that context's login JWT. A
+// pre-contexts.json login is migrated at read-time so existing users don't
+// have to re-authenticate.
 package main
 
 import (
@@ -7,7 +26,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,49 +36,26 @@ import (
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/httpclient"
 	"github.com/entireio/cli/internal/entireclient/repocreds"
+	"github.com/entireio/cli/internal/remotehelper"
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 	"github.com/entireio/cli/internal/remotehelper/githelper"
 	"github.com/entireio/cli/internal/remotehelper/replicas"
 	"github.com/entireio/cli/internal/remotehelper/transport"
 )
 
-// remoteHelperName is the git remote-helper binary name. Git resolves
-// `entire://` URLs by exec'ing a binary called git-remote-entire found on
-// PATH; we ship that as a symlink to the entire CLI and dispatch on
-// argv[0] so a single binary serves both roles (busybox/git style).
-const remoteHelperName = "git-remote-entire"
-
-// invokedAsRemoteHelper reports whether this process was launched under
-// the git-remote-entire name (via the shipped symlink). Detection is by
-// argv[0] basename, with a Windows .exe suffix tolerated.
-func invokedAsRemoteHelper(arg0 string) bool {
-	base := strings.TrimSuffix(filepath.Base(arg0), ".exe")
-	return base == remoteHelperName
+func main() {
+	os.Exit(run(os.Args))
 }
 
-// runRemoteHelper implements the git remote-helper protocol for
-// `entire://` URLs. Git invokes us as `git-remote-entire <remote> <url>`,
-// hands us the helper protocol on stdin, and expects responses on stdout.
-//
-// IMPORTANT: nothing on this path may write to stdout except the helper
-// protocol itself — git parses stdout as a strict pkt-line stream, so a
-// stray banner or log line corrupts the transfer. Diagnostics go to
-// stderr (and the ENTIRE_DEBUG-gated debuglog).
-//
-// Authentication resolves the login context for the target cluster from
-// the shared contexts.json (honoring an explicit cluster binding, else
-// /.well-known discovery), then mints repo-scoped tokens by exchanging
-// that context's login JWT. A pre-contexts.json login is migrated in
-// read-time so existing users don't have to re-authenticate.
-func runRemoteHelper(args []string) int {
+func run(args []string) int {
 	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: git-remote-entire <remote-name> <url>")
+		fmt.Fprintf(os.Stderr, "usage: %s <remote-name> <url>\n", remotehelper.BinaryName)
 		return 128
 	}
 
 	// Build info drives the agent string the helper advertises upstream.
 	versioninfo.Load()
-	githelper.Agent = remoteHelperName + "/" + versioninfo.Commit
+	githelper.Agent = remotehelper.BinaryName + "/" + versioninfo.Commit
 
 	rawURL := args[2]
 	parsedURL, err := url.Parse(rawURL)
@@ -76,7 +71,7 @@ func runRemoteHelper(args []string) int {
 		return 128
 	}
 
-	ctx, stop := installRemoteHelperSignals()
+	ctx, stop := installSignals()
 	defer stop()
 
 	skipTLS := os.Getenv("ENTIRE_TLS_SKIP_VERIFY") == "true"
@@ -152,9 +147,9 @@ func runRemoteHelper(args []string) int {
 	return 0
 }
 
-// gitActionFromRequest classifies a smart-HTTP request as "pull" or
-// "push" so the right repo-scoped token can be minted. Returns "" when
-// the endpoint isn't a recognised git smart-HTTP route.
+// gitActionFromRequest classifies a smart-HTTP request as "pull" or "push"
+// so the right repo-scoped token can be minted. Returns "" when the
+// endpoint isn't a recognised git smart-HTTP route.
 func gitActionFromRequest(req *http.Request) string {
 	path := req.URL.Path
 	switch req.Method {
@@ -178,12 +173,12 @@ func gitActionFromRequest(req *http.Request) string {
 	return ""
 }
 
-// installRemoteHelperSignals ties HTTP request lifetimes to the parent
-// git process. Ctrl-C delivers SIGINT to the whole foreground process
-// group (us included); cancelling ctx aborts in-flight transfers instead
-// of waiting out the read timeout. After the first signal we unhook so a
-// second Ctrl-C hits the runtime default and hard-exits.
-func installRemoteHelperSignals() (context.Context, context.CancelFunc) {
+// installSignals ties HTTP request lifetimes to the parent git process.
+// Ctrl-C delivers SIGINT to the whole foreground process group (us
+// included); cancelling ctx aborts in-flight transfers instead of waiting
+// out the read timeout. After the first signal we unhook so a second
+// Ctrl-C hits the runtime default and hard-exits.
+func installSignals() (context.Context, context.CancelFunc) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ctx.Done()
