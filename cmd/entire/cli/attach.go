@@ -60,11 +60,13 @@ type attachOptions struct {
 	entireSettings *settings.EntireSettings
 }
 
-func (opts attachOptions) mirrorsToV1CustomRef(ctx context.Context) bool {
+// committedRefs resolves the committed-ref topology for this attach, honoring
+// an injected EntireSettings when present and otherwise reading disk settings.
+func (opts attachOptions) committedRefs(ctx context.Context) cpkg.CommittedRefs {
 	if opts.entireSettings != nil {
-		return opts.entireSettings.MirrorsToV1CustomRef()
+		return cpkg.ResolveCommittedRefsFromSettings(opts.entireSettings)
 	}
-	return settings.MirrorsToV1CustomRef(ctx)
+	return cpkg.ResolveCommittedRefs(ctx)
 }
 
 func newAttachCmd() *cobra.Command {
@@ -316,9 +318,9 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return fmt.Errorf("failed to write checkpoint: %w", err)
 	}
 
-	if opts.mirrorsToV1CustomRef(ctx) {
-		if err := mirrorToV1CustomRef(repo); err != nil {
-			return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", paths.MetadataBranchName, paths.MetadataRefName, err)
+	if refs := opts.committedRefs(ctx); refs.HasMirror() {
+		if err := mirrorToV1CustomRef(refs, repo); err != nil {
+			return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
 		}
 	}
 
