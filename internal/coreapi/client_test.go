@@ -1,9 +1,14 @@
 package coreapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/ogen-go/ogen/ogenerrors"
 )
 
 func TestAPIError(t *testing.T) {
@@ -64,5 +69,57 @@ func TestAPIError(t *testing.T) {
 				t.Errorf("APIError() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// bearerOnlySource mirrors the CLI's bearerSource contract: a fixed
+// bearer token, and ErrSkipClientSecurity for sessionAuth so the
+// generated middleware does NOT add a `Cookie: entire_session=` header.
+// Used by TestBearerOnlySource_NoCookieOnTheWire to nail down the
+// "bearer-only, no cookie" contract at the HTTP layer.
+type bearerOnlySource struct{}
+
+func (bearerOnlySource) BearerAuth(context.Context, OperationName) (BearerAuth, error) {
+	return BearerAuth{Token: "test-bearer"}, nil
+}
+
+func (bearerOnlySource) SessionAuth(context.Context, OperationName) (SessionAuth, error) {
+	return SessionAuth{}, ogenerrors.ErrSkipClientSecurity
+}
+
+// TestBearerOnlySource_NoCookieOnTheWire documents the SessionAuth
+// empty-value contract by checking the wire: any operation issued by a
+// Client built with a SessionAuth-skipping source must NOT carry a
+// Cookie header. (ogen's securitySessionAuth unconditionally calls
+// req.AddCookie, so returning SessionAuth{} with a nil error would send
+// an empty `entire_session=` cookie; only ErrSkipClientSecurity prevents
+// the cookie from being added.)
+func TestBearerOnlySource_NoCookieOnTheWire(t *testing.T) {
+	t.Parallel()
+
+	var cookieHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookieHeader = r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		// Minimal valid ListOrgMembersOutputBody payload so the response
+		// decoder doesn't blow up; we only care about the inbound headers.
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"members":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := NewClient(srv.URL, bearerOnlySource{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	// ListOrgMembers is a simple GET that exercises the security
+	// middleware; the result itself is irrelevant to this test.
+	if _, err := c.ListOrgMembers(context.Background(), ListOrgMembersParams{OrgId: "01H000000000000000000000A1"}); err != nil {
+		t.Fatalf("ListOrgMembers: %v", err)
+	}
+
+	if cookieHeader != "" {
+		t.Errorf("outbound Cookie header = %q, want empty (bearer-only contract)", cookieHeader)
 	}
 }
