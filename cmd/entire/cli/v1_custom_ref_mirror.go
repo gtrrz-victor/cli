@@ -31,7 +31,7 @@ func mirrorToV1CustomRef(ctx context.Context, repo *git.Repository) error {
 	}
 	customRef := plumbing.NewHashReference(plumbing.ReferenceName(paths.MetadataRefName), v1Ref.Hash())
 	if err := repo.Storer.SetReference(customRef); err != nil {
-		return fmt.Errorf("advance v1 custom ref %s: %w", paths.MetadataRefName, err)
+		return fmt.Errorf("set ref: %w", err)
 	}
 	return nil
 }
