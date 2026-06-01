@@ -76,11 +76,28 @@ func TestSyncV1CustomRefForRead_SeedsWhenMissing(t *testing.T) {
 	h := commitFile(t, repo, dir, "f.txt", "v1", "init")
 	setV1Branch(t, repo, h)
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
+	syncV1CustomRefForRead(context.Background(), repo)
 
-	require.True(t, synced, "custom ref sync should succeed")
 	got, ok := customRefHash(t, repo)
 	require.True(t, ok, "custom ref should be seeded from v1")
+	assert.Equal(t, h, got)
+}
+
+func TestSyncV1CustomRefForRead_SeedsFromOriginWhenLocalV1Missing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	h := commitFile(t, repo, dir, "f.txt", "v1", "init")
+	// Only the origin remote-tracking branch exists (fresh clone), no local v1.
+	require.NoError(t, repo.Storer.SetReference(
+		plumbing.NewHashReference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), h)))
+
+	syncV1CustomRefForRead(context.Background(), repo)
+
+	got, ok := customRefHash(t, repo)
+	require.True(t, ok, "custom ref should be seeded from origin v1 when local v1 is missing")
 	assert.Equal(t, h, got)
 }
 
@@ -94,9 +111,8 @@ func TestSyncV1CustomRefForRead_NoopWhenEqual(t *testing.T) {
 	setV1Branch(t, repo, h)
 	setCustomRefHash(t, repo, h)
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
+	syncV1CustomRefForRead(context.Background(), repo)
 
-	require.True(t, synced, "equal refs should be usable for reads")
 	got, _ := customRefHash(t, repo)
 	assert.Equal(t, h, got)
 }
@@ -113,9 +129,8 @@ func TestSyncV1CustomRefForRead_AdvancesWhenAncestor(t *testing.T) {
 	setV1Branch(t, repo, newHash)
 	require.NotEqual(t, old, newHash)
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
+	syncV1CustomRefForRead(context.Background(), repo)
 
-	require.True(t, synced, "ancestor custom ref should advance for reads")
 	got, _ := customRefHash(t, repo)
 	assert.Equal(t, newHash, got, "custom ref should advance to the v1 tip")
 }
@@ -133,30 +148,28 @@ func TestSyncV1CustomRefForRead_LeavesNonAncestorRef(t *testing.T) {
 	setV1Branch(t, repo, first)
 	setCustomRefHash(t, repo, second)
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
+	syncV1CustomRefForRead(context.Background(), repo)
 
-	require.False(t, synced, "non-ancestor custom ref should not be used for reads")
 	got, _ := customRefHash(t, repo)
 	assert.Equal(t, second, got, "non-ancestor custom ref must not be rewound")
 }
 
-func TestSyncV1CustomRefForRead_V1MissingNoOp(t *testing.T) {
+func TestSyncV1CustomRefForRead_NoV1TipNoOp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
 	commitFile(t, repo, dir, "f.txt", "v1", "init")
-	// No v1 metadata branch set.
+	// No local or origin v1 metadata branch set.
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
+	syncV1CustomRefForRead(context.Background(), repo)
 
-	require.False(t, synced, "missing v1 branch should fall back to the v1 store")
 	_, ok := customRefHash(t, repo)
-	assert.False(t, ok, "custom ref must not be created when the v1 branch is absent")
+	assert.False(t, ok, "custom ref must not be created when no v1 tip is available")
 }
 
-func TestSyncV1CustomRefForRead_WriteFailureReturnsFalse(t *testing.T) {
+func TestSyncV1CustomRefForRead_WriteFailureLeavesRefUnset(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
@@ -165,10 +178,14 @@ func TestSyncV1CustomRefForRead_WriteFailureReturnsFalse(t *testing.T) {
 	h := commitFile(t, repo, dir, "f.txt", "v1", "init")
 	setV1Branch(t, repo, h)
 
+	// Block creation of refs/entire/* by occupying the path with a file.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "refs", "entire"), []byte("blocked"), 0o644))
 
-	synced := syncV1CustomRefForRead(context.Background(), repo)
-	require.False(t, synced, "blocked custom-ref write should force v1 fallback")
+	// Must not panic; the custom ref simply stays unset.
+	syncV1CustomRefForRead(context.Background(), repo)
+
+	_, ok := customRefHash(t, repo)
+	assert.False(t, ok, "custom ref must not exist when the write was blocked")
 }
 
 // writeSettings writes .entire/settings.json with the given checkpoints_version
@@ -240,8 +257,13 @@ func TestNewCommittedReadStore_ReadsMirroredData(t *testing.T) {
 	assert.Equal(t, v1Summary, v11Summary)
 }
 
+// TestNewCommittedReadStore_ReadsV11ForRemoteOnlyMetadata verifies that on a
+// repo whose v1 metadata exists only as origin/entire/checkpoints/v1 (no local
+// v1 branch), v1.1 mode seeds the custom ref from the remote-tracking tip and
+// reads through the v1.1 ref — without falling back to a v1 store.
+//
 // Not parallel: uses t.Chdir().
-func TestNewCommittedReadStore_FallsBackToV1ForRemoteOnlyMetadata(t *testing.T) {
+func TestNewCommittedReadStore_ReadsV11ForRemoteOnlyMetadata(t *testing.T) {
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	repo, err := git.PlainOpen(dir)
@@ -261,6 +283,8 @@ func TestNewCommittedReadStore_FallsBackToV1ForRemoteOnlyMetadata(t *testing.T) 
 		AuthorEmail:  "test@test.com",
 	}))
 
+	// Move the v1 metadata to origin-only: copy the local branch to the remote
+	// tracking ref, then remove the local branch.
 	v1RefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 	v1Ref, err := repo.Reference(v1RefName, true)
 	require.NoError(t, err)
@@ -269,7 +293,8 @@ func TestNewCommittedReadStore_FallsBackToV1ForRemoteOnlyMetadata(t *testing.T) 
 	require.NoError(t, repo.Storer.RemoveReference(v1RefName))
 
 	readStore := NewCommittedReadStore(context.Background(), repo)
-	require.Equal(t, plumbing.NewBranchReferenceName(paths.MetadataBranchName), readStore.CommittedReadRef())
+	require.Equal(t, plumbing.ReferenceName(paths.MetadataRefName), readStore.CommittedReadRef(),
+		"v1.1 mode must read through the custom ref, not fall back to v1")
 
 	summary, err := readStore.ReadCommitted(context.Background(), cpID)
 	require.NoError(t, err)
@@ -277,8 +302,12 @@ func TestNewCommittedReadStore_FallsBackToV1ForRemoteOnlyMetadata(t *testing.T) 
 	assert.Equal(t, cpID, summary.CheckpointID)
 }
 
+// TestNewCommittedReadStore_BindsV11WhenSyncFails verifies that when the v1.1
+// custom ref cannot be written (sync failure), v1.1 mode still binds reads to
+// the custom ref rather than falling back to v1.
+//
 // Not parallel: uses t.Chdir().
-func TestNewCommittedReadStore_FallsBackToV1WhenCustomRefWriteFails(t *testing.T) {
+func TestNewCommittedReadStore_BindsV11WhenSyncFails(t *testing.T) {
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	repo, err := git.PlainOpen(dir)
@@ -297,19 +326,25 @@ func TestNewCommittedReadStore_FallsBackToV1WhenCustomRefWriteFails(t *testing.T
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
+	// Block creation of the v1.1 custom ref so the sync cannot seed it.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".git", "refs", "entire"), []byte("blocked"), 0o644))
 
 	readStore := NewCommittedReadStore(context.Background(), repo)
-	require.Equal(t, plumbing.NewBranchReferenceName(paths.MetadataBranchName), readStore.CommittedReadRef())
+	require.Equal(t, plumbing.ReferenceName(paths.MetadataRefName), readStore.CommittedReadRef(),
+		"v1.1 mode must not fall back to v1 even when the custom ref cannot be synced")
 
+	// With no v1.1 ref available and no v1 fallback, the read finds nothing
+	// rather than silently returning the v1 checkpoint.
 	summary, err := readStore.ReadCommitted(context.Background(), cpID)
 	require.NoError(t, err)
-	require.NotNil(t, summary)
-	assert.Equal(t, cpID, summary.CheckpointID)
+	assert.Nil(t, summary, "read must not fall back to v1 when the custom ref is unavailable")
 }
 
+// TestNewCommittedReadStore_BindsV11WhenCustomRefDiverges verifies that a
+// diverged custom ref is read as-is (bound to v1.1), never falling back to v1.
+//
 // Not parallel: uses t.Chdir().
-func TestNewCommittedReadStore_FallsBackToV1WhenCustomRefDiverges(t *testing.T) {
+func TestNewCommittedReadStore_BindsV11WhenCustomRefDiverges(t *testing.T) {
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	repo, err := git.PlainOpen(dir)
@@ -328,13 +363,16 @@ func TestNewCommittedReadStore_FallsBackToV1WhenCustomRefDiverges(t *testing.T) 
 		AuthorName:   "Test",
 		AuthorEmail:  "test@test.com",
 	}))
+	// Point the custom ref at an unrelated commit that is not an ancestor of v1.
 	setCustomRefHash(t, repo, divergedHash)
 
 	readStore := NewCommittedReadStore(context.Background(), repo)
-	require.Equal(t, plumbing.NewBranchReferenceName(paths.MetadataBranchName), readStore.CommittedReadRef())
+	require.Equal(t, plumbing.ReferenceName(paths.MetadataRefName), readStore.CommittedReadRef(),
+		"v1.1 mode must read the diverged custom ref, not fall back to v1")
 
+	// The checkpoint lives on v1, not on the diverged custom ref, so the v1.1
+	// read does not find it (no v1 fallback).
 	summary, err := readStore.ReadCommitted(context.Background(), cpID)
 	require.NoError(t, err)
-	require.NotNil(t, summary)
-	assert.Equal(t, cpID, summary.CheckpointID)
+	assert.Nil(t, summary, "diverged custom ref read must not fall back to v1")
 }
