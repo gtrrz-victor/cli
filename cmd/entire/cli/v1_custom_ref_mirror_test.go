@@ -27,8 +27,7 @@ func (s setReferenceErrorStorer) SetReference(*plumbing.Reference) error {
 	return s.err
 }
 
-// v1CustomRefs returns the v1 custom-ref mirror topology (v1 branch primary,
-// v1 custom ref mirror) that these mirror tests exercise.
+// v1CustomRefs returns the v1.1 mirror topology these tests exercise.
 func v1CustomRefs() checkpoint.CommittedRefs {
 	return checkpoint.ResolveCommittedRefsFromSettings(&settings.EntireSettings{
 		StrategyOptions: map[string]any{"checkpoints_version": "1.1"},

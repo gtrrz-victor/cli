@@ -11,18 +11,14 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 )
 
-// NewCommittedReadStore returns a GitStore for reading committed checkpoints,
-// bound to the read ref of the resolved committed-ref topology: the local-only
-// v1.1 custom ref when checkpoints_version 1.1 is enabled (no v1 fallback),
-// else the v1 branch.
+// NewCommittedReadStore returns a GitStore bound to the topology's read ref.
 func NewCommittedReadStore(ctx context.Context, repo *git.Repository) *GitStore {
 	return NewGitStoreWithRef(repo, ResolveCommittedRefs(ctx).Read)
 }
 
-// SyncCommittedReadRef advances the mirror ref to the primary tip before a read,
-// a no-op unless the topology has a mirror (checkpoints_version 1.1). The mirror
-// is local-only, so a git pull updates the primary but not the mirror; this
-// keeps it current. Best-effort.
+// SyncCommittedReadRef advances the mirror ref to the primary tip before a read
+// so a git pull (which updates the primary but not the local-only mirror) is
+// reflected. No-op without a mirror. Best-effort.
 func SyncCommittedReadRef(ctx context.Context, repo *git.Repository) {
 	refs := ResolveCommittedRefs(ctx)
 	if !refs.HasMirror() {

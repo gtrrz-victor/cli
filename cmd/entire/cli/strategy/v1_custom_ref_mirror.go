@@ -10,15 +10,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 )
 
-// mirrorMetadataToV1CustomRef advances the committed-ref topology's mirror
-// (today refs/entire/checkpoints/v1.1) to the primary's current commit (today
-// the v1 metadata branch) when a mirror is configured (checkpoints_version
-// "1.1").
-//
-// The primary stays the source of truth; the mirror is a local-only ref sharing
-// the primary's exact commit — it is never pushed. Call only after a successful
-// primary committed write; a mirror failure must not affect that write, so
-// problems are logged, not returned.
+// mirrorMetadataToV1CustomRef advances the topology's mirror to the primary's
+// commit when a mirror is configured. Call after a successful primary write; a
+// mirror failure must not affect that write, so problems are logged, not returned.
 func mirrorMetadataToV1CustomRef(ctx context.Context, repo *git.Repository) {
 	refs := checkpoint.ResolveCommittedRefs(ctx)
 	if !refs.HasMirror() {

@@ -9,87 +9,52 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
-// TestResolveCommittedRefs covers the committed-ref topology across
-// checkpoints_version values. Mirrors settings.TestMirrorsToV1CustomRef: only
-// the JSON string "1.1" opts into the v1.1 mirror; everything else is v1-only.
-//
-// Not parallel: uses t.Chdir() so settings.Load resolves the test repo.
+// Only the JSON string "1.1" opts into the v1.1 mirror; everything else is
+// v1-only. Not parallel: uses t.Chdir() so settings.Load resolves the test repo.
 func TestResolveCommittedRefs(t *testing.T) {
+	v1, custom := v1BranchRef(), customRef()
 	tests := []struct {
-		name       string
-		version    string // value placed at strategy_options.checkpoints_version; "" omits it
-		wantMirror bool
+		name    string
+		version string // checkpoints_version value; "" omits it
+		want    CommittedRefs
 	}{
-		{"unset is v1 only", "", false},
-		{"string 1.1 opts into mirror", `"1.1"`, true},
-		{"string 1 is v1 only", `"1"`, false},
-		{"numeric 1 is v1 only", `1`, false},
-		{"numeric 1.1 is v1 only (string only)", `1.1`, false},
-		{"garbage is v1 only", `"abc"`, false},
+		{"unset", "", CommittedRefs{Primary: v1, Read: v1}},
+		{"string 1.1", `"1.1"`, CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
+		{"string 1", `"1"`, CommittedRefs{Primary: v1, Read: v1}},
+		{"numeric 1", `1`, CommittedRefs{Primary: v1, Read: v1}},
+		{"numeric 1.1 (string only)", `1.1`, CommittedRefs{Primary: v1, Read: v1}},
+		{"garbage", `"abc"`, CommittedRefs{Primary: v1, Read: v1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Chdir(dir)
 			writeSettings(t, dir, tt.version)
-
-			refs := ResolveCommittedRefs(context.Background())
-
-			// Primary is always the v1 branch in the mirror-first phase.
-			assert.Equal(t, v1BranchRef(), refs.Primary, "Primary")
-			assert.Equal(t, tt.wantMirror, refs.HasMirror(), "HasMirror")
-
-			if tt.wantMirror {
-				assert.Equal(t, customRef(), refs.Read, "Read")
-				assert.Equal(t, customRef(), refs.Mirror, "Mirror")
-				// Invariant: with a mirror, reads resolve against it.
-				assert.Equal(t, refs.Mirror, refs.Read, "Read==Mirror invariant")
-			} else {
-				assert.Equal(t, v1BranchRef(), refs.Read, "Read")
-				assert.Empty(t, refs.Mirror, "Mirror")
-				// Invariant: without a mirror, reads resolve against Primary.
-				assert.Equal(t, refs.Primary, refs.Read, "Read==Primary invariant")
-			}
+			assert.Equal(t, tt.want, ResolveCommittedRefs(context.Background()))
 		})
 	}
 }
 
-// TestResolveCommittedRefsFromSettings covers resolution from an already-loaded
-// settings object (the path attach uses for an injected EntireSettings),
-// including the nil case.
 func TestResolveCommittedRefsFromSettings(t *testing.T) {
 	t.Parallel()
+	v1, custom := v1BranchRef(), customRef()
+	version := func(v string) *settings.EntireSettings {
+		return &settings.EntireSettings{StrategyOptions: map[string]any{"checkpoints_version": v}}
+	}
 	tests := []struct {
-		name       string
-		settings   *settings.EntireSettings
-		wantMirror bool
+		name     string
+		settings *settings.EntireSettings
+		want     CommittedRefs
 	}{
-		{"nil settings is v1 only", nil, false},
-		{"empty settings is v1 only", &settings.EntireSettings{}, false},
-		{
-			"checkpoints_version 1.1 opts into mirror",
-			&settings.EntireSettings{StrategyOptions: map[string]any{"checkpoints_version": "1.1"}},
-			true,
-		},
-		{
-			"checkpoints_version 1 is v1 only",
-			&settings.EntireSettings{StrategyOptions: map[string]any{"checkpoints_version": "1"}},
-			false,
-		},
+		{"nil", nil, CommittedRefs{Primary: v1, Read: v1}},
+		{"empty", &settings.EntireSettings{}, CommittedRefs{Primary: v1, Read: v1}},
+		{"1.1", version("1.1"), CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
+		{"1", version("1"), CommittedRefs{Primary: v1, Read: v1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			refs := ResolveCommittedRefsFromSettings(tt.settings)
-			assert.Equal(t, v1BranchRef(), refs.Primary, "Primary")
-			assert.Equal(t, tt.wantMirror, refs.HasMirror(), "HasMirror")
-			if tt.wantMirror {
-				assert.Equal(t, customRef(), refs.Mirror, "Mirror")
-				assert.Equal(t, customRef(), refs.Read, "Read")
-			} else {
-				assert.Empty(t, refs.Mirror, "Mirror")
-				assert.Equal(t, v1BranchRef(), refs.Read, "Read")
-			}
+			assert.Equal(t, tt.want, ResolveCommittedRefsFromSettings(tt.settings))
 		})
 	}
 }

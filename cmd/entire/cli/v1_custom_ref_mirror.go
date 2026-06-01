@@ -10,13 +10,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 )
 
-// mirrorToV1CustomRef sets the committed-ref topology's mirror (today
-// refs/entire/checkpoints/v1.1) to the primary's tip (today the v1 metadata
-// branch), returning errors so callers can surface them. The primary is the
-// source of truth; the mirror is a strict local mirror, so this force-overwrites
-// rather than safely advancing. Callers gate on refs.HasMirror(). The hook-side
-// equivalent (strategy.mirrorMetadataToV1CustomRef) logs errors instead of
-// returning them.
+// mirrorToV1CustomRef force-sets the topology's mirror to the primary's tip,
+// returning errors so callers can surface them. Callers gate on refs.HasMirror().
+// The hook-side equivalent (strategy.mirrorMetadataToV1CustomRef) logs instead.
 func mirrorToV1CustomRef(refs checkpoint.CommittedRefs, repo *git.Repository) error {
 	primaryRef, err := repo.Reference(refs.Primary, true)
 	if err != nil {

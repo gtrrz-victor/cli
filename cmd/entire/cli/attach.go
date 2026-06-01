@@ -60,8 +60,7 @@ type attachOptions struct {
 	entireSettings *settings.EntireSettings
 }
 
-// committedRefs resolves the committed-ref topology for this attach, honoring
-// an injected EntireSettings when present and otherwise reading disk settings.
+// committedRefs resolves the topology, honoring an injected EntireSettings.
 func (opts attachOptions) committedRefs(ctx context.Context) cpkg.CommittedRefs {
 	if opts.entireSettings != nil {
 		return cpkg.ResolveCommittedRefsFromSettings(opts.entireSettings)
