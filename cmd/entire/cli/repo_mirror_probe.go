@@ -67,8 +67,13 @@ func parseGitHubURL(rawURL string) (owner, repo string, err error) {
 }
 
 // probeInterval is the cadence between info/refs probes during the
-// clone wait.
-const probeInterval = 2 * time.Second
+// clone wait. minReauthInterval floors how often we'll re-mint a
+// repo-scoped token after a 401: STS rate-limits or auth flapping
+// during a long wait shouldn't be amplified by the 2s probe cadence.
+const (
+	probeInterval     = 2 * time.Second
+	minReauthInterval = 30 * time.Second
+)
 
 // maxProbeBytes bounds the smart-HTTP info/refs body read so a
 // pathological or misbehaving server can't make us allocate without
@@ -110,7 +115,9 @@ var probeClient = &http.Client{
 // Repo-scoped pull tokens are short-lived (minutes) while the default wait
 // is 30m, so a single token can't cover the whole wait. The loop re-mints
 // from the (long-lived) login token whenever a probe comes back 401,
-// rather than minting once up front.
+// rather than minting once up front. Re-mints are floored at
+// minReauthInterval so a flapping STS can't be amplified into a re-mint
+// every probeInterval ticks.
 func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, repo string, timeout time.Duration) error {
 	repoSlug := "/gh/" + owner + "/" + repo
 	checkURL := fmt.Sprintf("https://%s%s/info/refs?service=git-upload-pack", clusterHost, repoSlug)
@@ -122,6 +129,7 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 	if err != nil {
 		return fmt.Errorf("authorize clone probe: %w", err)
 	}
+	lastMint := time.Now()
 
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -145,14 +153,22 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 			return nil
 		case status == http.StatusUnauthorized:
 			// The repo-scoped token expired mid-wait; mint a fresh one from
-			// the login token and re-probe after the usual interval (no dot,
-			// since this is a token refresh, not clone progress).
-			if token, err = mintToken(); err != nil {
+			// the login token (no dot, since this is a token refresh, not
+			// clone progress). Skip the re-mint if we just refreshed —
+			// otherwise an STS hiccup that 401s every probe would mint on
+			// every probeInterval tick.
+			if since := time.Since(lastMint); since < minReauthInterval {
+				break
+			}
+			newToken, mintErr := mintToken()
+			if mintErr != nil {
 				if cloning {
 					fmt.Fprintln(out)
 				}
-				return fmt.Errorf("re-authorize clone probe: %w", err)
+				return fmt.Errorf("re-authorize clone probe: %w", mintErr)
 			}
+			token = newToken
+			lastMint = time.Now()
 		default:
 			if !cloning {
 				fmt.Fprint(out, "  cloning")
