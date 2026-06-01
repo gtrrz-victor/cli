@@ -12,7 +12,9 @@ import (
 // ExposedComposeSynthesisPrompt exposes composeSynthesisPrompt for
 // package-external tests (synthesis_prompt_test.go, synthesis_sink_test.go).
 // Only compiled during `go test`.
-var ExposedComposeSynthesisPrompt = composeSynthesisPrompt
+func ExposedComposeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string) string {
+	return composeSynthesisPrompt(summary, perRunPrompt, "", "")
+}
 
 // SinkComposeInputs is the test-facing alias for multiAgentSinkInputs.
 // It lets external tests drive composeMultiAgentSinks with explicit isTTY

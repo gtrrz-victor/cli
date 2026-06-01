@@ -84,12 +84,23 @@ type EntireSettings struct {
 	// Redaction configures PII redaction behavior for transcripts and metadata.
 	Redaction *RedactionSettings `json:"redaction,omitempty"`
 
-	// Review maps agent name (e.g. "claude-code") to the review config for
-	// that agent. When empty, `entire review` triggers the first-run picker.
+	// ReviewProfiles maps profile names (e.g. "general", "security") to
+	// named review setups. `entire review` runs one profile: its canonical task
+	// is fanned out to the configured agents, then an optional master agent
+	// consolidates the worker reports.
+	ReviewProfiles map[string]ReviewProfileConfig `json:"review_profiles,omitempty"`
+
+	// ReviewDefaultProfile is the profile used by `entire review` when no
+	// profile is supplied. If empty, `general` is used when present, otherwise
+	// the single configured profile is used.
+	ReviewDefaultProfile string `json:"review_default_profile,omitempty"`
+
+	// Deprecated: legacy pre-profile review settings. Kept so old config files
+	// still parse, but `entire review` no longer reads this field.
 	Review map[string]ReviewConfig `json:"review,omitempty"`
 
-	// ReviewFixAgent is the default agent used when applying aggregate or
-	// multi-agent review findings with `entire review --fix`.
+	// Deprecated: legacy fix-agent preference. Kept for `entire review --fix`
+	// until fix selection is profile-aware.
 	ReviewFixAgent string `json:"review_fix_agent,omitempty"`
 
 	// Investigate holds configuration for `entire investigate`. Empty means
@@ -137,14 +148,13 @@ type EntireSettings struct {
 // same clone see the same preferences. Not committed because the file lives
 // inside .git/.
 type ClonePreferences struct {
+	ReviewProfiles       map[string]ReviewProfileConfig `json:"review_profiles,omitempty"`
+	ReviewDefaultProfile string                         `json:"review_default_profile,omitempty"`
+
+	// Deprecated: legacy pre-profile review settings. Kept so old preference
+	// files parse, but new review setup writes ReviewProfiles instead.
 	Review         map[string]ReviewConfig `json:"review,omitempty"`
 	ReviewFixAgent string                  `json:"review_fix_agent,omitempty"`
-
-	// ReviewMigrationDismissed records that the user declined the one-shot
-	// migration of review keys from project settings to clone-local prefs.
-	// Once true, `entire review` stops prompting on every invocation; the
-	// user can re-enable by editing this file or deleting the key.
-	ReviewMigrationDismissed bool `json:"review_migration_dismissed,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
@@ -236,26 +246,55 @@ func (s *EntireSettings) SummaryTimeoutValue() time.Duration {
 	return time.Duration(s.SummaryTimeoutSeconds) * time.Second
 }
 
-// ReviewConfig holds the per-agent review configuration. Both fields are
-// optional; together they describe what `entire review` should ask the
-// agent to do.
+// ReviewProfileConfig is a named review setup. The profile-level Task is the
+// canonical task every worker agent is asked to run; per-agent ReviewConfig
+// entries adapt that task to agent-specific mechanics such as slash commands
+// or additional instructions. Master names the agent that consolidates worker
+// outputs into the final report.
 //
-// Precedence when composing the review prompt sent to the agent:
-//   - If Prompt is non-empty, it is used verbatim.
-//   - Otherwise, Skills are composed into a default template
-//     ("Please run these review skills in order: 1. /X 2. /Y").
+// Example:
 //
-// Skills are always recorded on the checkpoint metadata regardless of
-// which path composed the prompt — they're the structured, queryable
-// tag alongside ReviewPrompt (which is the ground truth).
+//	"review_profiles": {
+//	  "security": {
+//	    "task": "Review this change for auth, injection, secrets, and privilege-boundary bugs.",
+//	    "agents": {
+//	      "claude-code": {"skills": ["/security-review"]},
+//	      "codex": {"skills": ["/review"], "prompt": "Focus on security."}
+//	    },
+//	    "master": "claude-code"
+//	  }
+//	}
+//
+// MasterModel is an optional model hint passed to the master agent's text
+// generation API.
+// ReviewProfileConfig is intentionally small: the review package owns built-in
+// default task text for conventional profile names like "general".
+type ReviewProfileConfig struct {
+	Task        string                  `json:"task,omitempty"`
+	Agents      map[string]ReviewConfig `json:"agents,omitempty"`
+	Master      string                  `json:"master,omitempty"`
+	MasterModel string                  `json:"master_model,omitempty"`
+}
+
+// IsZero reports whether the profile is effectively unset.
+func (c ReviewProfileConfig) IsZero() bool {
+	return c.Task == "" && len(c.Agents) == 0 && c.Master == "" && c.MasterModel == ""
+}
+
+// ReviewConfig holds the per-agent configuration within a review profile.
+// Both fields are optional; together they describe how that specific agent
+// should execute the profile's canonical task.
+//
+// Skills are agent-specific invocations passed before the task. Prompt is
+// additional agent-specific instruction appended after the profile task; it is
+// no longer a verbatim replacement for the whole review prompt.
 type ReviewConfig struct {
 	// Skills is the list of slash-prefixed skill invocations configured
 	// for this agent. May be empty when Prompt carries the full request.
 	Skills []string `json:"skills,omitempty"`
 
-	// Prompt, when non-empty, carries saved review instructions. When
-	// Skills is non-empty it is appended after the selected skills; when
-	// Skills is empty it is the full prompt for prompt-only review configs.
+	// Prompt, when non-empty, carries saved agent-specific instructions. It is
+	// appended after the profile task regardless of whether Skills is empty.
 	Prompt string `json:"prompt,omitempty"`
 }
 
@@ -432,10 +471,10 @@ func LoadFromFile(filePath string) (*EntireSettings, error) {
 //   - exists: false when the file does not exist (raw is empty); true otherwise.
 //   - err: parse error or read error other than ENOENT.
 //
-// Pair with SaveProjectRaw for read-modify-write flows like the review-key
-// migration. Owning the path resolution and raw IO here keeps callers from
-// duplicating settings parsing in violation of the "Settings access must go
-// through the settings package" rule in CLAUDE.md.
+// Pair with SaveProjectRaw for read-modify-write flows that need to preserve
+// unrelated keys. Owning the path resolution and raw IO here keeps callers
+// from duplicating settings parsing in violation of the "Settings access must
+// go through the settings package" rule in CLAUDE.md.
 func LoadProjectRaw(ctx context.Context) (path string, raw map[string]json.RawMessage, exists bool, err error) {
 	path, err = paths.AbsPath(ctx, EntireSettingsFile)
 	if err != nil {
@@ -460,9 +499,8 @@ func LoadProjectRaw(ctx context.Context) (path string, raw map[string]json.RawMe
 // exists=false (and an empty raw map) when the file does not exist — the
 // common case for users who haven't created the local override file.
 //
-// Pair with the migration flow: callers can use this to detect when local
-// overrides would mask a freshly-migrated setting, then warn the user
-// before performing the migration.
+// Pair with SaveProjectRaw for read-modify-write flows that need to preserve
+// unrelated keys in the per-developer override file.
 func LoadLocalRaw(ctx context.Context) (path string, raw map[string]json.RawMessage, exists bool, err error) {
 	path, err = paths.AbsPath(ctx, EntireSettingsLocalFile)
 	if err != nil {
@@ -620,6 +658,12 @@ func applyClonePreferences(settings *EntireSettings, prefs *ClonePreferences) {
 	if prefs == nil {
 		return
 	}
+	if prefs.ReviewProfiles != nil {
+		settings.ReviewProfiles = prefs.ReviewProfiles
+	}
+	if prefs.ReviewDefaultProfile != "" {
+		settings.ReviewDefaultProfile = prefs.ReviewDefaultProfile
+	}
 	if prefs.Review != nil {
 		settings.Review = prefs.Review
 	}
@@ -658,6 +702,13 @@ func mergeJSON(settings *EntireSettings, data []byte) error {
 	}
 	if err := mergeCommitLinking(settings, raw); err != nil {
 		return err
+	}
+	if profilesRaw, ok := raw["review_profiles"]; ok {
+		var profiles map[string]ReviewProfileConfig
+		if err := json.Unmarshal(profilesRaw, &profiles); err != nil {
+			return fmt.Errorf("parsing review_profiles field: %w", err)
+		}
+		settings.ReviewProfiles = profiles
 	}
 	if reviewRaw, ok := raw["review"]; ok {
 		var review map[string]ReviewConfig
@@ -724,6 +775,9 @@ func mergeScalarFields(settings *EntireSettings, raw map[string]json.RawMessage)
 		return err
 	}
 	if err := mergeRawStringNonEmpty(raw, "log_level", &settings.LogLevel); err != nil {
+		return err
+	}
+	if err := mergeRawStringNonEmpty(raw, "review_default_profile", &settings.ReviewDefaultProfile); err != nil {
 		return err
 	}
 	if err := mergeRawStringNonEmpty(raw, "review_fix_agent", &settings.ReviewFixAgent); err != nil {

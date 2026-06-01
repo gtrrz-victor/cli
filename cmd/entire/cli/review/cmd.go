@@ -14,6 +14,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sort"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
@@ -43,14 +45,6 @@ type Deps struct {
 	// NewSilentError wraps an error so the cobra root does not double-print it.
 	NewSilentError func(err error) error
 
-	// PromptForAgentFn overrides the interactive agent picker. Nil means
-	// PromptForAgent is used (the real huh form). Tests inject a stub.
-	PromptForAgentFn func(ctx context.Context, eligible []AgentChoice) (string, error)
-
-	// MultiPickerFn overrides PickAgents for the multi-agent picker. Nil
-	// means PickAgents is used (the real huh form). Tests inject a stub.
-	MultiPickerFn func(ctx context.Context, eligible []AgentChoice) (PickedAgents, error)
-
 	// HeadHasReviewCheckpoint checks whether HEAD's checkpoint metadata
 	// includes a review session. Returns (true, infoString) if HasReview is set.
 	// Injected to avoid an import cycle: review → checkpoint → codex → review.
@@ -72,24 +66,6 @@ type Deps struct {
 	// subcommand. Callers in the cli package pass newReviewAttachCmd() here;
 	// tests pass nil to skip the subcommand.
 	AttachCmd *cobra.Command
-
-	// SynthesisProvider, when non-nil, enables the synthesis sink in TTY mode.
-	// Production wiring resolves the same provider entire explain uses.
-	// When nil, the synthesis sink is not appended and synthesis is unavailable.
-	SynthesisProvider SynthesisProvider
-
-	// PromptYN overrides the y/N confirmation form used by SynthesisSink.
-	// Nil means the real huh form is used (realPromptYN in synthesis_sink.go).
-	// Tests inject a stub to avoid TTY interactions.
-	PromptYN func(ctx context.Context, question string, def bool) (bool, error)
-}
-
-// runReviewDeps carries the subset of Deps that runReview itself reads
-// directly (vs. NewCommand's wiring). Kept unexported so tests construct a
-// Deps value at the package boundary; runReview unpacks the relevant fields.
-type runReviewDeps struct {
-	promptForAgentFn func(ctx context.Context, eligible []AgentChoice) (string, error)
-	multiPickerFn    func(ctx context.Context, eligible []AgentChoice) (PickedAgents, error)
 }
 
 // NewCommand returns the `entire review` cobra command wired with the
@@ -99,6 +75,8 @@ func NewCommand(deps Deps) *cobra.Command {
 	var edit bool
 	var agentOverride string
 	var baseOverride string
+	var profileOverride string
+	var perRunPrompt string
 	var findings bool
 	var fix bool
 	var all bool
@@ -109,9 +87,9 @@ func NewCommand(deps Deps) *cobra.Command {
 		// users who know about it can still run `entire review` / `entire
 		// review --help` and the command works normally.
 		Hidden: true,
-		Short:  "Run configured review skills against the current branch",
-		Long: `Run configured review skills against the current branch. Review
-preferences are loaded from Entire settings and clone-local preferences. On
+		Short:  "Run a review profile against the current branch",
+		Long: `Run a named review profile against the current branch. Review
+profiles are loaded from Entire settings and clone-local preferences. On
 first run, an interactive picker writes clone-local preferences.
 
 Labs entry: review is experimental. We are actively refining it based on user
@@ -121,12 +99,14 @@ The review session is recorded as part of the next checkpoint, so the
 review metadata is permanently attached to the commit it covers.
 
 Flags:
-  --edit         re-open the review config picker
+  --edit         re-open the review profile config picker
   --findings     browse local review findings
   --fix          apply review findings in a normal agent session
   --all          with --fix, apply all sources/findings without selectors
-  --agent NAME   select a specific configured agent when more than one is
-                 configured (default: alphabetically first)
+  --agent NAME   run only one worker from the selected profile, or select the
+                 fix agent with --fix
+  --profile NAME select a review profile (also accepted as positional arg)
+  --prompt TEXT  add one-off per-run instructions for this invocation
   --base REF     scope the review against REF instead of mainline. Useful
                  for stacked PRs where the review base is the parent feature
                  branch, not main. Default: first existing of origin/HEAD,
@@ -137,10 +117,10 @@ Subcommands:
                  'entire attach --review <id>')`,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("accepts at most one review session id, received %d", len(args))
+				return fmt.Errorf("accepts at most one argument, received %d", len(args))
 			}
-			if len(args) == 1 && !fix {
-				return errors.New("review session id is only valid with --fix")
+			if len(args) == 1 && !fix && profileOverride != "" {
+				return errors.New("pass profile either positionally or with --profile, not both")
 			}
 			return nil
 		},
@@ -163,24 +143,12 @@ Subcommands:
 			if modes > 1 {
 				return errors.New("--edit, --findings, and --fix are mutually exclusive")
 			}
-			// The migration prompt is only relevant for flows that write or
-			// read picker config (--edit and the default review run).
-			// --findings (read-only browsing) and --fix (uses
-			// ReviewFixAgent only) don't interact with the picker, so
-			// prompting in those paths interrupts the user for no reason.
-			if !findings && !fix {
-				if err := maybePromptReviewSettingsMigration(
-					ctx,
-					cmd.OutOrStdout(),
-					cmd.ErrOrStderr(),
-					interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively(),
-					deps.PromptYN,
-				); err != nil {
-					return err
-				}
+			profileName := profileOverride
+			if len(args) == 1 && !fix {
+				profileName = args[0]
 			}
 			if edit {
-				_, err := RunReviewConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled)
+				_, err := RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
 				return err
 			}
 			if findings {
@@ -193,18 +161,16 @@ Subcommands:
 				}
 				return runReviewFix(ctx, cmd, target, all, agentOverride, deps.NewSilentError)
 			}
-			innerDeps := runReviewDeps{
-				promptForAgentFn: deps.PromptForAgentFn,
-				multiPickerFn:    deps.MultiPickerFn,
-			}
-			return runReview(ctx, cmd, agentOverride, baseOverride, deps, innerDeps)
+			return runReview(ctx, cmd, agentOverride, baseOverride, profileName, perRunPrompt, deps)
 		},
 	}
-	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the review config picker")
+	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the review profile config picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
 	cmd.Flags().BoolVar(&fix, "fix", false, "apply review findings in a normal agent session")
 	cmd.Flags().BoolVar(&all, "all", false, "with --fix, apply all sources/findings without selectors")
-	cmd.Flags().StringVar(&agentOverride, "agent", "", "select a specific configured agent (default: alphabetically first)")
+	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile; with --fix, select the fix agent")
+	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
+	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
 	if deps.AttachCmd != nil {
 		cmd.AddCommand(deps.AttachCmd)
@@ -213,7 +179,7 @@ Subcommands:
 }
 
 // runReview executes the main review flow.
-func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverride string, deps Deps, innerDeps runReviewDeps) error {
+func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverride, profileOverride, perRunPrompt string, deps Deps) error {
 	out := cmd.OutOrStdout()
 	silentErr := deps.NewSilentError
 
@@ -237,88 +203,110 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 			"Fix your Entire settings or clone-local review preferences and re-run `entire review`.")
 		return silentErr(err)
 	}
-	if s == nil || len(s.Review) == 0 {
+	if s == nil || len(s.ReviewProfiles) == 0 {
 		if !ConfirmFirstRunSetup(ctx, out) {
 			return nil
 		}
-		picked, pickErr := RunReviewConfigPicker(ctx, out, deps.GetAgentsWithHooksInstalled)
-		if pickErr != nil {
+		profileForSetup := profileOverride
+		if profileForSetup == "" {
+			profileForSetup = DefaultProfileName
+		}
+		if _, pickErr := RunReviewProfileConfigPicker(ctx, out, deps.GetAgentsWithHooksInstalled, profileForSetup); pickErr != nil {
 			return pickErr
 		}
-		if s == nil {
-			s = &settings.EntireSettings{}
+		var reloadErr error
+		s, reloadErr = settings.Load(ctx)
+		if reloadErr != nil {
+			return fmt.Errorf("reload review preferences: %w", reloadErr)
 		}
-		s.Review = picked
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "Setup complete — running review now.")
 	}
 
-	// 3. Resolve installed agents and determine the dispatch path.
-	//
-	// Three paths:
-	//   - Multi-agent: 2+ launchable eligible agents AND no --agent override →
-	//     show multi-select picker then RunMulti. Steps 3.5, 3.6, and the
-	//     single-agent skill-verify guard are skipped; each reviewer pulls
-	//     its own skills from settings at spawn time via RunConfig.
-	//   - Single-agent (default): 1 or fewer launchable eligible agents, OR
-	//     --agent override set. Falls through to the full agent-selection and
-	//     validation path below (steps 3–3.6).
-	installed := deps.GetAgentsWithHooksInstalled(ctx)
-	if agentOverride == "" {
-		launchableEligible := computeLaunchableEligible(s, installed, deps.ReviewerFor)
-		if len(launchableEligible) >= 2 {
-			return runMultiAgentPath(ctx, cmd, launchableEligible, baseOverride, s, innerDeps, deps, out)
-		}
-	}
-
-	// Single-agent path: pick agent, verify hooks + skills, scope, run.
-
-	// 3a. Base selection on the eligible set (configured AND installed):
-	//   - 0 eligible: fall through; SelectReviewAgent below errors with the
-	//     full configured map (clearer "no installed agent" diagnostic than
-	//     a silent fail).
-	//   - 1 eligible: use it directly. This matters when the alphabetically-
-	//     first configured agent isn't installed but exactly one other is —
-	//     without this, SelectReviewAgent would default to the alphabetical
-	//     first and the verify-hooks check below would error needlessly.
-	//   - 2+ eligible: prompt with single-select (non-launchable agents reach
-	//     this branch since computeLaunchableEligible filtered them out above).
-	if agentOverride == "" {
-		eligible := ComputeEligibleConfigured(s, installed)
-		switch {
-		case len(eligible) == 1:
-			agentOverride = eligible[0].Name
-		case len(eligible) > 1:
-			fn := innerDeps.promptForAgentFn
-			if fn == nil {
-				fn = PromptForAgent
-			}
-			picked, pickErr := fn(ctx, eligible)
-			if pickErr != nil {
-				cmd.SilenceUsage = true
-				fmt.Fprintln(cmd.ErrOrStderr(), pickErr.Error())
-				return silentErr(pickErr)
-			}
-			if picked == "" {
-				// Defensive: empty picker return must not fall through to
-				// alphabetical-first default.
-				cmd.SilenceUsage = true
-				emptyErr := errors.New("agent picker returned empty agent name")
-				fmt.Fprintln(cmd.ErrOrStderr(), emptyErr.Error())
-				return silentErr(emptyErr)
-			}
-			agentOverride = picked
-		}
-	}
-
-	agentName, cfg, err := SelectReviewAgent(s.Review, agentOverride)
+	profileName, profile, err := selectReviewProfile(s, profileOverride)
 	if err != nil {
 		cmd.SilenceUsage = true
 		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 		return silentErr(err)
 	}
+	profile.Task = profileTask(profileName, profile)
+	profile.Agents = nonZeroAgentConfigs(profile.Agents)
 
-	return runSingleAgentPath(ctx, cmd, agentName, baseOverride, cfg, installed, deps, out)
+	installed := deps.GetAgentsWithHooksInstalled(ctx)
+	if agentOverride != "" {
+		cfg, ok := profile.Agents[agentOverride]
+		if !ok || cfg.IsZero() {
+			cmd.SilenceUsage = true
+			err := fmt.Errorf("agent %q is not configured in review profile %q", agentOverride, profileName)
+			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+			return silentErr(err)
+		}
+		return runSingleAgentPath(ctx, cmd, profileName, agentOverride, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+	}
+
+	if missing := missingInstalledProfileAgents(profile.Agents, installed); len(missing) > 0 {
+		cmd.SilenceUsage = true
+		err := fmt.Errorf("Hooks are not installed for review profile %q agent(s): %s. Run `entire configure --agent <name>` first, or edit the profile", profileName, strings.Join(missing, ", "))
+		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+		return silentErr(err)
+	}
+
+	eligible := ComputeEligibleConfiguredForProfile(profile, installed)
+	switch len(eligible) {
+	case 0:
+		cmd.SilenceUsage = true
+		err := fmt.Errorf("review profile %q has no eligible agents", profileName)
+		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+		return silentErr(err)
+	case 1:
+		cfg := profile.Agents[eligible[0].Name]
+		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+	default:
+		launchableEligible := computeLaunchableEligibleForProfile(profile, installed, deps.ReviewerFor)
+		if len(launchableEligible) != len(eligible) {
+			nonLaunchable := nonLaunchableEligibleNames(eligible, deps.ReviewerFor)
+			cmd.SilenceUsage = true
+			err := fmt.Errorf("review profile %q includes non-launchable agent(s) in a fan-out run: %s. Use --agent for a single manual fallback, or remove them from the profile", profileName, strings.Join(nonLaunchable, ", "))
+			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+			return silentErr(err)
+		}
+		if strings.TrimSpace(profile.Master) == "" {
+			cmd.SilenceUsage = true
+			err := fmt.Errorf("review profile %q has multiple workers but no master; set review_profiles.%s.master", profileName, profileName)
+			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+			return silentErr(err)
+		}
+		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, baseOverride, perRunPrompt, deps, out)
+	}
+}
+
+func missingInstalledProfileAgents(configured map[string]settings.ReviewConfig, installed []types.AgentName) []string {
+	installedSet := make(map[string]struct{}, len(installed))
+	for _, name := range installed {
+		installedSet[string(name)] = struct{}{}
+	}
+	var missing []string
+	for name, cfg := range configured {
+		if cfg.IsZero() {
+			continue
+		}
+		if _, ok := installedSet[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func nonLaunchableEligibleNames(eligible []AgentChoice, reviewerFor func(string) reviewtypes.AgentReviewer) []string {
+	var out []string
+	for _, c := range eligible {
+		if reviewerFor(c.Name) == nil {
+			out = append(out, c.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // runSingleAgentPath completes a single-agent review: verifies hooks + skills,
@@ -327,7 +315,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 func runSingleAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
-	agentName, baseOverride string,
+	profileName, agentName, baseOverride, perRunPrompt, task string,
 	cfg settings.ReviewConfig,
 	installed []types.AgentName,
 	deps Deps,
@@ -405,6 +393,9 @@ func runSingleAgentPath(
 	}
 
 	runCfg := reviewtypes.RunConfig{
+		ProfileName:       profileName,
+		Task:              task,
+		PerRunPrompt:      perRunPrompt,
 		ScopeBaseRef:      scopeBaseRef,
 		CheckpointContext: checkpointContext,
 		StartingSHA:       headSHA,
@@ -481,40 +472,20 @@ func detectScope(ctx context.Context, worktreeRoot, baseOverride string, out io.
 	return stats.BaseRef, nil
 }
 
-// runMultiAgentPath handles the multi-agent review flow: shows the multi-select
-// picker, collects an optional per-run prompt, builds per-agent RunConfigs,
-// then runs all selected agents concurrently via RunMulti.
-//
-// This path skips the single-agent validation steps (3.5 hooks, 3.6 skills,
-// re-run guard) for brevity — computeLaunchableEligible has already ensured
-// each eligible agent has hooks installed and a Reviewer available.
+// runMultiAgentPath handles the profile-native fan-out flow. Every configured
+// worker in the selected profile runs concurrently against the same canonical
+// task, then the profile's master agent produces the final report.
 func runMultiAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
+	profileName string,
+	profile settings.ReviewProfileConfig,
 	launchableEligible []AgentChoice,
 	baseOverride string,
-	s *settings.EntireSettings,
-	innerDeps runReviewDeps,
+	perRunPrompt string,
 	deps Deps,
 	out io.Writer,
 ) error {
-	// Note: skill verification is intentionally skipped here. The
-	// computeLaunchableEligible filter in the dispatch fork already
-	// guarantees every agent in launchableEligible has hooks installed
-	// AND a non-nil ReviewerFor mapping, so a per-agent verify pass would
-	// be redundant.
-	silentErr := deps.NewSilentError
-
-	// Show multi-select picker (or use injected stub in tests).
-	pickerFn := innerDeps.multiPickerFn
-	if pickerFn == nil {
-		pickerFn = PickAgents
-	}
-	picked, pickErr := pickerFn(ctx, launchableEligible)
-	if pickErr != nil {
-		return handlePickerError(cmd, silentErr, pickErr)
-	}
-
 	// Resolve worktree root and HEAD SHA for scope detection.
 	worktreeRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
@@ -527,6 +498,23 @@ func runMultiAgentPath(
 		return fmt.Errorf("resolve HEAD: %w", shaErr)
 	}
 
+	if reviewed, meta := deps.HeadHasReviewCheckpoint(ctx); reviewed {
+		var proceed bool
+		form := newAccessibleForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Already reviewed: %s. Proceed anyway?", meta)).
+				Value(&proceed),
+		))
+		if err := form.RunWithContext(ctx); err != nil {
+			fmt.Fprintln(out, "prompt cancelled")
+			return err //nolint:wrapcheck // propagate huh cancellation
+		}
+		if !proceed {
+			fmt.Fprintln(out, "Review cancelled.")
+			return nil
+		}
+	}
+
 	scopeBaseRef, scopeErr := detectScope(ctx, worktreeRoot, baseOverride, out)
 	if scopeErr != nil {
 		cmd.SilenceUsage = true
@@ -536,28 +524,31 @@ func runMultiAgentPath(
 	if deps.ReviewCheckpointContext != nil {
 		checkpointContext = deps.ReviewCheckpointContext(ctx, worktreeRoot, scopeBaseRef)
 	}
-
-	// Build per-agent reviewers with individual RunConfigs (each agent has
-	// its own skills + always-prompt from s.Review[name]).
-	reviewers := make([]reviewtypes.AgentReviewer, 0, len(picked.Names))
-	for _, name := range picked.Names {
-		agentCfg := s.Review[name] // zero value is safe (empty skills/prompt)
-		reviewer := deps.ReviewerFor(name)
-		if reviewer == nil {
-			// Shouldn't happen given launchableEligible was filtered for
-			// ReviewerFor != nil, but be defensive.
-			cmd.SilenceUsage = true
-			return silentErr(fmt.Errorf("agent %q is not launchable but appeared in eligible list", name))
+	reviewers := make([]reviewtypes.AgentReviewer, 0, len(launchableEligible))
+	for _, choice := range launchableEligible {
+		agentCfg := profile.Agents[choice.Name]
+		if len(agentCfg.Skills) > 0 {
+			ag, agErr := agent.Get(types.AgentName(choice.Name))
+			if agErr != nil {
+				return fmt.Errorf("resolve agent %s: %w", choice.Name, agErr)
+			}
+			if err := VerifyConfiguredSkillsInstalled(ctx, ag, agentCfg); err != nil {
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+				return deps.NewSilentError(err)
+			}
 		}
-		// Wrap the reviewer so it sees the per-agent RunConfig at Start time.
-		// We cannot pass a different RunConfig per reviewer in RunMulti's
-		// current API (all reviewers share one RunConfig). Instead, build a
-		// configuredReviewer adapter that injects per-agent skills into
-		// RunConfig before forwarding to the underlying reviewer.
+		reviewer := deps.ReviewerFor(choice.Name)
+		if reviewer == nil {
+			cmd.SilenceUsage = true
+			return deps.NewSilentError(fmt.Errorf("agent %q is not launchable but appeared in eligible list", choice.Name))
+		}
 		reviewers = append(reviewers, &perAgentConfiguredReviewer{
 			inner: reviewer,
 			cfg: runConfigWithReviewConfig(reviewtypes.RunConfig{
-				PerRunPrompt:      picked.PerRun,
+				ProfileName:       profileName,
+				Task:              profile.Task,
+				PerRunPrompt:      perRunPrompt,
 				ScopeBaseRef:      scopeBaseRef,
 				CheckpointContext: checkpointContext,
 				StartingSHA:       headSHA,
@@ -565,14 +556,6 @@ func runMultiAgentPath(
 		})
 	}
 
-	// Compose sinks based on TTY detection.
-	// TTY mode: [TUISink, DumpSink] — TUI owns the live dashboard; DumpSink
-	// renders the post-run narrative after TUI dismisses (RunFinished is called
-	// on each sink in order, and TUISink.RunFinished blocks until user dismisses).
-	// Non-TTY mode: [DumpSink] alone.
-	//
-	// A derived context is used so the TUI's Ctrl+C handler can cancel the run
-	// via the same cancelRun function that the orchestrator's context is built on.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
@@ -582,12 +565,7 @@ func runMultiAgentPath(
 	}
 	aggregateOutput := ""
 
-	// TUI requires both:
-	//   - terminal stdout (otherwise ANSI codes corrupt redirected output)
-	//   - a promptable stdin (otherwise the post-run dismissal loop blocks
-	//     forever — happens when entire review is invoked from inside an
-	//     agent like Claude Code or Gemini CLI, where stdout is a TTY but
-	//     keypresses are never delivered)
+	masterProvider := AgentSynthesisProvider{AgentName: profile.Master, Model: profile.MasterModel}
 	sinks := composeMultiAgentSinks(multiAgentSinkInputs{
 		out:               out,
 		isTTY:             interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively(),
@@ -595,9 +573,12 @@ func runMultiAgentPath(
 		agentNames:        agentNames,
 		cancelRun:         cancelRun,
 		runContext:        runCtx,
-		synthesisProvider: deps.SynthesisProvider,
-		promptYN:          deps.PromptYN,
-		perRunPrompt:      picked.PerRun,
+		synthesisProvider: masterProvider,
+		perRunPrompt:      perRunPrompt,
+		profileName:       profileName,
+		task:              profile.Task,
+		masterName:        profile.Master,
+		autoSynthesis:     true,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result
 		},
@@ -607,11 +588,6 @@ func runMultiAgentPath(
 		defer tuiSink.Wait()
 	}
 
-	// Multi-agent only wires EnrichAgentRun. The per-agent enricher emits a
-	// synthetic Tokens event as each agent finishes, which the dispatch loop
-	// overwrites onto st.tokens (run_multi.go:168). That value flows into
-	// agentRuns[i].Tokens in the final summary, so a summary-level pass would
-	// redo the same store.List + token hydration once per run.
 	summary, waitErr := RunMulti(runCtx, reviewers, reviewtypes.RunConfig{
 		EnrichAgentRun: reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
 	}, sinks)
@@ -656,6 +632,10 @@ type multiAgentSinkInputs struct {
 	synthesisProvider SynthesisProvider
 	promptYN          func(ctx context.Context, question string, def bool) (bool, error)
 	perRunPrompt      string
+	profileName       string
+	task              string
+	masterName        string
+	autoSynthesis     bool
 	onSynthesisResult func(result string)
 }
 
@@ -669,30 +649,32 @@ type singleAgentSinkInputs struct {
 
 // composeMultiAgentSinks builds the sink slice for a multi-agent run.
 //
-//   - Non-TTY: [DumpSink] alone — narrative dump only, no live UI, no prompts.
+//   - Non-TTY: [DumpSink, SynthesisSink?] — narrative dump plus profile-native
+//     final report when autoSynthesis is enabled.
 //   - TTY: [TUISink, DumpSink, SynthesisSink?] — TUI owns the live dashboard;
-//     DumpSink renders the post-run narrative; SynthesisSink (if a provider is
-//     configured AND stdin can prompt) appends the y/N synthesis offer.
+//     DumpSink renders the post-run narrative; SynthesisSink renders the final
+//     report after the TUI exits.
 //
-// The synthesis sink is only appended when canPrompt is true: without a
-// promptable stdin, the y/N form would never resolve. SynthesisSink also
-// guards on InputTTY internally (defense in depth) but suppressing it here
-// avoids constructing a sink that will silently no-op.
+// Prompted legacy synthesis is still only appended when canPrompt is true.
+// Profile-native auto synthesis does not need stdin, so it is available in
+// redirected and CI output too.
 func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
-	if !in.isTTY {
-		return []reviewtypes.Sink{DumpSink{W: in.out}}
+	sinks := []reviewtypes.Sink{}
+	if in.isTTY {
+		sinks = append(sinks, NewTUISink(in.agentNames, in.cancelRun, in.out, os.Stdin))
 	}
-	sinks := []reviewtypes.Sink{
-		NewTUISink(in.agentNames, in.cancelRun, in.out, os.Stdin),
-		DumpSink{W: in.out},
-	}
-	if in.synthesisProvider != nil && in.canPrompt {
+	sinks = append(sinks, DumpSink{W: in.out})
+	if in.synthesisProvider != nil && (in.autoSynthesis || in.canPrompt) {
 		sinks = append(sinks, SynthesisSink{
 			Provider:     in.synthesisProvider,
 			Writer:       in.out,
 			InputTTY:     in.canPrompt,
 			PromptYN:     in.promptYN,
 			PerRunPrompt: in.perRunPrompt,
+			ProfileName:  in.profileName,
+			Task:         in.task,
+			MasterName:   in.masterName,
+			Auto:         in.autoSynthesis,
 			RunContext:   in.runContext,
 			OnResult:     in.onSynthesisResult,
 		})
@@ -796,10 +778,6 @@ func runConfigWithReviewConfig(base reviewtypes.RunConfig, cfg settings.ReviewCo
 
 func applyReviewConfig(runCfg *reviewtypes.RunConfig, cfg settings.ReviewConfig) {
 	runCfg.Skills = cfg.Skills
-	if len(cfg.Skills) == 0 {
-		runCfg.PromptOverride = cfg.Prompt
-		return
-	}
 	runCfg.AlwaysPrompt = cfg.Prompt
 }
 

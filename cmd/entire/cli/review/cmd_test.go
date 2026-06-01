@@ -43,10 +43,8 @@ func installHooksForCmdTest(t *testing.T, agentName types.AgentName) {
 	}
 }
 
-// seedReviewConfig persists a review config map into clone-local preferences for
-// test setup, preserving any other existing preferences. It replaces the former
-// review.SaveReviewConfig, which had no production caller (the picker writes via
-// the combined config+fix-agent writer instead).
+// seedReviewConfig persists a default review profile into clone-local
+// preferences for test setup, preserving any other existing preferences.
 func seedReviewConfig(ctx context.Context, cfg map[string]settings.ReviewConfig) error {
 	prefs, err := settings.LoadClonePreferences(ctx)
 	if err != nil {
@@ -55,8 +53,25 @@ func seedReviewConfig(ctx context.Context, cfg map[string]settings.ReviewConfig)
 	if prefs == nil {
 		prefs = &settings.ClonePreferences{}
 	}
-	prefs.Review = cfg
+	prefs.ReviewDefaultProfile = review.DefaultProfileName
+	prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{
+		review.DefaultProfileName: {
+			Task:   "Test review task.",
+			Agents: cfg,
+			Master: defaultTestMaster(cfg),
+		},
+	}
 	return settings.SaveClonePreferences(ctx, prefs)
+}
+
+func defaultTestMaster(cfg map[string]settings.ReviewConfig) string {
+	if _, ok := cfg[string(agent.AgentNameClaudeCode)]; ok {
+		return string(agent.AgentNameClaudeCode)
+	}
+	for name := range cfg {
+		return name
+	}
+	return ""
 }
 
 // TestReviewCmd_Help verifies `entire review --help` contains the expected
@@ -351,13 +366,13 @@ func newDispatchTestDeps(
 	for _, name := range launchableAgents {
 		launchableSet[name] = struct{}{}
 	}
+	_ = promptForAgentFn
+	_ = multiPickerFn
 	return review.Deps{
 		GetAgentsWithHooksInstalled: func(_ context.Context) []types.AgentName {
 			return installed
 		},
-		NewSilentError:   func(err error) error { return err },
-		PromptForAgentFn: promptForAgentFn,
-		MultiPickerFn:    multiPickerFn,
+		NewSilentError: func(err error) error { return err },
 		HeadHasReviewCheckpoint: func(_ context.Context) (bool, string) {
 			return false, "" // no review guard
 		},
@@ -464,8 +479,8 @@ func TestRunReview_ConfigPromptAugmentsSelectedSkills(t *testing.T) {
 }
 
 // TestDispatchFork_TwoLaunchableNoOverride verifies that when 2+ launchable
-// agents are configured and --agent is empty, the multi-picker is invoked
-// and RunMulti is called (not the single-agent path).
+// agents are configured and --agent is empty, the profile fan-out runs without
+// invoking the old per-run multi-picker.
 func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 	setupCmdTestRepo(t)
 
@@ -498,8 +513,8 @@ func TestDispatchFork_TwoLaunchableNoOverride(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !multiPickerCalled {
-		t.Error("expected multi-picker to be invoked for 2 launchable agents with no --agent override")
+	if multiPickerCalled {
+		t.Error("multi-picker should not be invoked; profile config is the fan-out contract")
 	}
 }
 
@@ -521,19 +536,11 @@ func TestDispatchFork_MultiAgentPassesPerAgentConfigs(t *testing.T) {
 
 	claudeReviewer := &captureRunConfigReviewer{name: "claude-code"}
 	codexReviewer := &captureRunConfigReviewer{name: testCodexAgent}
-	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
-		return review.PickedAgents{
-			Names:  []string{"claude-code", testCodexAgent},
-			PerRun: "Focus this run on regressions.",
-		}, nil
-	}
-
 	deps := review.Deps{
 		GetAgentsWithHooksInstalled: func(_ context.Context) []types.AgentName {
 			return []types.AgentName{"claude-code", testCodexAgent}
 		},
 		NewSilentError: func(err error) error { return err },
-		MultiPickerFn:  multiPickerFn,
 		HeadHasReviewCheckpoint: func(_ context.Context) (bool, string) {
 			return false, ""
 		},
@@ -552,7 +559,7 @@ func TestDispatchFork_MultiAgentPassesPerAgentConfigs(t *testing.T) {
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--prompt", "Focus this run on regressions."})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -705,8 +712,8 @@ func TestDispatchFork_MultiPickerCancellationExitsCleanly(t *testing.T) {
 	}
 }
 
-// TestDispatchFork_MultiPickerNoSelectionSurfacesError verifies that when the
-// multi-picker returns ErrNoAgentsSelected, a clear error is shown to the user.
+// TestDispatchFork_MultiPickerNoSelectionNotUsed verifies profile fan-out no
+// longer asks a per-run multi-picker, so picker selection errors are irrelevant.
 func TestDispatchFork_MultiPickerNoSelectionSurfacesError(t *testing.T) {
 	setupCmdTestRepo(t)
 
@@ -717,25 +724,25 @@ func TestDispatchFork_MultiPickerNoSelectionSurfacesError(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	multiPickerCalled := false
 	multiPickerFn := func(_ context.Context, _ []review.AgentChoice) (review.PickedAgents, error) {
+		multiPickerCalled = true
 		return review.PickedAgents{}, review.ErrNoAgentsSelected
 	}
 
 	installed := []types.AgentName{"agent-a", "agent-b"}
 	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
 
-	errBuf := &bytes.Buffer{}
 	cmd := review.NewCommand(deps)
 	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(errBuf)
+	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected non-nil error when no agents are selected")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(errBuf.String(), "no agents selected") {
-		t.Errorf("stderr should mention 'no agents selected', got: %q", errBuf.String())
+	if multiPickerCalled {
+		t.Error("multi-picker should not be called by profile fan-out")
 	}
 }
 
@@ -1004,7 +1011,7 @@ func TestDispatchFork_SynthesisSinkNilProviderNoComposition(t *testing.T) {
 
 	installed := []types.AgentName{"agent-a", "agent-b"}
 	deps := newDispatchTestDeps(t, installed, []string{"agent-a", "agent-b"}, multiPickerFn, nil)
-	deps.SynthesisProvider = nil // explicitly nil — synthesis unavailable
+	// Profile-native review uses the profile master rather than deps-level synthesis.
 
 	buf := &bytes.Buffer{}
 	cmd := review.NewCommand(deps)
@@ -1040,7 +1047,7 @@ func TestDispatchFork_SingleAgentNoSynthesis(t *testing.T) {
 	// cursor is installed but not launchable (ReviewerFor returns nil).
 	installed := []types.AgentName{"cursor"}
 	deps := newDispatchTestDeps(t, installed, nil /* no launchable */, nil, nil)
-	deps.SynthesisProvider = provider
+	_ = provider
 
 	buf := &bytes.Buffer{}
 	cmd := review.NewCommand(deps)

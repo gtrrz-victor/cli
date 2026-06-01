@@ -15,13 +15,14 @@ import (
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
 
-// ComposeReviewPrompt assembles the prompt sent to the agent. It joins
-// the configured skill invocations, the always-prompt, the per-run
-// prompt, and a scope clause that pins the agent to commits unique to
-// the current branch vs cfg.ScopeBaseRef plus any uncommitted changes.
+// ComposeReviewPrompt assembles the prompt sent to a worker agent. It joins
+// the configured skill invocations, the profile's canonical task, per-agent
+// instructions, the per-run prompt, and a scope clause that pins the agent to
+// commits unique to the current branch vs cfg.ScopeBaseRef plus any
+// uncommitted changes.
 //
-// Empty sections are skipped (no triple-newline gaps). The scope clause
-// is only added when cfg.ScopeBaseRef is non-empty.
+// Empty sections are skipped (no triple-newline gaps). The scope clause is
+// only added when cfg.ScopeBaseRef is non-empty.
 func ComposeReviewPrompt(cfg reviewtypes.RunConfig) string {
 	if cfg.PromptOverride != "" {
 		return cfg.PromptOverride
@@ -29,9 +30,17 @@ func ComposeReviewPrompt(cfg reviewtypes.RunConfig) string {
 
 	var sections []string
 
-	// Skills: one per line, joined as a single section.
+	// Skills: one per line, joined as a single section. These are agent-specific
+	// mechanics; the canonical task below keeps multi-agent fan-out coherent.
 	if len(cfg.Skills) > 0 {
 		sections = append(sections, strings.Join(cfg.Skills, "\n"))
+	}
+
+	if cfg.ProfileName != "" {
+		sections = append(sections, "Review profile: "+cfg.ProfileName)
+	}
+	if trimmed := strings.TrimRight(cfg.Task, "\n\r "); trimmed != "" {
+		sections = append(sections, "Task: "+trimmed)
 	}
 
 	// AlwaysPrompt and PerRunPrompt: each is its own section if non-empty after trim.

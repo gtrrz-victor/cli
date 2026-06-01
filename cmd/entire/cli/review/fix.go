@@ -458,7 +458,7 @@ func resolveReviewFixAgent(ctx context.Context, cmd *cobra.Command, sources []re
 	if err != nil {
 		return "", fmt.Errorf("load review fix settings: %w", err)
 	}
-	choices := reviewFixAgentChoices(s.Review)
+	choices := reviewFixAgentChoicesFromProfiles(s.ReviewProfiles)
 	if len(choices) == 0 {
 		choices = reviewFixAgentChoicesFromSources(sources)
 	}
@@ -505,6 +505,32 @@ func reviewFixAgentChoices(configured map[string]settings.ReviewConfig) []AgentC
 		}
 		choice, ok := reviewFixAgentChoice(name)
 		if ok {
+			choices = append(choices, choice)
+		}
+	}
+	slices.SortFunc(choices, func(a, b AgentChoice) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return choices
+}
+
+func reviewFixAgentChoicesFromProfiles(profiles map[string]settings.ReviewProfileConfig) []AgentChoice {
+	seen := map[string]struct{}{}
+	var choices []AgentChoice
+	for _, profile := range profiles {
+		if profile.Master != "" {
+			if choice, ok := reviewFixAgentChoice(profile.Master); ok {
+				if _, exists := seen[choice.Name]; !exists {
+					seen[choice.Name] = struct{}{}
+					choices = append(choices, choice)
+				}
+			}
+		}
+		for _, choice := range reviewFixAgentChoices(profile.Agents) {
+			if _, exists := seen[choice.Name]; exists {
+				continue
+			}
+			seen[choice.Name] = struct{}{}
 			choices = append(choices, choice)
 		}
 	}

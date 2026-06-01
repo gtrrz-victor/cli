@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	agenttypes "github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/mdrender"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
@@ -34,6 +36,28 @@ type SynthesisProvider interface {
 	Synthesize(ctx context.Context, prompt string) (string, error)
 }
 
+// AgentSynthesisProvider asks a named agent's text-generation API to produce
+// the final report. This is the profile-native master implementation used by
+// `entire review`: workers run as review sessions, while the master is an
+// isolated text-generation call so it consolidates reports without creating a
+// second review worker session.
+type AgentSynthesisProvider struct {
+	AgentName string
+	Model     string
+}
+
+func (p AgentSynthesisProvider) Synthesize(ctx context.Context, prompt string) (string, error) {
+	ag, err := agent.Get(agenttypes.AgentName(p.AgentName))
+	if err != nil {
+		return "", fmt.Errorf("resolve master agent %s: %w", p.AgentName, err)
+	}
+	tg, ok := agent.AsTextGenerator(ag)
+	if !ok {
+		return "", fmt.Errorf("master agent %s does not support text generation", p.AgentName)
+	}
+	return tg.GenerateText(ctx, prompt, p.Model) //nolint:wrapcheck // caller owns display
+}
+
 // SynthesisSink composes a multi-agent verdict by calling a configured
 // summary provider after the run finishes. AgentEvent is a no-op; all
 // work happens in RunFinished.
@@ -42,7 +66,11 @@ type SynthesisSink struct {
 	Writer          io.Writer
 	InputTTY        bool // true if stdin can prompt the user
 	PromptYN        func(ctx context.Context, question string, def bool) (bool, error)
-	PerRunPrompt    string          // if non-empty, included in the synthesis prompt for context
+	PerRunPrompt    string // if non-empty, included in the synthesis prompt for context
+	ProfileName     string
+	Task            string
+	MasterName      string
+	Auto            bool            // when true, run without a y/N prompt (profile-native final report)
 	RunContext      context.Context // optional; nil falls back to context.Background()
 	ProviderTimeout time.Duration   // optional; zero uses defaultSynthesisProviderTimeout
 	OnResult        func(result string)
@@ -64,13 +92,11 @@ func (SynthesisSink) AgentEvent(_ string, _ reviewtypes.Event) {}
 //   - fewer than 2 agents produced usable output (status Succeeded or Failed
 //     with non-empty narrative buffer)
 //
-// Otherwise prompt y/N (default N). On y: compose prompt, call provider,
-// print response. On provider failure: print "synthesis unavailable: <err>"
-// with the underlying error; user can still commit.
+// In profile-native mode (Auto=true), the master phase is mandatory and runs
+// without a y/N prompt. In legacy sink mode (Auto=false), prompt y/N (default
+// N). On provider failure: print "final report unavailable: <err>" with the
+// underlying error; user can still commit.
 func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
-	if !s.InputTTY {
-		return
-	}
 	if summary.Cancelled {
 		return
 	}
@@ -79,31 +105,48 @@ func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
 	}
 
 	ctx := s.runContext()
-	promptFn := s.PromptYN
-	if promptFn == nil {
-		promptFn = realPromptYN
+	if !s.Auto {
+		if !s.InputTTY {
+			return
+		}
+		promptFn := s.PromptYN
+		if promptFn == nil {
+			promptFn = realPromptYN
+		}
+
+		yes, err := promptFn(ctx, "Synthesize a unified verdict across all agent reviews?", false)
+		if err != nil {
+			// huh form errors (terminal-resize anomalies, stdin EOF, stub
+			// failures) shouldn't block the user from committing — they get the
+			// same silent skip as a "no" answer. Logged at debug for diagnostics.
+			logging.Debug(ctx, "synthesis prompt error",
+				slog.String("error", err.Error()))
+			return
+		}
+		if !yes {
+			return
+		}
 	}
 
-	yes, err := promptFn(ctx, "Synthesize a unified verdict across all agent reviews?", false)
-	if err != nil {
-		// huh form errors (terminal-resize anomalies, stdin EOF, stub
-		// failures) shouldn't block the user from committing — they get the
-		// same silent skip as a "no" answer. Logged at debug for diagnostics.
-		logging.Debug(ctx, "synthesis prompt error",
-			slog.String("error", err.Error()))
-		return
-	}
-	if !yes {
-		return
-	}
-
-	synthesisPrompt := composeSynthesisPrompt(summary, s.PerRunPrompt)
+	synthesisPrompt := composeSynthesisPrompt(summary, s.PerRunPrompt, s.ProfileName, s.Task)
 	providerCtx, cancelProvider := s.providerContext()
 	defer cancelProvider()
-	fmt.Fprintln(s.Writer, "Generating summary...")
+	if s.Auto {
+		if s.MasterName != "" {
+			fmt.Fprintf(s.Writer, "Generating final report with %s...\n", s.MasterName)
+		} else {
+			fmt.Fprintln(s.Writer, "Generating final report...")
+		}
+	} else {
+		fmt.Fprintln(s.Writer, "Generating summary...")
+	}
 	result, provErr := s.Provider.Synthesize(providerCtx, synthesisPrompt)
 	if provErr != nil {
-		fmt.Fprintf(s.Writer, "synthesis unavailable: %v\n", provErr)
+		if s.Auto {
+			fmt.Fprintf(s.Writer, "final report unavailable: %v\n", provErr)
+		} else {
+			fmt.Fprintf(s.Writer, "synthesis unavailable: %v\n", provErr)
+		}
 		return
 	}
 	if s.OnResult != nil {

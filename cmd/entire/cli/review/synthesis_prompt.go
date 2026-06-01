@@ -41,7 +41,7 @@ import (
 // scoped to agents that produced narrative output. SynthesisSink already
 // guards on len(usable) >= 2 before calling, so the empty case won't reach
 // the LLM in production.
-func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string) string {
+func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string, profileName string, task string) string {
 	usable := usableAgentRuns(summary)
 	if len(usable) == 0 {
 		return ""
@@ -49,7 +49,14 @@ func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string)
 
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "You reviewed the same code change with %d agents. Here are their reports:\n", len(usable))
+	fmt.Fprintf(&b, "You reviewed the same code change with %d agents. You are the final reviewer; critically adjudicate their reports instead of blindly summarizing.\n", len(usable))
+	if profileName != "" {
+		fmt.Fprintf(&b, "Review profile: %s\n", profileName)
+	}
+	if strings.TrimSpace(task) != "" {
+		fmt.Fprintf(&b, "Canonical task: %s\n", strings.TrimSpace(task))
+	}
+	b.WriteString("\nHere are their reports:\n")
 
 	for _, run := range usable {
 		narrative := joinAssistantText(run.Buffer)
@@ -62,16 +69,27 @@ func composeSynthesisPrompt(summary reviewtypes.RunSummary, perRunPrompt string)
 	}
 
 	b.WriteString(`
-Synthesize a unified verdict with these sections:
-  - Common findings (issues all agents flagged)
-  - Unique findings (issues only one agent caught)
-  - Disagreements (areas where agents reached different conclusions)
-  - Priority order (top 5 issues to address first)
+Critically evaluate the worker reports. Do not blindly summarize.
 
-Be concise; aim for ~300 words.`)
+Rules:
+  - Prefer findings backed by concrete evidence (file, function, behavior, test, or diff detail).
+  - Discard unsupported or speculative claims unless they are clearly labeled as needing verification.
+  - Identify contradictions between workers and decide which claim is better supported.
+  - Merge duplicate findings.
+  - Call out important uncertainty instead of pretending certainty.
+
+Produce one canonical final report with these sections:
+  - Executive verdict
+  - Common findings / high-confidence findings, prioritized
+  - Unique findings worth keeping
+  - Needs verification / uncertain findings
+  - Disagreements or rejected false positives
+  - Priority order / recommended next actions
+
+Be concise but specific; include evidence pointers where available.`)
 
 	if perRunPrompt != "" {
-		b.WriteString("\n\n")
+		b.WriteString("\n\nPer-run user instructions:\n")
 		b.WriteString(perRunPrompt)
 	}
 

@@ -17,7 +17,7 @@ var experimentalCommands = []experimentalCommandInfo{
 	{
 		Name:       "review",
 		Invocation: "entire review",
-		Summary:    "Run configured review skills against the current branch",
+		Summary:    "Run a review profile against the current branch",
 	},
 	{
 		Name:       "investigate",

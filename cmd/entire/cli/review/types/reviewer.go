@@ -24,7 +24,7 @@ import "context"
 type AgentReviewer interface {
 	// Name returns the agent's registry key (e.g., "claude-code", "codex",
 	// "gemini"). Stable identifier; do not change after release without
-	// updating settings migration.
+	// updating profile settings.
 	Name() string
 
 	// Start spawns the agent with the given run configuration. The returned
@@ -75,12 +75,22 @@ type RunConfig struct {
 	// but they are not prepended to the prompt text.
 	PromptOverride string
 
+	// ProfileName is the named review profile being run (e.g. "general",
+	// "security", "accessibility"). It is included in the prompt and final
+	// adjudication context for traceability.
+	ProfileName string
+
+	// Task is the canonical review task for this profile. Every worker agent in
+	// a fan-out run receives the same task; per-agent Skills/AlwaysPrompt adapt
+	// execution mechanics without changing the task identity.
+	Task string
+
 	// Skills are skill invocation strings passed to the agent verbatim.
 	Skills []string
 
-	// AlwaysPrompt is the per-agent always-prompt configured in settings.
-	// Concatenated with Skills + PerRunPrompt + a scope clause to form the
-	// composed agent prompt.
+	// AlwaysPrompt is the per-agent additional instruction configured in the
+	// selected review profile. Concatenated with Task + Skills + PerRunPrompt +
+	// a scope clause to form the composed agent prompt.
 	AlwaysPrompt string
 
 	// PerRunPrompt is optional textarea input from a single invocation.

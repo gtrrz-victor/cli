@@ -112,10 +112,17 @@ func TestReviewCommand_PassesReviewEnvToSpawnedAgentHook(t *testing.T) {
 	env := NewFeatureBranchEnv(t)
 	enableReviewAgent(t, env, "claude-code")
 	env.WriteSettings(map[string]any{
-		"enabled": true,
-		"review": map[string]any{
-			"claude-code": map[string]any{
-				"skills": []string{"/review"},
+		"enabled":                true,
+		"review_default_profile": "general",
+		"review_profiles": map[string]any{
+			"general": map[string]any{
+				"task": "Test review task.",
+				"agents": map[string]any{
+					"claude-code": map[string]any{
+						"skills": []string{"/review"},
+					},
+				},
+				"master": "claude-code",
 			},
 		},
 	})
@@ -229,9 +236,16 @@ func TestReview_MissingSkillAtSpawn_ErrorsCleanly(t *testing.T) {
 	enableReviewAgent(t, env, "claude-code")
 
 	env.WriteSettings(map[string]any{
-		"review": map[string]any{
-			"claude-code": map[string]any{
-				"skills": []string{"/nonexistent:skill-xyz"},
+		"review_default_profile": "general",
+		"review_profiles": map[string]any{
+			"general": map[string]any{
+				"task": "Test review task.",
+				"agents": map[string]any{
+					"claude-code": map[string]any{
+						"skills": []string{"/nonexistent:skill-xyz"},
+					},
+				},
+				"master": "claude-code",
 			},
 		},
 	})

@@ -50,11 +50,11 @@ func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 // setup phase explicit, and the trailing "running review now" line in the
 // caller closes the loop on what comes next.
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
-	fmt.Fprintln(out, "No review config found — let's set one up first.")
+	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "You'll pick skills for each installed agent. They're saved to")
+	fmt.Fprintln(out, "You'll pick worker skills for a review profile. They're saved to")
 	fmt.Fprintln(out, "local review preferences; edit later with `entire review --edit`.")
-	fmt.Fprintln(out, "After setup, the review will run with your selection.")
+	fmt.Fprintln(out, "After setup, the review will run that profile.")
 	fmt.Fprintln(out)
 
 	proceed := true
@@ -83,6 +83,14 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 //
 // getInstalled is injected to avoid an import cycle with the cli package.
 func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName) (map[string]settings.ReviewConfig, error) {
+	return RunReviewProfileConfigPicker(ctx, out, getInstalled, DefaultProfileName)
+}
+
+func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName, profileName string) (map[string]settings.ReviewConfig, error) {
+	profileName = strings.TrimSpace(profileName)
+	if profileName == "" {
+		profileName = DefaultProfileName
+	}
 	installed := getInstalled(ctx)
 	if len(installed) == 0 {
 		return nil, errors.New(
@@ -126,18 +134,20 @@ func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func
 		)
 	}
 
-	// Load existing config so we can pre-check saved skills and seed saved
-	// prompts. A load error here means the settings file is malformed; log
-	// at Warn so users debugging "my saved skills aren't pre-checked" can
+	// Load existing profile config so we can pre-check saved skills and seed
+	// saved prompts. A load error here means the settings file is malformed;
+	// log at Warn so users debugging "my saved skills aren't pre-checked" can
 	// see why, but keep going with an empty prefill — runReview already
 	// surfaces the same error distinctly when it's the first load.
 	existing := map[string]settings.ReviewConfig{}
-	existingFixAgent := ""
+	existingMaster := ""
 	if s, err := settings.Load(ctx); err != nil {
 		logging.Warn(ctx, "settings.Load failed when pre-filling picker", slog.String("error", err.Error()))
 	} else if s != nil {
-		existing = s.Review
-		existingFixAgent = s.ReviewFixAgent
+		if profile, ok := s.ReviewProfiles[profileName]; ok {
+			existing = profile.Agents
+			existingMaster = profile.Master
+		}
 	}
 
 	// Up-front header: make the order and count obvious so users can spot
@@ -223,14 +233,14 @@ func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func
 		return nil, errors.New("no review skills or prompt configured")
 	}
 
-	fixAgent, err := pickReviewFixAgentPreference(ctx, merged, existingFixAgent)
+	masterAgent, err := pickReviewMasterAgentPreference(ctx, merged, existingMaster)
 	if err != nil {
 		return nil, err
 	}
-	if err := saveReviewConfigAndFixAgent(ctx, merged, fixAgent); err != nil {
+	if err := saveReviewProfileConfig(ctx, profileName, merged, masterAgent); err != nil {
 		return nil, err
 	}
-	fmt.Fprintln(out, "Saved review config to local review preferences. Edit later with `entire review --edit`.")
+	fmt.Fprintf(out, "Saved review profile %q to local review preferences. Edit later with `entire review --edit --profile %s`.\n", profileName, profileName)
 	return merged, nil
 }
 
@@ -286,6 +296,43 @@ func saveReviewConfigAndFixAgent(ctx context.Context, review map[string]settings
 	return nil
 }
 
+func saveReviewProfileConfig(ctx context.Context, profileName string, agents map[string]settings.ReviewConfig, master string) error {
+	prefs, err := settings.LoadClonePreferences(ctx)
+	if err != nil {
+		return fmt.Errorf("load review preferences before save: %w", err)
+	}
+	if prefs == nil {
+		prefs = &settings.ClonePreferences{}
+	}
+	if prefs.ReviewProfiles == nil {
+		prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{}
+	}
+	prefs.ReviewProfiles[profileName] = settings.ReviewProfileConfig{
+		Task:   profileTask(profileName, settings.ReviewProfileConfig{}),
+		Agents: agents,
+		Master: master,
+	}
+	if prefs.ReviewDefaultProfile == "" {
+		prefs.ReviewDefaultProfile = profileName
+	}
+	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+		return fmt.Errorf("save review preferences: %w", err)
+	}
+	return nil
+}
+
+func pickReviewMasterAgentPreference(ctx context.Context, review map[string]settings.ReviewConfig, current string) (string, error) {
+	choices := reviewMasterAgentChoices(review)
+	switch len(choices) {
+	case 0:
+		return current, nil
+	case 1:
+		return choices[0].Name, nil
+	default:
+		return promptForReviewMasterAgent(ctx, choices, current)
+	}
+}
+
 func pickReviewFixAgentPreference(ctx context.Context, review map[string]settings.ReviewConfig, current string) (string, error) {
 	choices := reviewFixAgentChoices(review)
 	switch len(choices) {
@@ -298,20 +345,69 @@ func pickReviewFixAgentPreference(ctx context.Context, review map[string]setting
 	}
 }
 
-// ComputeEligibleConfigured returns the sorted list of agents that are both
-// configured (non-zero ReviewConfig entry) AND have hooks installed. Only
-// eligible agents are valid picker targets — spawning a review for an agent
-// without hooks would silently drop the review metadata.
+func reviewMasterAgentChoices(configured map[string]settings.ReviewConfig) []AgentChoice {
+	choices := make([]AgentChoice, 0, len(configured))
+	for name, cfg := range configured {
+		if cfg.IsZero() {
+			continue
+		}
+		ag, err := agent.Get(types.AgentName(name))
+		if err != nil {
+			continue
+		}
+		if _, ok := agent.AsTextGenerator(ag); !ok {
+			continue
+		}
+		choices = append(choices, AgentChoice{Name: name, Label: string(ag.Type())})
+	}
+	sort.Slice(choices, func(i, j int) bool { return choices[i].Name < choices[j].Name })
+	return choices
+}
+
+func promptForReviewMasterAgent(ctx context.Context, choices []AgentChoice, saved string) (string, error) {
+	options := make([]huh.Option[string], 0, len(choices))
+	for _, choice := range choices {
+		options = append(options, huh.NewOption(choice.Label, choice.Name))
+	}
+	picked := defaultReviewFixAgentPick(choices, saved)
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Choose review master").
+			Description("The master critically evaluates worker reports and writes the final report.").
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("review master picker: %w", err)
+	}
+	return picked, nil
+}
+
+// ComputeEligibleConfigured returns the sorted list of legacy review agents
+// that are both configured (non-zero ReviewConfig entry) AND have hooks
+// installed. New review execution uses ComputeEligibleConfiguredForProfile;
+// this helper remains for tests and old picker helpers.
 func ComputeEligibleConfigured(s *settings.EntireSettings, installed []types.AgentName) []AgentChoice {
 	if s == nil {
 		return nil
 	}
+	return eligibleAgentChoices(s.Review, installed)
+}
+
+// ComputeEligibleConfiguredForProfile returns the sorted list of agents in a
+// profile that are both configured and have hooks installed.
+func ComputeEligibleConfiguredForProfile(profile settings.ReviewProfileConfig, installed []types.AgentName) []AgentChoice {
+	return eligibleAgentChoices(profile.Agents, installed)
+}
+
+func eligibleAgentChoices(configured map[string]settings.ReviewConfig, installed []types.AgentName) []AgentChoice {
 	installedSet := make(map[types.AgentName]struct{}, len(installed))
 	for _, name := range installed {
 		installedSet[name] = struct{}{}
 	}
-	out := make([]AgentChoice, 0, len(s.Review))
-	for name, cfg := range s.Review {
+	out := make([]AgentChoice, 0, len(configured))
+	for name, cfg := range configured {
 		if cfg.IsZero() {
 			continue
 		}
@@ -349,6 +445,19 @@ func computeLaunchableEligible(
 	reviewerFor func(string) reviewtypes.AgentReviewer,
 ) []AgentChoice {
 	eligible := ComputeEligibleConfigured(s, installed)
+	return filterLaunchableEligible(eligible, reviewerFor)
+}
+
+func computeLaunchableEligibleForProfile(
+	profile settings.ReviewProfileConfig,
+	installed []types.AgentName,
+	reviewerFor func(string) reviewtypes.AgentReviewer,
+) []AgentChoice {
+	eligible := ComputeEligibleConfiguredForProfile(profile, installed)
+	return filterLaunchableEligible(eligible, reviewerFor)
+}
+
+func filterLaunchableEligible(eligible []AgentChoice, reviewerFor func(string) reviewtypes.AgentReviewer) []AgentChoice {
 	out := make([]AgentChoice, 0, len(eligible))
 	for _, c := range eligible {
 		if reviewerFor(c.Name) != nil {
