@@ -306,6 +306,10 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return fmt.Errorf("failed to write checkpoint: %w", err)
 	}
 
+	if err := mirrorToV1CustomRef(ctx, repo); err != nil {
+		return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", paths.MetadataBranchName, paths.MetadataRefName, err)
+	}
+
 	// Create or update session state.
 	if err := saveAttachSessionState(logCtx, repo, existingState, sessionID, ag.Type(), transcriptPath, checkpointID, meta, tokenUsage, opts, reviewSkills); err != nil {
 		logging.Warn(logCtx, "failed to save session state", "error", err)
