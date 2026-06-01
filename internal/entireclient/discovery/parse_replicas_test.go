@@ -70,6 +70,10 @@ func TestHostInCluster(t *testing.T) {
 		{"acquired.entire.io", "entire.io", true}, // registrable domain — wildcard OK
 		{"entire.io", "entire.io", true},          // exact
 		{"a.b.entire.io", "entire.io", true},      // deeper subdomain
+		// IP clusters: exact match only, never wildcard — a host that
+		// merely ends with the IP string must not be treated as in-cluster.
+		{"evil.127.0.0.1", "127.0.0.1", false},
+		{"127.0.0.1", "127.0.0.1", true}, // exact still in-cluster
 	}
 	for _, tt := range tests {
 		got := HostInCluster(tt.host, tt.cluster)

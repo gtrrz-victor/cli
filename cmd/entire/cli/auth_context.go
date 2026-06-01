@@ -88,16 +88,20 @@ func runAuthContexts(w io.Writer) error {
 	if err != nil {
 		return err //nolint:wrapcheck // already a user-facing message
 	}
+	// Print login contexts (or the empty-state hint), then always fall
+	// through to cluster bindings — a binding can outlive every context
+	// (manual edits, partial cleanup, a deleted context), and that orphan
+	// is exactly the kind of thing the audit path must surface.
 	if len(all) == 0 {
 		fmt.Fprintln(w, "No login contexts. Run 'entire login' to authenticate.")
-		return nil
-	}
-	for _, c := range all {
-		marker := " "
-		if c.Name == current {
-			marker = "*"
+	} else {
+		for _, c := range all {
+			marker := " "
+			if c.Name == current {
+				marker = "*"
+			}
+			fmt.Fprintf(w, "%s %s\t%s\t%s\n", marker, c.Name, c.Handle, c.CoreURL)
 		}
-		fmt.Fprintf(w, "%s %s\t%s\t%s\n", marker, c.Name, c.Handle, c.CoreURL)
 	}
 	return printClusterBindings(w)
 }

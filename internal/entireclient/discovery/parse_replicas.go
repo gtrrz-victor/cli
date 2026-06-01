@@ -60,13 +60,19 @@ func HostInCluster(host, cluster string) bool {
 // clusterAllowsSubdomains reports whether cluster is specific enough that
 // treating its subdomains as same-cluster is safe: it must be strictly
 // more specific than its own public suffix (a registrable domain or
-// deeper), never a bare public suffix like "io"/"com"/"co.uk". IP
-// literals are allowed — they have no subdomain semantics and are matched
-// exactly in practice. cluster is expected to already be lowercased and
-// port-stripped.
+// deeper), never a bare public suffix like "io"/"com"/"co.uk" and never a
+// single-label name (which is its own public suffix).
+//
+// IP literals are rejected outright: an IP has no subdomain semantics, so
+// only the exact-host match in HostInCluster applies. Allowing the
+// wildcard for an IP cluster would let a replica URL like
+// https://evil.127.0.0.1 string-suffix-match the cluster IP and wrongly
+// inherit credential-carry trust.
+//
+// cluster is expected to already be lowercased and port-stripped.
 func clusterAllowsSubdomains(cluster string) bool {
 	if net.ParseIP(cluster) != nil {
-		return true
+		return false
 	}
 	if !strings.Contains(cluster, ".") {
 		return false

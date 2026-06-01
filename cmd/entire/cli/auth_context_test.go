@@ -87,6 +87,36 @@ func TestRunAuthContextsSurfacesClusterBindings(t *testing.T) {
 	}
 }
 
+// TestRunAuthContextsSurfacesOrphanedBinding: a binding can outlive every
+// login context (manual edit, deleted context). The audit path must still
+// list it even though there are no contexts to print.
+func TestRunAuthContextsSurfacesOrphanedBinding(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	// Written directly: BindCluster refuses a binding to a missing context,
+	// so an orphan only arises via manual edits or partial cleanup.
+	if err := contexts.Save(cfgDir, &contexts.File{
+		ClusterContexts: map[string]string{"evil.example.com": "deleted-ctx"},
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runAuthContexts(&out); err != nil {
+		t.Fatalf("runAuthContexts: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "No login contexts") {
+		t.Fatalf("listing = %q, want the empty-state hint", got)
+	}
+	if !strings.Contains(got, "Cluster bindings") || !strings.Contains(got, "evil.example.com") {
+		t.Fatalf("listing = %q, want the orphaned binding surfaced", got)
+	}
+}
+
 // TestUnbindCluster: removing a binding leaves the underlying context
 // intact and is idempotent.
 func TestUnbindCluster(t *testing.T) {
