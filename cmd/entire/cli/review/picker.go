@@ -52,15 +52,15 @@ func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "You'll pick worker skills for a review profile. They're saved to")
-	fmt.Fprintln(out, "local review preferences; edit later with `entire review --edit`.")
+	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
+	fmt.Fprintln(out, "local review preferences; edit details later with `entire review --edit`.")
 	fmt.Fprintln(out, "After setup, the review will run that profile.")
 	fmt.Fprintln(out)
 
 	proceed := true
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("Set up review skills now?").
+			Title("Set up review now?").
 			Affirmative("Yes").
 			Negative("Cancel").
 			Value(&proceed),
@@ -75,6 +75,63 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	return proceed
 }
 
+// RunReviewGuidedSetup is the simple first-run path for `entire review`.
+// It intentionally avoids the per-agent skills picker: users choose the review
+// profile and worker agents, then Entire fills in opinionated per-agent
+// defaults. Advanced skill-level editing remains available via --edit.
+func RunReviewGuidedSetup(
+	ctx context.Context,
+	out io.Writer,
+	installed []types.AgentName,
+	reviewerFor func(string) reviewtypes.AgentReviewer,
+	profileName string,
+) (string, settings.ReviewProfileConfig, error) {
+	if !ConfirmFirstRunSetup(ctx, out) {
+		return "", settings.ReviewProfileConfig{}, ErrPickerCancelled
+	}
+
+	launchable := launchableInstalledAgentNames(installed, reviewerFor)
+	if len(launchable) == 0 {
+		return "", settings.ReviewProfileConfig{}, errors.New("no launchable agents with hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
+	}
+
+	profileName = strings.TrimSpace(profileName)
+	profileWasProvided := profileName != ""
+	if profileName == "" {
+		profileName = DefaultProfileName
+	}
+	if !profileWasProvided {
+		pickedProfile, err := promptForSimpleReviewProfile(ctx)
+		if err != nil {
+			return "", settings.ReviewProfileConfig{}, err
+		}
+		profileName = pickedProfile
+	}
+
+	selected := launchable
+	if len(launchable) > 1 {
+		picked, err := promptForSimpleReviewAgents(ctx, launchable)
+		if err != nil {
+			return "", settings.ReviewProfileConfig{}, err
+		}
+		selected = picked
+	}
+	profile, err := defaultReviewProfileForInstalledAgents(ctx, profileName, agentNamesToTypes(selected), reviewerFor)
+	if err != nil {
+		return "", settings.ReviewProfileConfig{}, err
+	}
+	if len(profile.Agents) > 1 {
+		master, err := promptForSimpleReviewMaster(ctx, profile)
+		if err != nil {
+			return "", settings.ReviewProfileConfig{}, err
+		}
+		profile.Master = master
+	}
+	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
+	fmt.Fprintln(out)
+	return profileName, profile, nil
+}
+
 // RunReviewConfigPicker presents a huh multi-select for each installed agent
 // that has curated review skills, and saves the selection to
 // clone-local review preferences. Previously-saved skills are pre-checked via
@@ -82,6 +139,87 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 // selections in its own agent picker.
 //
 // getInstalled is injected to avoid an import cycle with the cli package.
+func launchableInstalledAgentNames(installed []types.AgentName, reviewerFor func(string) reviewtypes.AgentReviewer) []string {
+	names := make([]string, 0, len(installed))
+	for _, name := range installed {
+		if reviewerFor != nil && reviewerFor(string(name)) == nil {
+			continue
+		}
+		names = append(names, string(name))
+	}
+	sort.Strings(names)
+	return names
+}
+
+func agentNamesToTypes(names []string) []types.AgentName {
+	out := make([]types.AgentName, len(names))
+	for i, name := range names {
+		out[i] = types.AgentName(name)
+	}
+	return out
+}
+
+func promptForSimpleReviewProfile(ctx context.Context) (string, error) {
+	picked := DefaultProfileName
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("What kind of review?").
+			Options(
+				huh.NewOption("General — correctness, regressions, tests", DefaultProfileName),
+				huh.NewOption("Security — auth, injection, secrets", "security"),
+				huh.NewOption("Accessibility — keyboard, screen readers, contrast", "accessibility"),
+			).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("review profile picker: %w", err)
+	}
+	return picked, nil
+}
+
+func promptForSimpleReviewAgents(ctx context.Context, launchable []string) ([]string, error) {
+	options := make([]huh.Option[string], 0, len(launchable))
+	for _, name := range launchable {
+		options = append(options, huh.NewOption(labelForSimpleAgent(name), name).Selected(true))
+	}
+	picked := append([]string(nil), launchable...)
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Title("Which agents should review?").
+			Description("All are selected by default. Space toggles, enter confirms.").
+			Options(options...).
+			Height(len(options) + 2).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return nil, fmt.Errorf("review agent picker: %w", err)
+	}
+	if len(picked) == 0 {
+		return nil, ErrNoAgentsSelected
+	}
+	sort.Strings(picked)
+	return picked, nil
+}
+
+func labelForSimpleAgent(name string) string {
+	ag, err := agent.Get(types.AgentName(name))
+	if err != nil {
+		return name
+	}
+	return string(ag.Type())
+}
+
+func promptForSimpleReviewMaster(ctx context.Context, profile settings.ReviewProfileConfig) (string, error) {
+	choices := reviewMasterAgentChoices(profile.Agents)
+	if len(choices) == 0 {
+		return "", errors.New("no selected review agent can write the final report")
+	}
+	if len(choices) == 1 {
+		return choices[0].Name, nil
+	}
+	return promptForReviewMasterAgent(ctx, choices, profile.Master)
+}
+
 func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName) (map[string]settings.ReviewConfig, error) {
 	return RunReviewProfileConfigPicker(ctx, out, getInstalled, DefaultProfileName)
 }

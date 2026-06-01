@@ -209,23 +209,35 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	}
 	if len(s.ReviewProfiles) == 0 {
 		profileForSetup := profileOverride
-		if profileForSetup == "" {
-			profileForSetup = DefaultProfileName
-		}
-		profile, defaultErr := defaultReviewProfileForInstalledAgents(ctx, profileForSetup, installed, deps.ReviewerFor)
-		if defaultErr != nil {
-			cmd.SilenceUsage = true
-			fmt.Fprintln(cmd.ErrOrStderr(), defaultErr.Error())
-			return silentErr(defaultErr)
+		var profile settings.ReviewProfileConfig
+		if interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively() {
+			var setupErr error
+			profileForSetup, profile, setupErr = RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileForSetup)
+			if setupErr != nil {
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), setupErr.Error())
+				return silentErr(setupErr)
+			}
+		} else {
+			if profileForSetup == "" {
+				profileForSetup = DefaultProfileName
+			}
+			defaultProfile, defaultErr := defaultReviewProfileForInstalledAgents(ctx, profileForSetup, installed, deps.ReviewerFor)
+			if defaultErr != nil {
+				cmd.SilenceUsage = true
+				fmt.Fprintln(cmd.ErrOrStderr(), defaultErr.Error())
+				return silentErr(defaultErr)
+			}
+			profile = defaultProfile
+			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
+			fmt.Fprintln(out, "Edit later with `entire review --edit`.")
+			fmt.Fprintln(out)
 		}
 		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
 			return saveErr
 		}
 		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
 		s.ReviewDefaultProfile = profileForSetup
-		fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
-		fmt.Fprintln(out, "Edit later with `entire review --edit`.")
-		fmt.Fprintln(out)
 	}
 
 	profileName, profile, err := selectReviewProfile(s, profileOverride)
