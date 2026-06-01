@@ -44,7 +44,7 @@ func profileTask(name string, cfg settings.ReviewProfileConfig) string {
 // is intentionally no migration from the old review map).
 func selectReviewProfile(s *settings.EntireSettings, override string) (string, settings.ReviewProfileConfig, error) {
 	if s == nil || len(s.ReviewProfiles) == 0 {
-		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire review --edit` or add review_profiles to Entire preferences")
+		return "", settings.ReviewProfileConfig{}, errors.New("no review profiles configured; run `entire review --configure` or add review_profiles to Entire preferences")
 	}
 	profiles := nonZeroProfiles(s.ReviewProfiles)
 	if len(profiles) == 0 {
@@ -221,6 +221,10 @@ func agentSupportsTextGeneration(_ context.Context, name string) bool {
 }
 
 func saveDefaultReviewProfile(ctx context.Context, profileName string, profile settings.ReviewProfileConfig) error {
+	return saveReviewProfile(ctx, profileName, profile, false)
+}
+
+func saveReviewProfile(ctx context.Context, profileName string, profile settings.ReviewProfileConfig, makeDefault bool) error {
 	prefs, err := settings.LoadClonePreferences(ctx)
 	if err != nil {
 		return fmt.Errorf("load review preferences before save: %w", err)
@@ -232,7 +236,7 @@ func saveDefaultReviewProfile(ctx context.Context, profileName string, profile s
 		prefs.ReviewProfiles = map[string]settings.ReviewProfileConfig{}
 	}
 	prefs.ReviewProfiles[profileName] = profile
-	if prefs.ReviewDefaultProfile == "" {
+	if makeDefault || prefs.ReviewDefaultProfile == "" {
 		prefs.ReviewDefaultProfile = profileName
 	}
 	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {

@@ -72,6 +72,7 @@ type Deps struct {
 // provided deps. Callers in the cli package pass a fully-populated Deps;
 // tests pass a Deps with stub fields.
 func NewCommand(deps Deps) *cobra.Command {
+	var configure bool
 	var edit bool
 	var agentOverride string
 	var baseOverride string
@@ -90,7 +91,8 @@ func NewCommand(deps Deps) *cobra.Command {
 		Short:  "Run a review profile against the current branch",
 		Long: `Run a named review profile against the current branch. Review
 profiles are loaded from Entire settings and clone-local preferences. On
-first run, an interactive picker writes clone-local preferences.
+first run, simple guided setup writes clone-local preferences and asks before
+starting agents.
 
 Labs entry: review is experimental. We are actively refining it based on user
 feedback.
@@ -99,7 +101,8 @@ The review session is recorded as part of the next checkpoint, so the
 review metadata is permanently attached to the commit it covers.
 
 Flags:
-  --edit         re-open the review profile config picker
+  --configure    open the simple review setup wizard without starting agents
+  --edit         re-open the advanced review profile skill picker
   --findings     browse local review findings
   --fix          apply review findings in a normal agent session
   --all          with --fix, apply all sources/findings without selectors
@@ -135,17 +138,20 @@ Subcommands:
 				return errors.New("--all requires --fix")
 			}
 			modes := 0
-			for _, enabled := range []bool{edit, findings, fix} {
+			for _, enabled := range []bool{configure, edit, findings, fix} {
 				if enabled {
 					modes++
 				}
 			}
 			if modes > 1 {
-				return errors.New("--edit, --findings, and --fix are mutually exclusive")
+				return errors.New("--configure, --edit, --findings, and --fix are mutually exclusive")
 			}
 			profileName := profileOverride
 			if len(args) == 1 && !fix {
 				profileName = args[0]
+			}
+			if configure {
+				return runReviewConfigure(ctx, cmd, profileName, deps)
 			}
 			if edit {
 				_, err := RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
@@ -164,7 +170,8 @@ Subcommands:
 			return runReview(ctx, cmd, agentOverride, baseOverride, profileName, perRunPrompt, deps)
 		},
 	}
-	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the review profile config picker")
+	cmd.Flags().BoolVar(&configure, "configure", false, "open the simple review setup wizard without starting agents")
+	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the advanced review profile skill picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
 	cmd.Flags().BoolVar(&fix, "fix", false, "apply review findings in a normal agent session")
 	cmd.Flags().BoolVar(&all, "all", false, "with --fix, apply all sources/findings without selectors")
@@ -176,6 +183,42 @@ Subcommands:
 		cmd.AddCommand(deps.AttachCmd)
 	}
 	return cmd
+}
+
+func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride string, deps Deps) error {
+	out := cmd.OutOrStdout()
+	silentErr := deps.NewSilentError
+	if !interactive.IsTerminalWriter(out) || !interactive.CanPromptInteractively() {
+		cmd.SilenceUsage = true
+		err := errors.New("review configuration requires an interactive terminal; run `entire review --edit` or edit review_profiles manually")
+		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+		return silentErr(err)
+	}
+	if _, err := paths.WorktreeRoot(ctx); err != nil {
+		cmd.SilenceUsage = true
+		fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Run `entire enable` first.")
+		return silentErr(errors.New("not a git repository"))
+	}
+	s, err := settings.Load(ctx)
+	if err != nil {
+		cmd.SilenceUsage = true
+		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
+		return silentErr(err)
+	}
+	profileName := strings.TrimSpace(profileOverride)
+	if profileName == "" && s != nil {
+		profileName = strings.TrimSpace(s.ReviewDefaultProfile)
+	}
+	installed := deps.GetAgentsWithHooksInstalled(ctx)
+	profileName, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileName, false)
+	if setupErr != nil {
+		return handlePickerError(cmd, silentErr, setupErr)
+	}
+	if err := saveReviewProfile(ctx, profileName, profile, true); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Review profile %q saved. Run `entire review`, or `entire review %s`, to start.\n", profileName, profileName)
+	return nil
 }
 
 // runReview executes the main review flow.
@@ -210,13 +253,12 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 	if len(s.ReviewProfiles) == 0 {
 		profileForSetup := profileOverride
 		var profile settings.ReviewProfileConfig
-		if interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively() {
+		guidedSetup := interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively()
+		if guidedSetup {
 			var setupErr error
-			profileForSetup, profile, setupErr = RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileForSetup)
+			profileForSetup, profile, setupErr = RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileForSetup, true)
 			if setupErr != nil {
-				cmd.SilenceUsage = true
-				fmt.Fprintln(cmd.ErrOrStderr(), setupErr.Error())
-				return silentErr(setupErr)
+				return handlePickerError(cmd, silentErr, setupErr)
 			}
 		} else {
 			if profileForSetup == "" {
@@ -230,7 +272,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 			}
 			profile = defaultProfile
 			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
-			fmt.Fprintln(out, "Edit later with `entire review --edit`.")
+			fmt.Fprintln(out, "Configure later with `entire review --configure`.")
 			fmt.Fprintln(out)
 		}
 		if saveErr := saveDefaultReviewProfile(ctx, profileForSetup, profile); saveErr != nil {
@@ -238,6 +280,16 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 		}
 		s.ReviewProfiles = map[string]settings.ReviewProfileConfig{profileForSetup: profile}
 		s.ReviewDefaultProfile = profileForSetup
+		if guidedSetup {
+			runNow, confirmErr := ConfirmRunReviewNow(ctx, out)
+			if confirmErr != nil {
+				return handlePickerError(cmd, silentErr, confirmErr)
+			}
+			if !runNow {
+				return nil
+			}
+			fmt.Fprintln(out)
+		}
 	}
 
 	profileName, profile, err := selectReviewProfile(s, profileOverride)

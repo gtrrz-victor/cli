@@ -53,8 +53,8 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "You'll choose a review type and worker agents. They're saved to")
-	fmt.Fprintln(out, "local review preferences; edit details later with `entire review --edit`.")
-	fmt.Fprintln(out, "After setup, the review will run that profile.")
+	fmt.Fprintln(out, "local review preferences; configure later with `entire review --configure`.")
+	fmt.Fprintln(out, "After setup, you can start the review immediately.")
 	fmt.Fprintln(out)
 
 	proceed := true
@@ -75,7 +75,7 @@ func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
 	return proceed
 }
 
-// RunReviewGuidedSetup is the simple first-run path for `entire review`.
+// RunReviewGuidedSetup is the simple config path for `entire review`.
 // It intentionally avoids the per-agent skills picker: users choose the review
 // profile and worker agents, then Entire fills in opinionated per-agent
 // defaults. Advanced skill-level editing remains available via --edit.
@@ -85,9 +85,16 @@ func RunReviewGuidedSetup(
 	installed []types.AgentName,
 	reviewerFor func(string) reviewtypes.AgentReviewer,
 	profileName string,
+	firstRun bool,
 ) (string, settings.ReviewProfileConfig, error) {
-	if !ConfirmFirstRunSetup(ctx, out) {
-		return "", settings.ReviewProfileConfig{}, ErrPickerCancelled
+	if firstRun {
+		if !ConfirmFirstRunSetup(ctx, out) {
+			return "", settings.ReviewProfileConfig{}, ErrPickerCancelled
+		}
+	} else {
+		fmt.Fprintln(out, "Configure a review profile.")
+		fmt.Fprintln(out, "You'll choose a review type and worker agents. Skill details use opinionated defaults.")
+		fmt.Fprintln(out)
 	}
 
 	launchable := launchableInstalledAgentNames(installed, reviewerFor)
@@ -218,6 +225,24 @@ func promptForSimpleReviewMaster(ctx context.Context, profile settings.ReviewPro
 		return choices[0].Name, nil
 	}
 	return promptForReviewMasterAgent(ctx, choices, profile.Master)
+}
+
+func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
+	runNow := true
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Start review now?").
+			Affirmative("Start review").
+			Negative("Not now").
+			Value(&runNow),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return false, fmt.Errorf("start review confirmation: %w", err)
+	}
+	if !runNow {
+		fmt.Fprintln(out, "Review not started. Run `entire review` when ready.")
+	}
+	return runNow, nil
 }
 
 func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName) (map[string]settings.ReviewConfig, error) {
