@@ -12,9 +12,12 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
-// mirrorToV1CustomRef advances refs/entire/checkpoints/v1.1 to the v1 metadata
-// branch tip when opted in, returning errors so callers can surface them.
-// The hook-side equivalent (strategy.mirrorMetadataToV1CustomRef) logs instead.
+// mirrorToV1CustomRef sets refs/entire/checkpoints/v1.1 to the v1 metadata
+// branch tip when opted in, returning errors so callers can surface them. v1
+// is the source of truth; the v1.1 ref is a strict local mirror, so this
+// force-overwrites rather than safely advancing. The hook-side equivalent
+// (strategy.mirrorMetadataToV1CustomRef) logs errors instead of returning
+// them.
 func mirrorToV1CustomRef(ctx context.Context, repo *git.Repository) error {
 	if !settings.MirrorsToV1CustomRef(ctx) {
 		return nil
