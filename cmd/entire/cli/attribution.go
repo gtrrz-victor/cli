@@ -60,7 +60,6 @@ type attributionLine struct {
 	Author          string                 `json:"author,omitempty"`
 	AuthorTime      *time.Time             `json:"author_time,omitempty"`
 	CheckpointID    string                 `json:"checkpoint_id,omitempty"`
-	CheckpointIDs   []string               `json:"checkpoint_ids,omitempty"`
 	SessionID       string                 `json:"session_id,omitempty"`
 	Agent           string                 `json:"agent,omitempty"`
 	Model           string                 `json:"model,omitempty"`
@@ -85,7 +84,6 @@ type attributionCandidate struct {
 
 type attributionCheckpointContext struct {
 	CheckpointID    string   `json:"checkpoint_id"`
-	SessionIDs      []string `json:"session_ids,omitempty"`
 	SessionID       string   `json:"session_id,omitempty"`
 	Agent           string   `json:"agent,omitempty"`
 	Model           string   `json:"model,omitempty"`
@@ -345,34 +343,13 @@ func (r *attributionResolver) resolveLine(raw rawBlameLine, file string) attribu
 	line.Authorship = attributionAI
 	var candidates []attributionCandidate
 	for _, cpID := range cpIDs {
-		ctx := r.checkpointContext(cpID, file)
-		candidate := attributionCandidate{
-			CheckpointID:    ctx.CheckpointID,
-			SessionID:       ctx.SessionID,
-			Agent:           ctx.Agent,
-			Model:           ctx.Model,
-			Prompt:          ctx.Prompt,
-			Intent:          ctx.Intent,
-			FilesTouched:    ctx.FilesTouched,
-			MetadataMissing: ctx.MetadataMissing,
-			Mixed:           ctx.Mixed,
-		}
-		candidates = append(candidates, candidate)
-		line.CheckpointIDs = append(line.CheckpointIDs, ctx.CheckpointID)
+		candidates = append(candidates, candidateFromContext(r.checkpointContext(cpID, file)))
 	}
 
 	preferred := preferredAttributionCandidate(candidates, file)
-	if preferred != nil {
-		line.CheckpointID = preferred.CheckpointID
-		line.SessionID = preferred.SessionID
-		line.Agent = preferred.Agent
-		line.Model = preferred.Model
-		line.Prompt = preferred.Prompt
-		line.Intent = preferred.Intent
-		line.MetadataMissing = preferred.MetadataMissing
-		if preferred.Mixed {
-			line.Authorship = attributionMixed
-		}
+	applyPreferredToLine(&line, preferred)
+	if preferred != nil && preferred.Mixed {
+		line.Authorship = attributionMixed
 	}
 	if len(candidates) > 0 {
 		line.Candidates = candidates
@@ -430,9 +407,6 @@ func (r *attributionResolver) readCheckpointContext(cpID id.CheckpointID, file s
 		if readErr != nil {
 			continue
 		}
-		if sessionCtx.SessionID != "" {
-			ctx.SessionIDs = appendUniqueString(ctx.SessionIDs, sessionCtx.SessionID)
-		}
 		if attributionIsMixed(sessionCtx.Attribution) {
 			ctx.Mixed = true
 		}
@@ -481,32 +455,12 @@ func enrichAttributionLineWithFetch(ctx context.Context, file string, line *attr
 		}
 		cpCtx := resolver.checkpointContext(cpID, file)
 		checkpoints[cpCtx.CheckpointID] = cpCtx
-		updated := attributionCandidate{
-			CheckpointID:    cpCtx.CheckpointID,
-			SessionID:       cpCtx.SessionID,
-			Agent:           cpCtx.Agent,
-			Model:           cpCtx.Model,
-			Prompt:          cpCtx.Prompt,
-			Intent:          cpCtx.Intent,
-			FilesTouched:    cpCtx.FilesTouched,
-			MetadataMissing: cpCtx.MetadataMissing,
-			Mixed:           cpCtx.Mixed,
-		}
 		if cpCtx.Mixed {
 			authorship = attributionMixed
 		}
-		candidates = append(candidates, updated)
+		candidates = append(candidates, candidateFromContext(cpCtx))
 	}
-	preferred := preferredAttributionCandidate(candidates, file)
-	if preferred != nil {
-		line.CheckpointID = preferred.CheckpointID
-		line.SessionID = preferred.SessionID
-		line.Agent = preferred.Agent
-		line.Model = preferred.Model
-		line.Prompt = preferred.Prompt
-		line.Intent = preferred.Intent
-		line.MetadataMissing = preferred.MetadataMissing
-	}
+	applyPreferredToLine(line, preferredAttributionCandidate(candidates, file))
 	line.Candidates = candidates
 	line.Authorship = authorship
 	line.Tag = attributionTag(authorship)
@@ -936,36 +890,29 @@ func checkpointLineCounts(lines []attributionLine) []checkpointLineCount {
 	return out
 }
 
-func renderAttributionTag(sty statusStyles, authorship attributionAuthorship) string {
-	tag := attributionTag(authorship)
+// renderByAuthorship applies the authorship colour to text. Human and any
+// unknown authorship render plain.
+func renderByAuthorship(sty statusStyles, authorship attributionAuthorship, text string) string {
 	switch authorship {
 	case attributionAI:
-		return sty.render(sty.green, tag)
+		return sty.render(sty.green, text)
 	case attributionMixed:
-		return sty.render(sty.yellow, tag)
+		return sty.render(sty.yellow, text)
 	case attributionUncommitted:
-		return sty.render(sty.dim, tag)
+		return sty.render(sty.dim, text)
 	case attributionHuman:
-		return tag
+		return text
 	default:
-		return tag
+		return text
 	}
 }
 
+func renderAttributionTag(sty statusStyles, authorship attributionAuthorship) string {
+	return renderByAuthorship(sty, authorship, attributionTag(authorship))
+}
+
 func renderAttributionContent(sty statusStyles, line attributionLine) string {
-	content := stringutil.TruncateRunes(line.Content, 120, "...")
-	switch line.Authorship {
-	case attributionAI:
-		return sty.render(sty.green, content)
-	case attributionMixed:
-		return sty.render(sty.yellow, content)
-	case attributionUncommitted:
-		return sty.render(sty.dim, content)
-	case attributionHuman:
-		return content
-	default:
-		return content
-	}
+	return renderByAuthorship(sty, line.Authorship, stringutil.TruncateRunes(line.Content, 120, "..."))
 }
 
 func maxAttributionLineNumber(lines []attributionLine) int {
@@ -991,6 +938,28 @@ func attributionTag(authorship attributionAuthorship) string {
 	default:
 		return "[HU]"
 	}
+}
+
+// candidateFromContext projects the resolved checkpoint context onto a
+// per-line candidate. The two structs carry the same fields, so this is a
+// direct conversion — if they ever diverge, this stops compiling.
+func candidateFromContext(ctx attributionCheckpointContext) attributionCandidate {
+	return attributionCandidate(ctx)
+}
+
+// applyPreferredToLine copies the preferred candidate's metadata onto the line.
+// It does not touch line.Authorship; callers decide how Mixed maps to authorship.
+func applyPreferredToLine(line *attributionLine, preferred *attributionCandidate) {
+	if preferred == nil {
+		return
+	}
+	line.CheckpointID = preferred.CheckpointID
+	line.SessionID = preferred.SessionID
+	line.Agent = preferred.Agent
+	line.Model = preferred.Model
+	line.Prompt = preferred.Prompt
+	line.Intent = preferred.Intent
+	line.MetadataMissing = preferred.MetadataMissing
 }
 
 func preferredAttributionCandidate(candidates []attributionCandidate, file string) *attributionCandidate {
@@ -1092,7 +1061,7 @@ func appendUniqueString(values []string, value string) []string {
 }
 
 func isZeroCommit(sha string) bool {
-	return sha == "" || sha == "0000000000000000000000000000000000000000"
+	return sha == "" || sha == plumbing.ZeroHash.String()
 }
 
 func writeJSON(w io.Writer, value any) error {
