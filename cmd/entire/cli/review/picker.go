@@ -99,7 +99,7 @@ func RunReviewGuidedSetup(
 
 	launchable := launchableInstalledAgentNames(installed, reviewerFor)
 	if len(launchable) == 0 {
-		return "", settings.ReviewProfileConfig{}, errors.New("no launchable agents with hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
+		return "", settings.ReviewProfileConfig{}, errors.New("no agents with review runner adapters and hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
 	}
 
 	profileName = strings.TrimSpace(profileName)
@@ -697,12 +697,14 @@ func labelForAgentChoice(name string, cfg settings.ReviewConfig) string {
 }
 
 // computeLaunchableEligible returns the subset of ComputeEligibleConfigured
-// that also have a non-nil AgentReviewer (i.e., are launchable by the CLI).
+// that also have a non-nil AgentReviewer. "Launchable" here is a historical
+// shorthand for "has an Entire review-runner adapter"; it is not a claim about
+// whether the agent's own CLI supports headless execution.
 // Used by the dispatch fork in cmd.go to decide whether to route to the
 // multi-agent path.
 //
-// reviewerFor is deps.ReviewerFor injected at the cmd layer; it returns nil
-// for non-launchable agents (cursor, opencode, factoryai-droid, copilot-cli).
+// reviewerFor is deps.ReviewerFor injected at the cmd layer; it returns nil for
+// agents that are known to Entire but not yet wired into `entire review`.
 func computeLaunchableEligible(
 	s *settings.EntireSettings,
 	installed []types.AgentName,

@@ -34,9 +34,9 @@ func buildReviewDeps(attachCmd *cobra.Command) cliReview.Deps {
 	}
 }
 
-// launchableReviewerFor returns the AgentReviewer for known launchable agents,
-// or nil for non-launchable agents (cursor, opencode, factoryai-droid,
-// copilot-cli). This lives in the cli package to avoid the import cycle:
+// launchableReviewerFor returns the AgentReviewer for agents with a review-runner
+// adapter, or nil for agents that are known to Entire but not yet wired into
+// `entire review` fan-out. This lives in the cli package to avoid the import cycle:
 //
 //	review/cmd.go → claudecode/codex/geminicli → review
 func launchableReviewerFor(agentName string) reviewtypes.AgentReviewer {

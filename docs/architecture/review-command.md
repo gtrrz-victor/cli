@@ -20,7 +20,7 @@ entire review attach --skills <s,...>  # Declare which skills were run
 
 When no profiles are configured, `entire review` uses a simple guided setup: choose review type, choose worker agents, optionally choose models/model variants, save the profile, then explicitly confirm whether to start agents. `entire review --configure` reopens that simple config mode without starting agents. In non-interactive output, first run falls back to the default `general` profile automatically. Defaults are intentionally simple: Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude is preferred as master when available.
 
-When two or more launchable agents are configured in the selected profile and `--agent` is not set, `entire review` fans out to all configured workers. There is no per-run multi-picker: the profile is the fan-out contract. Profiles with multiple workers must set `master`; the master runs after workers finish and produces the canonical final report.
+When two or more adapter-backed review workers are configured in the selected profile and `--agent` is not set, `entire review` fans out to all configured workers. There is no per-run multi-picker: the profile is the fan-out contract. Profiles with multiple workers must set `master`; the master runs after workers finish and produces the canonical final report.
 
 ## Settings Schema
 
@@ -56,8 +56,8 @@ The profile-level `task` is the shared work item. Each `agents` map entry is a w
 ## How It Works (env-var handshake)
 
 1. `entire review` selects a profile (positional/`--profile` → `review_default_profile` → `general` → only configured profile). If no profiles exist, it runs simple guided setup in an interactive terminal and asks before starting agents, or writes an opinionated clone-local default profile in non-interactive mode. It then composes worker prompts via `review.ComposeReviewPrompt` and computes scope (mainline base ref via `review.ComputeScopeStats`, overridable with `--base`).
-2. **For launchable agents** (claude-code, codex, gemini-cli): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
-3. **For non-launchable agents** (cursor, opencode, factoryai-droid): `RunMarkerFallback` writes a `PendingReviewMarker` file and prints guidance — the user opens the agent themselves and runs the skills. Single shared file (`review/marker_fallback.go`); adding new non-launchable agents is a registry entry, not a new file.
+2. **For agents with review-runner adapters** (claude-code, codex, gemini-cli): the spawned agent process is given env vars `ENTIRE_REVIEW_{SESSION,AGENT,SKILLS,PROMPT,STARTING_SHA}` that the agent's `UserPromptSubmit` lifecycle hook reads to tag the session as `Kind = "agent_review"` with the configured skills/prompt. Each spawned process has its own env, so multiple worktrees and multi-agent runs are correct by construction (no shared marker file, no race).
+3. **For agents without review-runner adapters yet**: `RunMarkerFallback` writes a `PendingReviewMarker` file and prints guidance — the user opens the agent themselves and runs the skills. This is an adapter backlog path, not a statement that the agent cannot be launched headlessly.
 4. Worker agents run the selected profile's task; each session ends naturally.
 5. In multi-worker profiles, the configured master agent receives all worker reports and produces one critical final report. The master prompt asks it to reject unsupported claims, resolve contradictions, merge duplicates, and prioritize evidence-backed findings.
 6. On the next `git commit`, the PostCommit hook condenses worker review sessions into the checkpoint on `entire/checkpoints/v1`, with `Kind`, `ReviewSkills`, and `ReviewPrompt` recorded in `CommittedMetadata`.
@@ -73,7 +73,7 @@ Review metadata is stored at two levels on `entire/checkpoints/v1`:
 
 ## Architecture
 
-- **`AgentReviewer` interface** (`cmd/entire/cli/review/types/reviewer.go`): per-agent contract with `Name() string` and `Start(ctx, RunConfig) (Process, error)`. Each launchable agent implements this in its own package.
+- **`AgentReviewer` interface** (`cmd/entire/cli/review/types/reviewer.go`): per-agent contract with `Name() string` and `Start(ctx, RunConfig) (Process, error)`. Each adapter-backed review worker implements this in its own package.
 - **`ReviewerTemplate`** (`cmd/entire/cli/review/types/template.go`): shared scaffolding (Spawn → pipe stdout → run parser → forward events → close). Each agent supplies only its `BuildCmd` (argv/env) and `Parser` (stdout-to-Event stream).
 - **`Sink` interface**: consumers of the event stream. Production sinks: `DumpSink` (post-run per-agent narrative), `TUISink` (Bubble Tea live dashboard with Ctrl+O drill-in), `SynthesisSink` (profile-master final report / legacy prompted synthesis). Sinks are composed by `composeMultiAgentSinks` based on TTY detection.
 - **`Run(ctx, reviewer, cfg, sinks)`** (`cmd/entire/cli/review/run.go`): single-agent orchestrator. Forwards events to all sinks via `AgentEvent`, calls `RunFinished` once at end with a populated `RunSummary`. Sink dispatch is serialized; sinks need not internally synchronize.
@@ -99,7 +99,7 @@ For the plugin cache, `pickLatestVersion` picks ONE version directory per plugin
 
 The redesign eliminated several constructs from the prior implementation. None should be reintroduced without explicit design:
 
-- `PendingReviewMarker` for launchable agents (env-var handshake makes it unnecessary)
+- `PendingReviewMarker` for adapter-backed review workers (env-var handshake makes it unnecessary)
 - `WorktreePath` field + worktree-scoping logic (env per process eliminates the multi-tenant problem)
 - `AgentEntries` map on the marker (each agent has its own env)
 - Marker overwrite tripwire / refuse-attach guard (the bug classes they defended against don't exist)
@@ -114,7 +114,7 @@ The redesign eliminated several constructs from the prior implementation. None s
 - `cmd/entire/cli/review/cmd.go` — `NewCommand()`, `runReview` dispatch fork, `composeMultiAgentSinks`
 - `cmd/entire/cli/review/picker.go` / `profile.go` — profile config picker, first-run setup, profile resolution/default tasks
 - `cmd/entire/cli/review/attach.go` + `cli/review_helpers.go:newReviewAttachCmd` — `entire review attach` subcommand
-- `cmd/entire/cli/review/marker_fallback.go` — non-launchable agent flow (single shared file)
+- `cmd/entire/cli/review/marker_fallback.go` — manual fallback for agents without review-runner adapters yet (single shared file)
 - `cmd/entire/cli/review/prompt.go` / `scope.go` / `run.go` / `dump.go` / `run_multi.go` — core machinery (single-agent + N-agent fan-in)
 - `cmd/entire/cli/review/tui_sink.go` / `tui_model.go` / `tui_detail.go` — Bubble Tea TUI sink
 - `cmd/entire/cli/review/synthesis_sink.go` / `synthesis_prompt.go` — opt-in cross-agent verdict

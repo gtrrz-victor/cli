@@ -2,9 +2,9 @@
 //
 // cmd.go provides NewCommand(), the cobra entry point for `entire review`.
 // It routes through the new AgentReviewer / Sink / Run architecture for
-// launchable agents (claude-code, codex, gemini) and falls back to
-// RunMarkerFallback for non-launchable agents (cursor, opencode,
-// factoryai-droid, copilot-cli).
+// agents with review-runner adapters (claude-code, codex, gemini) and falls
+// back to RunMarkerFallback for agents that are not yet wired into that review
+// runner contract.
 package review
 
 import (
@@ -56,8 +56,8 @@ type Deps struct {
 	ReviewCheckpointContext func(ctx context.Context, worktreeRoot string, scopeBaseRef string) string
 
 	// ReviewerFor maps an agent registry name to its AgentReviewer
-	// implementation. Returns nil for non-launchable agents (cursor, opencode,
-	// factoryai-droid, copilot-cli). Injected to break the import cycle:
+	// implementation. Returns nil for agents that do not yet have a review-runner
+	// adapter. Injected to break the import cycle:
 	// per-agent reviewer packages import review (for ComposeReviewPrompt /
 	// AppendReviewEnv), so review/cmd.go cannot import them back.
 	ReviewerFor func(agentName string) reviewtypes.AgentReviewer
@@ -334,7 +334,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, baseOverr
 		if len(launchableEligible) != len(eligible) {
 			nonLaunchable := nonLaunchableEligibleNames(profile, eligible, deps.ReviewerFor)
 			cmd.SilenceUsage = true
-			err := fmt.Errorf("review profile %q includes non-launchable agent(s) in a fan-out run: %s. Use --agent for a single manual fallback, or remove them from the profile", profileName, strings.Join(nonLaunchable, ", "))
+			err := fmt.Errorf("review profile %q includes agent(s) without review runner adapters in a fan-out run: %s. Use --agent for a single manual fallback, or remove them from the profile", profileName, strings.Join(nonLaunchable, ", "))
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			return silentErr(err)
 		}
@@ -483,7 +483,7 @@ func runSingleAgentPath(
 	// 7. Branch on launchability.
 	reviewer := deps.ReviewerFor(agentName)
 	if reviewer == nil {
-		// Non-launchable: write marker (with scope-aware prompt) and print guidance.
+		// No review runner adapter yet: write marker (with scope-aware prompt) and print guidance.
 		return RunMarkerFallback(ctx, agentName, runCfg, worktreeRoot, out)
 	}
 	reviewer = &perAgentConfiguredReviewer{name: displayName, inner: reviewer, cfg: runCfg}
@@ -622,7 +622,7 @@ func runMultiAgentPath(
 		reviewer := deps.ReviewerFor(agentName)
 		if reviewer == nil {
 			cmd.SilenceUsage = true
-			return deps.NewSilentError(fmt.Errorf("agent %q is not launchable but appeared in eligible list", agentName))
+			return deps.NewSilentError(fmt.Errorf("agent %q has no review runner adapter but appeared in eligible list", agentName))
 		}
 		reviewers = append(reviewers, &perAgentConfiguredReviewer{
 			name:  reviewWorkerLabel(workerName, agentCfg),

@@ -254,7 +254,7 @@ func defaultReviewProfileForInstalledAgents(
 		agents[name] = cfg
 	}
 	if len(agents) == 0 {
-		return settings.ReviewProfileConfig{}, errors.New("no launchable agents with hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
+		return settings.ReviewProfileConfig{}, errors.New("no agents with review runner adapters and hooks installed; run `entire configure --agent claude-code`, `entire configure --agent codex`, or `entire configure --agent gemini`")
 	}
 	return settings.ReviewProfileConfig{
 		Task:   profileTask(profileName, settings.ReviewProfileConfig{}),
