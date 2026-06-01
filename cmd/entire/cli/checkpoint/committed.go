@@ -1781,13 +1781,18 @@ func (s *GitStore) getFetchingTree(ctx context.Context) (*FetchingTree, error) {
 	return NewFetchingTree(ctx, tree, s.repo.Storer, s.blobFetcher), nil
 }
 
-// getSessionsBranchTree returns the tree object for the entire/checkpoints/v1 branch.
-// Falls back to origin/entire/checkpoints/v1 if the local branch doesn't exist.
+// getSessionsBranchTree returns the tree object for the configured committed
+// ref (the v1 branch by default, or the v1.1 custom ref for v1.1 read stores).
+// For the default v1 branch it falls back to origin/entire/checkpoints/v1 when
+// the local branch is missing; the v1.1 custom ref is local-only, so no remote
+// fallback applies there.
 func (s *GitStore) getSessionsBranchTree() (*object.Tree, error) {
-	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
-	ref, err := s.repo.Reference(refName, true)
+	ref, err := s.repo.Reference(s.committedReadRef, true)
 	if err != nil {
-		// Local branch doesn't exist, try remote-tracking branch
+		if s.committedReadRef != defaultCommittedReadRef() {
+			return nil, fmt.Errorf("sessions ref %s not found: %w", s.committedReadRef, err)
+		}
+		// Local v1 branch doesn't exist, try remote-tracking branch
 		remoteRefName := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
 		ref, err = s.repo.Reference(remoteRefName, true)
 		if err != nil {
@@ -2193,11 +2198,12 @@ type Author struct {
 	Email string
 }
 
-// GetCheckpointAuthor retrieves the author of a checkpoint from the entire/checkpoints/v1 commit history.
+// GetCheckpointAuthor retrieves the author of a checkpoint from the configured
+// committed-read ref history.
 // Finds the commit whose subject matches "Checkpoint: <id>" and returns its author.
 // Returns empty Author if the checkpoint is not found or the sessions branch doesn't exist.
 func (s *GitStore) GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error) {
-	return getCheckpointAuthorFromRef(ctx, s.repo, plumbing.NewBranchReferenceName(paths.MetadataBranchName), checkpointID)
+	return getCheckpointAuthorFromRef(ctx, s.repo, s.committedReadRef, checkpointID)
 }
 
 func getCheckpointAuthorFromRef(ctx context.Context, repo *git.Repository, refName plumbing.ReferenceName, checkpointID id.CheckpointID) (Author, error) {
