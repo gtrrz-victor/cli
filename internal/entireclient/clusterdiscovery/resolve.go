@@ -5,45 +5,51 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 )
 
-// ResolveContextForCluster picks the auth context for clusterHost.
-// Resolution order:
+// ResolveContextForCluster picks the local login context to authenticate
+// git operations against clusterHost.
 //
-//  1. Explicit `cluster_contexts[clusterHost]` binding in contexts.json
-//     pointing at an existing context — used as-is. Bindings are
-//     created only by deliberate action; this helper never writes one.
+// It separates two concerns that used to be conflated in a single
+// cluster→context binding:
 //
-//  2. Discovery via /.well-known/entire-cluster.json on the cluster
-//     itself, matched against existing local contexts by the
-//     advertised core_urls. The first advertised URL with a local
-//     context wins.
+//   - Which control plane(s) front the cluster — an objective infra fact.
+//     Discovered from the cluster's /.well-known/entire-cluster.json and
+//     cached in cluster_cores.json (see discovery.ClusterCoresCache) with
+//     a long TTL, since a cluster's home core is near-static. On a cache
+//     miss or expiry we re-fetch; if the re-fetch fails we fall back to
+//     the stale cached cores rather than break the op.
 //
-//     A discovery match is NOT persisted here. The caller binds the
-//     clusterHost→context mapping into contexts.json only after the
-//     first scoped-token exchange against the cluster succeeds (see
-//     makeBindHook in cmd/git-remote-entire). Binding post-success
-//     rather than on the bare /.well-known match means a host that
-//     advertises a core we hold a context for, but then can't actually
-//     authenticate us, never leaves a stale binding behind. Once bound,
-//     subsequent invocations short-circuit at step 1 and skip discovery.
+//   - Which of the user's accounts to use — recomputed every call from the
+//     live contexts, never persisted. So a user with several accounts is
+//     never silently pinned to one identity.
 //
-//  3. No local context matches any advertised URL — return a
-//     fatal-ready error with the login hint listing the cluster's
-//     advertised issuers.
+// Account selection (selectContext):
 //
-// We deliberately do NOT fall back to current_context for an unknown
-// cluster host. current_context can point at a different environment
-// than clusterHost (e.g. a staging context against a prod cluster); the
-// cluster then rejects the exchanged token with "unknown cluster_host"
-// because its own registry doesn't know that core. The cluster's
-// /.well-known is the authoritative answer to "which env am I in", so we
-// ask it rather than guessing from the active context.
+//  1. If the active context (current_context) is issued by one of the
+//     cluster's cores, use it. This is the explicit lever: `entire auth
+//     use <name>` chooses the identity for every cluster that context's
+//     core fronts.
+//  2. Otherwise gather every local context eligible for the cluster (its
+//     CoreURL is among the advertised cores):
+//     - exactly one  → use it (the common single-account case);
+//     - none         → error with the login hint listing the cluster's cores;
+//     - more than one → error asking the user to pick with `entire auth use`,
+//     rather than silently guessing an account.
+//
+// We never fall back to an active context whose core does NOT front the
+// cluster: the cluster would reject the exchanged token as "unknown
+// cluster_host", and silently authenticating a staging identity against a
+// prod cluster (or vice versa) is exactly the confusion the /.well-known
+// lookup exists to prevent.
 //
 // debugf is optional; nil suppresses debug output.
-func ResolveContextForCluster(ctx context.Context, configDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, error) {
+func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, error) {
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
@@ -51,45 +57,114 @@ func ResolveContextForCluster(ctx context.Context, configDir, clusterHost string
 	if err != nil {
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
-	if name, ok := f.ClusterContexts[clusterHost]; ok && name != "" {
-		if c := f.Find(name); c != nil {
-			debugf("contexts.json binding %s -> %s", clusterHost, c.Name)
-			return c, nil
-		}
-		debugf("stale binding %s -> %q (context no longer exists); falling through to discovery", clusterHost, name)
+
+	coreURLs, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
+	if err != nil {
+		return nil, err
 	}
+
+	return selectContext(f, clusterHost, coreURLs, debugf)
+}
+
+// resolveClusterCores returns the control-plane core URLs that front
+// clusterHost, from cluster_cores.json when fresh, otherwise via a live
+// /.well-known fetch (which is then cached). A stale-but-present cache
+// entry is used as a fallback when the live fetch fails, so a brief
+// cluster outage doesn't break an operation whose cores we already knew.
+func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) ([]string, error) {
+	cache, err := discovery.LoadClusterCores(cacheDir)
+	if err != nil {
+		// A cache read problem must not block resolution — discover live.
+		debugf("cluster-cores cache load failed: %v; discovering live", err)
+		cache = nil
+	}
+
+	var stale []string
+	if cache != nil {
+		if urls, fresh, ok := cache.Get(clusterHost); ok {
+			if fresh {
+				debugf("cluster %s cores from cache: %v", clusterHost, urls)
+				return urls, nil
+			}
+			stale = urls
+			debugf("cluster %s cores cache expired; re-fetching /.well-known", clusterHost)
+		}
+	}
+
 	body, err := Discover(ctx, clusterHost, httpClient, debugf)
 	if err != nil {
+		if stale != nil {
+			debugf("discovery for %s failed (%v); falling back to stale cached cores %v", clusterHost, err, stale)
+			return stale, nil
+		}
 		return nil, formatDiscoveryError(clusterHost, err)
 	}
-	current := f.Find(f.CurrentContext)
-	for _, coreURL := range body.CoreURLs {
-		matches := f.ContextsForIssuer(coreURL)
-		if len(matches) == 0 {
-			continue
-		}
-		// Prefer the active context when it's one of the eligible matches —
-		// otherwise a core with several accounts (alice@core, bob@core) would
-		// resolve to whichever was saved first, silently authenticating as the
-		// wrong user. Fall back to the first match when the current context
-		// isn't eligible for this cluster. This tie-break only applies until
-		// the caller binds the cluster (after the first successful exchange);
-		// from then on step 1 returns the bound context directly. `entire auth
-		// use` therefore affects only not-yet-bound clusters — matching the
-		// `auth use`/`auth unbind` contract.
-		c := matches[0]
-		if current != nil {
-			for _, m := range matches {
-				if m.Name == current.Name {
-					c = current
-					break
-				}
+
+	if mErr := discovery.ModifyClusterCores(cacheDir, func(c discovery.ClusterCoresCache) error {
+		c.Set(clusterHost, body.CoreURLs)
+		return nil
+	}); mErr != nil {
+		// Non-fatal: we resolved the cores, the next call just re-fetches.
+		debugf("cluster-cores cache write for %s failed: %v", clusterHost, mErr)
+	}
+	return body.CoreURLs, nil
+}
+
+// selectContext applies the account-selection rules over the cluster's
+// advertised cores. See ResolveContextForCluster for the rationale.
+func selectContext(f *contexts.File, clusterHost string, coreURLs []string, debugf DebugFunc) (*contexts.Context, error) {
+	eligible := eligibleContexts(f, coreURLs)
+
+	// 1. Active context wins when it's eligible for this cluster.
+	if current := f.Find(f.CurrentContext); current != nil {
+		for _, c := range eligible {
+			if c.Name == current.Name {
+				debugf("cluster %s -> active context %s", clusterHost, current.Name)
+				return current, nil
 			}
 		}
-		debugf("resolved %s -> %s via discovery match on %s (caller binds on first successful exchange)", clusterHost, c.Name, coreURL)
-		return c, nil
 	}
-	return nil, errors.New(RenderLoginHint(clusterHost, body.CoreURLs))
+
+	// 2. Otherwise the eligible set decides.
+	switch len(eligible) {
+	case 0:
+		return nil, errors.New(RenderLoginHint(clusterHost, coreURLs))
+	case 1:
+		debugf("cluster %s -> sole eligible context %s", clusterHost, eligible[0].Name)
+		return eligible[0], nil
+	default:
+		return nil, ambiguousContextError(clusterHost, eligible)
+	}
+}
+
+// eligibleContexts returns the local contexts whose core is among coreURLs,
+// de-duplicated by name. Order is unspecified — callers either use the sole
+// element or report the whole set, never index [0] as a silent winner.
+func eligibleContexts(f *contexts.File, coreURLs []string) []*contexts.Context {
+	seen := make(map[string]bool)
+	var out []*contexts.Context
+	for _, coreURL := range coreURLs {
+		for _, c := range f.ContextsForIssuer(coreURL) {
+			if !seen[c.Name] {
+				seen[c.Name] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// ambiguousContextError is returned when more than one local context could
+// authenticate against the cluster and none is active. We refuse to guess —
+// the user picks explicitly. Names are sorted so the message is stable.
+func ambiguousContextError(clusterHost string, eligible []*contexts.Context) error {
+	names := make([]string, len(eligible))
+	for i, c := range eligible {
+		names[i] = c.Name
+	}
+	sort.Strings(names)
+	return fmt.Errorf("multiple login contexts can authenticate against cluster %s (%s); choose one with `entire auth use <context>` and re-run",
+		clusterHost, strings.Join(names, ", "))
 }
 
 // formatDiscoveryError turns a Discover error into the message

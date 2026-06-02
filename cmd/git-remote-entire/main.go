@@ -27,7 +27,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
+	"github.com/entireio/cli/internal/entireclient/discovery"
 	"github.com/entireio/cli/internal/entireclient/httpclient"
 	"github.com/entireio/cli/internal/entireclient/repocreds"
 	"github.com/entireio/cli/internal/remotehelper"
@@ -94,11 +94,13 @@ func run(args []string) int {
 		debuglog.Printf("legacy login migration: %v", err)
 	}
 
-	// Resolve which login context authenticates this cluster: an explicit
-	// cluster_contexts binding wins, otherwise the cluster's
-	// /.well-known/entire-cluster.json is matched against local contexts.
+	// Resolve which login context authenticates this cluster: the cluster's
+	// cores are taken from the cluster_cores.json cache (or a live
+	// /.well-known fetch on miss/expiry), then the account is selected from
+	// local contexts — active context if eligible, else the sole eligible
+	// one, else an explicit-choice error.
 	cfgDir := contexts.DefaultConfigDir()
-	clusterCtx, err := clusterdiscovery.ResolveContextForCluster(ctx, cfgDir, parsedURL.Host, httpClient, debuglog.Printf)
+	clusterCtx, err := clusterdiscovery.ResolveContextForCluster(ctx, cfgDir, discovery.DefaultCacheDir(), parsedURL.Host, httpClient, debuglog.Printf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		return 128
@@ -110,14 +112,6 @@ func run(args []string) int {
 		return auth.LoginTokenForContext(clusterCtx)
 	}, httpClient)
 
-	// Persist the cluster→context binding the first time a scoped-token
-	// exchange succeeds, so the next invocation skips /.well-known
-	// discovery. Firing post-success (not on the discovery match in
-	// ResolveContextForCluster) means a host whose /.well-known matches a
-	// local context but then can't actually authenticate leaves no stale
-	// binding behind.
-	onScopedSuccess := makeBindHook(cfgDir, parsedURL.Host, clusterCtx.Name)
-
 	setAuth := func(req *http.Request) error {
 		action := gitActionFromRequest(req)
 		if action == "" {
@@ -126,9 +120,6 @@ func run(args []string) int {
 		token, err := creds.Token(req.Context(), repoSlug, action)
 		if err != nil {
 			return fmt.Errorf("repo-scoped token exchange: %w", err)
-		}
-		if onScopedSuccess != nil {
-			onScopedSuccess()
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		return nil
@@ -157,36 +148,6 @@ func run(args []string) int {
 		return 128
 	}
 	return 0
-}
-
-// makeBindHook returns a func that, on its first call, persists the
-// clusterHost→contextName binding to contexts.json (and is a no-op
-// thereafter). It is meant to fire after the first successful scoped-token
-// exchange: at that point the context has provably authenticated against
-// the cluster, so the binding is safe to cache. A bind failure is logged,
-// not fatal — the token exchange already succeeded, and the next
-// invocation just pays the discovery round-trip again.
-//
-// Returns nil when contextName is empty (e.g. a future env-token flow with
-// no named context to bind), so callers can skip the hook entirely.
-//
-// Relies on creds being a freshly-constructed (empty) cache per process:
-// the first scoped-token call is therefore always a real exchange, never a
-// cache hit, so "first call" == "first proven auth".
-func makeBindHook(cfgDir, clusterHost, contextName string) func() {
-	if contextName == "" {
-		return nil
-	}
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			if err := contexts.BindCluster(cfgDir, clusterHost, contextName); err != nil {
-				debuglog.Printf("auto-bind %s -> %s failed: %v", clusterHost, contextName, err)
-				return
-			}
-			debuglog.Printf("auto-bound %s -> %s after first successful exchange", clusterHost, contextName)
-		})
-	}
 }
 
 // gitActionFromRequest classifies a smart-HTTP request as "pull" or "push"
