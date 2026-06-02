@@ -513,6 +513,20 @@ func writeCommittedResumeCheckpointWithAgent(
 	t.Helper()
 
 	rawTranscript := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"resume"}]}}` + "\n")
+	writeCommittedResumeCheckpointWithTranscript(t, repo, checkpointID, sessionID, createdAt, agentType, rawTranscript)
+}
+
+func writeCommittedResumeCheckpointWithTranscript(
+	t *testing.T,
+	repo *git.Repository,
+	checkpointID id.CheckpointID,
+	sessionID string,
+	createdAt time.Time,
+	agentType types.AgentType,
+	rawTranscript []byte,
+) {
+	t.Helper()
+
 	if err := checkpoint.NewGitStore(repo).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
@@ -978,6 +992,53 @@ func TestResumeSingleSession_UsesV1Transcript(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "session log not available") {
 		t.Fatalf("resumeSingleSession() reported missing log: %q", stdout.String())
+	}
+}
+
+func TestResumeSingleSession_UsesV11Transcript(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+	enableResumeV11(t, tmpDir)
+
+	ctx := context.Background()
+	cpID := id.MustCheckpointID("bca123bca123")
+	sessionID := "resume-v11-session"
+	v11Raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"resume from v11"}]}}` + "\n")
+	staleV1Raw := []byte(`{"type":"user","message":{"content":[{"type":"text","text":"stale v1"}]}}` + "\n")
+
+	writeCommittedResumeCheckpointWithTranscript(
+		t,
+		repo,
+		cpID,
+		sessionID,
+		time.Date(2025, 1, 2, 10, 0, 0, 0, time.UTC),
+		agent.AgentTypeClaudeCode,
+		v11Raw,
+	)
+	mirrorMetadataBranchToV11Ref(t, repo)
+	writeCommittedResumeCheckpointWithTranscript(
+		t,
+		repo,
+		cpID,
+		sessionID,
+		time.Date(2025, 1, 3, 10, 0, 0, 0, time.UTC),
+		agent.AgentTypeClaudeCode,
+		staleV1Raw,
+	)
+
+	ag := &recordingResumeAgent{sessionDir: filepath.Join(tmpDir, "sessions")}
+	var stdout, stderr bytes.Buffer
+	if err := resumeSingleSession(ctx, &stdout, &stderr, ag, sessionID, cpID, tmpDir, true); err != nil {
+		t.Fatalf("resumeSingleSession() error = %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	if ag.writtenSession == nil {
+		t.Fatal("resumeSingleSession() did not restore a session")
+	}
+	if string(ag.writtenSession.NativeData) != string(v11Raw) {
+		t.Fatalf("restored transcript = %q, want v1.1 transcript %q", string(ag.writtenSession.NativeData), string(v11Raw))
 	}
 }
 

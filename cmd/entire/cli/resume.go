@@ -845,7 +845,8 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 		logContent, _, err = checkpoint.LookupSessionLog(ctx, checkpointID)
 	} else {
 		defer repo.Close()
-		store := checkpoint.NewGitStore(repo)
+		store := checkpoint.NewCommittedReadStore(ctx, repo)
+		store.SetBlobFetcher(FetchBlobsByHash)
 		logContent, _, err = checkpoint.ReadRawSessionLogForCheckpoint(ctx, store, checkpointID)
 	}
 	if err != nil {
