@@ -41,6 +41,11 @@ func TestParseGitHubURL(t *testing.T) {
 		{name: "repo with encoded slash", url: "octocat/repo%2fevil", wantErr: true},
 		{name: "owner with dot-dot", url: "../repo", wantErr: true},
 		{name: "owner with underscore (not a GitHub login)", url: "oct_cat/repo", wantErr: true},
+		// Dot-only repo names pass the gitHubRepoPat charset (which allows
+		// dots) but would embed a literal "." or ".." in the audience and
+		// probe URL — reject at the boundary.
+		{name: "dot-only repo", url: "github.com/owner/..", wantErr: true},
+		{name: "single-dot repo", url: "github.com/owner/.", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,6 +124,10 @@ func TestValidateClusterHost(t *testing.T) {
 		{name: "host with port", host: "localhost:8080"},
 		{name: "ipv4", host: "10.0.0.1"},
 		{name: "ipv4 with port", host: "10.0.0.1:8080"},
+		// IPv6 takes a different path through validateClusterHost: the
+		// host must be bracketed for url.Parse to round-trip, and
+		// u.Hostname() strips the brackets before net.ParseIP sees it.
+		{name: "ipv6 with port", host: "[::1]:8080"},
 		// The token-leak primitive: userinfo demotes the real cluster so the
 		// request (and basic-auth token) targets evil.com.
 		{name: "userinfo smuggle", host: "aws-us-east-2.entire.io@evil.com", wantErr: true},
