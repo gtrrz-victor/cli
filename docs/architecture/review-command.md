@@ -15,6 +15,8 @@ entire review --configure --profile general --set-model codex=gpt-5-codex --set-
 entire review --edit --profile general       # Advanced skill-level config (skill picker)
 entire review --agent <name>           # Run one worker from the selected profile
 entire review --agent <name> --model <model>  # Override that worker's model for this run
+entire review --models                  # List models each review agent advertises
+entire review --models --agent codex    # ...filtered to one agent
 entire review --prompt "focus on auth" # Add one-off instructions
 entire review --findings                # Browse local review findings
 entire review attach <session-id>      # Tag an existing agent session as a review (post-hoc)
@@ -58,6 +60,8 @@ Review profiles are configured in clone-local preferences (or settings) under `r
   }
 }
 ```
+
+`entire review --models` lists the models each review-runner agent advertises via the optional `agent.ModelLister` capability (`cmd/entire/cli/agent/model_lister.go`). Agents whose CLI has no enumeration command (claude-code, codex, gemini) return a curated, non-exhaustive list of common models/aliases; the `--model` flag still forwards any value the agent CLI accepts. Agents whose CLI can enumerate live (e.g. Pi's `pi --list-models`) may implement `ListModels` by shelling out.
 
 The profile-level `task` is the shared work item. Each `agents` map entry is a worker id. For simple entries the worker id is also the agent name; to run the same agent more than once, use aliases and set `agent` plus `model`. Per-worker `skills`, `prompt`, and `model` adapt that task to agent-specific mechanics. Settings fields: `EntireSettings.ReviewProfiles` and `EntireSettings.ReviewDefaultProfile` in `cmd/entire/cli/settings/settings.go`. The old top-level `review` map is no longer used by `entire review`.
 

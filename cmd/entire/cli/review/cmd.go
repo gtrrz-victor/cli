@@ -80,6 +80,7 @@ func NewCommand(deps Deps) *cobra.Command {
 	var profileOverride string
 	var perRunPrompt string
 	var findings bool
+	var listModels bool
 	var setAgents []string
 	var setMaster string
 	var setTask string
@@ -115,6 +116,7 @@ Flags:
   --findings     browse local review findings
   --agent NAME   run only one worker from the selected profile
   --model NAME   override the model for the --agent worker (requires --agent)
+  --models       list the models each review agent advertises (optionally --agent NAME)
   --profile NAME select a review profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
   --base REF     scope the review against REF instead of mainline. Useful
@@ -140,6 +142,10 @@ Subcommands:
 			// resolve correctly — without this, GetAgentsWithHooksInstalled
 			// and agent.Get can't see them.
 			external.DiscoverAndRegister(ctx)
+
+			if listModels {
+				return runReviewListModels(ctx, cmd, agentOverride, deps)
+			}
 
 			modes := 0
 			for _, enabled := range []bool{configure, edit, findings} {
@@ -182,6 +188,7 @@ Subcommands:
 	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-worker model as agent=model (repeatable)")
 	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the advanced review profile skill picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
+	cmd.Flags().BoolVar(&listModels, "models", false, "list the models each review agent advertises (optionally filtered by --agent)")
 	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile")
 	cmd.Flags().StringVar(&modelOverride, "model", "", "override the model for the --agent worker (requires --agent)")
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
@@ -265,6 +272,62 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 	// the available agents, current profiles, and how to configure.
 	catalog := availableReviewAgents(installed, deps.ReviewerFor)
 	printReviewConfigCatalog(out, profileName, catalog, s)
+	return nil
+}
+
+// runReviewListModels prints the models each review-runner agent advertises
+// (claude-code, codex, gemini, ...). It needs no git repo or profile: model
+// lists are advisory metadata. With agentFilter set, only that agent is shown.
+func runReviewListModels(ctx context.Context, cmd *cobra.Command, agentFilter string, deps Deps) error {
+	out := cmd.OutOrStdout()
+	installed := deps.GetAgentsWithHooksInstalled(ctx)
+	catalog := availableReviewAgents(installed, deps.ReviewerFor)
+
+	if agentFilter != "" {
+		filtered := make([]reviewAgentCatalogEntry, 0, 1)
+		for _, e := range catalog {
+			if e.Name == agentFilter {
+				filtered = append(filtered, e)
+			}
+		}
+		if len(filtered) == 0 {
+			cmd.SilenceUsage = true
+			err := fmt.Errorf("agent %q has no review runner adapter; available: %s", agentFilter, strings.Join(reviewAgentNames(deps), ", "))
+			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+			return deps.NewSilentError(err)
+		}
+		catalog = filtered
+	}
+
+	for _, e := range catalog {
+		fmt.Fprintf(out, "%s:\n", e.Name)
+		ag, getErr := agent.Get(types.AgentName(e.Name))
+		if getErr != nil {
+			fmt.Fprintln(out, "  (agent unavailable)")
+			continue
+		}
+		lister, ok := agent.AsModelLister(ag)
+		if !ok {
+			fmt.Fprintln(out, "  (no advertised models; pass any value your CLI accepts via --model)")
+			continue
+		}
+		models, listErr := lister.ListModels(ctx)
+		if listErr != nil || len(models) == 0 {
+			fmt.Fprintln(out, "  (model list unavailable)")
+			continue
+		}
+		for _, m := range models {
+			if m.Note != "" {
+				fmt.Fprintf(out, "  %-18s %s\n", m.ID, m.Note)
+			} else {
+				fmt.Fprintf(out, "  %s\n", m.ID)
+			}
+		}
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "These are common models/aliases, not an exhaustive list. Use one with:")
+	fmt.Fprintln(out, "  entire review --agent <name> --model <model>")
 	return nil
 }
 

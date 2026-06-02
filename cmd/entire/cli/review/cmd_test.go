@@ -86,7 +86,7 @@ func TestReviewCmd_Help(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"review", "--configure", "--edit", "--findings", "--agent", "--model", "attach", "Labs entry"} {
+	for _, want := range []string{"review", "--configure", "--edit", "--findings", "--agent", "--model", "--models", "attach", "Labs entry"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--help output missing %q: %s", want, out)
 		}
@@ -94,6 +94,45 @@ func TestReviewCmd_Help(t *testing.T) {
 	// --track-only was intentionally dropped by PR #1009.
 	if strings.Contains(out, "track-only") {
 		t.Error("--help output should NOT contain track-only flag (dropped in #1009)")
+	}
+}
+
+// TestReviewCmd_ListModels verifies `entire review --models` prints the
+// advertised models for the built-in review agents without needing a repo.
+func TestReviewCmd_ListModels(t *testing.T) {
+	t.Parallel()
+	rootCmd := cli.NewRootCmd()
+	buf := &bytes.Buffer{}
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"review", "--models"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"claude-code", "opus", "sonnet", "codex", "gpt-5-codex", "gemini", "gemini-2.5-pro"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--models output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestReviewCmd_ListModelsFilteredByAgent verifies the --agent filter narrows
+// the model listing to a single agent.
+func TestReviewCmd_ListModelsFilteredByAgent(t *testing.T) {
+	t.Parallel()
+	rootCmd := cli.NewRootCmd()
+	buf := &bytes.Buffer{}
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"review", "--models", "--agent", "codex"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "gpt-5-codex") {
+		t.Errorf("expected codex models, got:\n%s", out)
+	}
+	if strings.Contains(out, "gemini-2.5-pro") {
+		t.Errorf("--agent codex should not list gemini models:\n%s", out)
 	}
 }
 
