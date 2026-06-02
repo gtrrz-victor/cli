@@ -8,8 +8,11 @@
 entire review                          # Run the default review profile
 entire review security                 # Run a named profile
 entire review --profile accessibility  # Same, flag form
-entire review --configure --profile general # Simple guided config, no agents started
-entire review --edit --profile general      # Advanced skill-level config
+entire review --configure                    # Show available agents + profiles, then guided config
+entire review --configure --profile general --set-agents claude-code,codex --set-master claude-code
+                                             # Configure a profile non-interactively (no TUI)
+entire review --configure --profile general --set-model codex=gpt-5-codex --set-task "..."
+entire review --edit --profile general       # Advanced skill-level config (skill picker)
 entire review --agent <name>           # Run one worker from the selected profile
 entire review --agent <name> --model <model>  # Override that worker's model for this run
 entire review --prompt "focus on auth" # Add one-off instructions
@@ -20,7 +23,7 @@ entire review attach --agent <name>    # Agent that created the session
 entire review attach --skills <s,...>  # Declare which skills were run
 ```
 
-When no profiles are configured, `entire review` uses a simple guided setup: choose review type, choose worker agents, optionally choose models/model variants, save the profile, then explicitly confirm whether to start agents. `entire review --configure` reopens that simple config mode without starting agents. In non-interactive output, first run falls back to the default `general` profile automatically. Defaults are intentionally simple: Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude is preferred as master when available.
+When no profiles are configured, `entire review` uses a simple guided setup: choose review type, choose worker agents, optionally choose models/model variants, save the profile, then explicitly confirm whether to start agents. `entire review --configure` is the configuration entry point: it always prints the **available review agents** (those with review-runner adapters, marking which have hooks installed) and the **currently configured profiles**, then either writes a profile non-interactively from `--set-agents` / `--set-master` / `--set-task` / `--set-model agent=model` flags, or (with no `--set-*` flags) opens the guided wizard. `--set-*` writes preserve profile-level fields the flags don't touch (custom `task`, `master_model`). In non-interactive output, first run falls back to the default `general` profile automatically. Defaults are intentionally simple: Claude/Codex use `/review`, Gemini uses the profile task directly, and Claude is preferred as master when available.
 
 When two or more adapter-backed review workers are configured in the selected profile and `--agent` is not set, `entire review` fans out to all configured workers. There is no per-run multi-picker: the profile is the fan-out contract. Profiles with multiple workers must set `master`; the master runs after workers finish and produces the canonical final report.
 

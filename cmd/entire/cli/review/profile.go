@@ -180,7 +180,11 @@ func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) 
 	case 1:
 		return matches[0], profile.Agents[matches[0]], nil
 	case 0:
-		return "", settings.ReviewConfig{}, fmt.Errorf("review worker or agent %q is not configured", selector)
+		configured := sortedProfileAgentNames(profile)
+		if len(configured) == 0 {
+			return "", settings.ReviewConfig{}, fmt.Errorf("review worker or agent %q is not configured", selector)
+		}
+		return "", settings.ReviewConfig{}, fmt.Errorf("review worker or agent %q is not configured; configured workers: %s", selector, strings.Join(configured, ", "))
 	default:
 		return "", settings.ReviewConfig{}, fmt.Errorf("agent %q has multiple review workers (%s); choose one by worker name", selector, strings.Join(matches, ", "))
 	}

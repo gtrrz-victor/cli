@@ -80,6 +80,10 @@ func NewCommand(deps Deps) *cobra.Command {
 	var profileOverride string
 	var perRunPrompt string
 	var findings bool
+	var setAgents []string
+	var setMaster string
+	var setTask string
+	var setModels []string
 
 	cmd := &cobra.Command{
 		Use: "review",
@@ -100,7 +104,13 @@ The review session is recorded as part of the next checkpoint, so the
 review metadata is permanently attached to the commit it covers.
 
 Flags:
-  --configure    open the simple review setup wizard without starting agents
+  --configure    set up a review profile (shows available agents + profiles).
+                 With --set-* flags it writes the profile non-interactively;
+                 otherwise it opens the wizard (interactive) without starting agents.
+  --set-agents   with --configure: comma-separated worker agents for the profile
+  --set-master   with --configure: master agent that writes the final report
+  --set-task     with --configure: the profile's canonical task text
+  --set-model    with --configure: per-worker model as agent=model (repeatable)
   --edit         re-open the advanced review profile skill picker
   --findings     browse local review findings
   --agent NAME   run only one worker from the selected profile
@@ -148,7 +158,12 @@ Subcommands:
 				profileName = args[0]
 			}
 			if configure {
-				return runReviewConfigure(ctx, cmd, profileName, deps)
+				return runReviewConfigure(ctx, cmd, profileName, reviewConfigureOptions{
+					Agents: setAgents,
+					Master: setMaster,
+					Task:   setTask,
+					Models: setModels,
+				}, deps)
 			}
 			if edit {
 				_, err := RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
@@ -160,7 +175,11 @@ Subcommands:
 			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, deps)
 		},
 	}
-	cmd.Flags().BoolVar(&configure, "configure", false, "open the simple review setup wizard without starting agents")
+	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
+	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: worker agents for the profile (comma-separated)")
+	cmd.Flags().StringVar(&setMaster, "set-master", "", "with --configure: master agent that writes the final report")
+	cmd.Flags().StringVar(&setTask, "set-task", "", "with --configure: the profile's canonical task text")
+	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-worker model as agent=model (repeatable)")
 	cmd.Flags().BoolVar(&edit, "edit", false, "re-open the advanced review profile skill picker")
 	cmd.Flags().BoolVar(&findings, "findings", false, "browse local review findings")
 	cmd.Flags().StringVar(&agentOverride, "agent", "", "run one configured worker from the selected profile")
@@ -174,15 +193,21 @@ Subcommands:
 	return cmd
 }
 
-func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride string, deps Deps) error {
+// reviewConfigureOptions carries the non-interactive `--configure` inputs.
+type reviewConfigureOptions struct {
+	Agents []string // worker agent names (--set-agents)
+	Master string   // master agent (--set-master)
+	Task   string   // profile task text (--set-task)
+	Models []string // per-worker "agent=model" entries (--set-model)
+}
+
+func (o reviewConfigureOptions) scripted() bool {
+	return len(o.Agents) > 0 || o.Master != "" || o.Task != "" || len(o.Models) > 0
+}
+
+func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride string, opts reviewConfigureOptions, deps Deps) error {
 	out := cmd.OutOrStdout()
 	silentErr := deps.NewSilentError
-	if !interactive.IsTerminalWriter(out) || !interactive.CanPromptInteractively() {
-		cmd.SilenceUsage = true
-		err := errors.New("review configuration requires an interactive terminal; run `entire review --edit` or edit review_profiles manually")
-		fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-		return silentErr(err)
-	}
 	if _, err := paths.WorktreeRoot(ctx); err != nil {
 		cmd.SilenceUsage = true
 		fmt.Fprintln(cmd.ErrOrStderr(), "Not a git repository. Run `entire enable` first.")
@@ -194,20 +219,215 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load settings: %v\n", err)
 		return silentErr(err)
 	}
+	if s == nil {
+		s = &settings.EntireSettings{}
+	}
 	profileName := strings.TrimSpace(profileOverride)
-	if profileName == "" && s != nil {
+	if profileName == "" {
 		profileName = strings.TrimSpace(s.ReviewDefaultProfile)
 	}
+	if profileName == "" {
+		profileName = DefaultProfileName
+	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
-	profileName, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileName, false)
-	if setupErr != nil {
-		return handlePickerError(cmd, silentErr, setupErr)
+	catalog := availableReviewAgents(installed, deps.ReviewerFor)
+
+	// Always show what's available so `entire review --configure` is the
+	// discovery entry point: the agents you can use and the profiles you have.
+	printReviewConfigCatalog(out, profileName, catalog, s)
+
+	// Scripted path: build + save the profile from --set-* flags, no TUI.
+	if opts.scripted() {
+		profile, buildErr := buildConfiguredProfile(ctx, profileName, opts, s, deps)
+		if buildErr != nil {
+			cmd.SilenceUsage = true
+			fmt.Fprintln(cmd.ErrOrStderr(), buildErr.Error())
+			return silentErr(buildErr)
+		}
+		if err := saveReviewProfile(ctx, profileName, profile, true); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\nReview profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
+		fmt.Fprintf(out, "Run `entire review %s` to start.\n", profileName)
+		return nil
 	}
-	if err := saveReviewProfile(ctx, profileName, profile, true); err != nil {
-		return err
+
+	// Interactive path: the guided wizard.
+	if interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively() {
+		name, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileName, false)
+		if setupErr != nil {
+			return handlePickerError(cmd, silentErr, setupErr)
+		}
+		if err := saveReviewProfile(ctx, name, profile, true); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Review profile %q saved. Run `entire review`, or `entire review %s`, to start.\n", name, name)
+		return nil
 	}
-	fmt.Fprintf(out, "Review profile %q saved. Run `entire review`, or `entire review %s`, to start.\n", profileName, profileName)
+
+	// Non-interactive with no flags: discovery only.
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Nothing changed. Pass --set-agents (plus optional --set-master/--set-task/--set-model)")
+	fmt.Fprintln(out, "to configure non-interactively, or run in a terminal for the guided wizard.")
 	return nil
+}
+
+// reviewAgentCatalogEntry is one row in the `--configure` discovery listing.
+type reviewAgentCatalogEntry struct {
+	Name      string
+	Installed bool
+}
+
+// availableReviewAgents lists every registered agent that has a review-runner
+// adapter (claude-code, codex, gemini, pi, ...), marking which have hooks
+// installed in this repo. Derived from the registry + deps.ReviewerFor so it
+// never drifts from the set of agents `entire review` can actually launch.
+func availableReviewAgents(installed []types.AgentName, reviewerFor func(string) reviewtypes.AgentReviewer) []reviewAgentCatalogEntry {
+	installedSet := make(map[string]struct{}, len(installed))
+	for _, n := range installed {
+		installedSet[string(n)] = struct{}{}
+	}
+	var out []reviewAgentCatalogEntry
+	for _, name := range agent.List() {
+		ns := string(name)
+		if reviewerFor(ns) == nil {
+			continue
+		}
+		_, ok := installedSet[ns]
+		out = append(out, reviewAgentCatalogEntry{Name: ns, Installed: ok})
+	}
+	return out
+}
+
+func printReviewConfigCatalog(out io.Writer, profileName string, catalog []reviewAgentCatalogEntry, s *settings.EntireSettings) {
+	fmt.Fprintln(out, "Available review agents:")
+	if len(catalog) == 0 {
+		fmt.Fprintln(out, "  (none — install one with `entire configure --agent claude-code`)")
+	}
+	for _, e := range catalog {
+		status := "not installed — run `entire configure --agent " + e.Name + "`"
+		if e.Installed {
+			status = "hooks installed"
+		}
+		fmt.Fprintf(out, "  %-14s %s\n", e.Name, status)
+	}
+
+	fmt.Fprintln(out)
+	profiles := nonZeroProfiles(s.ReviewProfiles)
+	if len(profiles) == 0 {
+		fmt.Fprintln(out, "Configured profiles: (none yet)")
+	} else {
+		fmt.Fprintln(out, "Configured profiles:")
+		for _, name := range sortedProfileNames(profiles) {
+			p := profiles[name]
+			marker := ""
+			if name == strings.TrimSpace(s.ReviewDefaultProfile) {
+				marker = " (default)"
+			}
+			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedProfileAgentNames(p), ", "))
+			if strings.TrimSpace(p.Master) != "" {
+				line += "  master=" + p.Master
+			}
+			fmt.Fprintln(out, line)
+		}
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "Configure %q non-interactively, e.g.:\n", profileName)
+	fmt.Fprintf(out, "  entire review --configure --profile %s --set-agents %s --set-master <agent>\n",
+		profileName, exampleAgentList(catalog))
+}
+
+func exampleAgentList(catalog []reviewAgentCatalogEntry) string {
+	names := make([]string, 0, len(catalog))
+	for _, e := range catalog {
+		if e.Installed {
+			names = append(names, e.Name)
+		}
+	}
+	if len(names) == 0 {
+		return "claude-code,codex"
+	}
+	if len(names) > 2 {
+		names = names[:2]
+	}
+	return strings.Join(names, ",")
+}
+
+// buildConfiguredProfile produces a ReviewProfileConfig from --set-* flags,
+// merging onto any existing profile so unspecified profile-level fields
+// (task, master_model) are preserved.
+func buildConfiguredProfile(ctx context.Context, profileName string, opts reviewConfigureOptions, s *settings.EntireSettings, deps Deps) (settings.ReviewProfileConfig, error) {
+	profile := s.ReviewProfiles[profileName]
+
+	if len(opts.Agents) > 0 {
+		agents := make(map[string]settings.ReviewConfig, len(opts.Agents))
+		for _, raw := range opts.Agents {
+			name := strings.TrimSpace(raw)
+			if name == "" {
+				continue
+			}
+			if deps.ReviewerFor(name) == nil {
+				return settings.ReviewProfileConfig{}, fmt.Errorf("agent %q has no review runner adapter; available: %s", name, strings.Join(reviewAgentNames(deps), ", "))
+			}
+			agents[name] = defaultReviewAgentConfig(profileName, name)
+		}
+		if len(agents) == 0 {
+			return settings.ReviewProfileConfig{}, errors.New("--set-agents listed no usable agents")
+		}
+		profile.Agents = agents
+	}
+	if len(nonZeroAgentConfigs(profile.Agents)) == 0 {
+		return settings.ReviewProfileConfig{}, errors.New("profile has no agents; pass --set-agents")
+	}
+
+	for _, raw := range opts.Models {
+		key, model, ok := strings.Cut(raw, "=")
+		key = strings.TrimSpace(key)
+		model = strings.TrimSpace(model)
+		if !ok || key == "" {
+			return settings.ReviewProfileConfig{}, fmt.Errorf("invalid --set-model %q; expected agent=model", raw)
+		}
+		workerName, _, selErr := selectProfileWorker(profile, key)
+		if selErr != nil {
+			return settings.ReviewProfileConfig{}, fmt.Errorf("--set-model %q: %w", raw, selErr)
+		}
+		cfg := profile.Agents[workerName]
+		cfg.Model = model
+		profile.Agents[workerName] = cfg
+	}
+
+	if opts.Task != "" {
+		profile.Task = opts.Task
+	}
+	if strings.TrimSpace(profile.Task) == "" {
+		profile.Task = profileTask(profileName, settings.ReviewProfileConfig{})
+	}
+
+	if opts.Master != "" {
+		profile.Master = opts.Master
+	}
+	if len(nonZeroAgentConfigs(profile.Agents)) > 1 {
+		if strings.TrimSpace(profile.Master) == "" {
+			profile.Master = defaultReviewMaster(ctx, profile.Agents)
+		}
+		if _, _, masterErr := selectProfileWorker(profile, profile.Master); masterErr != nil {
+			return settings.ReviewProfileConfig{}, fmt.Errorf("master %q is not one of the profile workers (%s)", profile.Master, strings.Join(sortedProfileAgentNames(profile), ", "))
+		}
+	} else {
+		profile.Master = ""
+	}
+	return profile, nil
+}
+
+func reviewAgentNames(deps Deps) []string {
+	var names []string
+	for _, name := range agent.List() {
+		if deps.ReviewerFor(string(name)) != nil {
+			names = append(names, string(name))
+		}
+	}
+	return names
 }
 
 // runReview executes the main review flow.
