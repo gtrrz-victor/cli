@@ -230,11 +230,6 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		profileName = DefaultProfileName
 	}
 	installed := deps.GetAgentsWithHooksInstalled(ctx)
-	catalog := availableReviewAgents(installed, deps.ReviewerFor)
-
-	// Always show what's available so `entire review --configure` is the
-	// discovery entry point: the agents you can use and the profiles you have.
-	printReviewConfigCatalog(out, profileName, catalog, s)
 
 	// Scripted path: build + save the profile from --set-* flags, no TUI.
 	if opts.scripted() {
@@ -247,12 +242,13 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if err := saveReviewProfile(ctx, profileName, profile, true); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "\nReview profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
+		fmt.Fprintf(out, "Review profile %q saved with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
 		fmt.Fprintf(out, "Run `entire review %s` to start.\n", profileName)
 		return nil
 	}
 
-	// Interactive path: the guided wizard.
+	// Interactive path: the guided wizard already lists the agents, so don't
+	// duplicate the catalog here.
 	if interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively() {
 		name, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileName, false)
 		if setupErr != nil {
@@ -265,10 +261,10 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		return nil
 	}
 
-	// Non-interactive with no flags: discovery only.
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Nothing changed. Pass --set-agents (plus optional --set-master/--set-task/--set-model)")
-	fmt.Fprintln(out, "to configure non-interactively, or run in a terminal for the guided wizard.")
+	// Non-interactive with no --set-* flags: this is the discovery view — show
+	// the available agents, current profiles, and how to configure.
+	catalog := availableReviewAgents(installed, deps.ReviewerFor)
+	printReviewConfigCatalog(out, profileName, catalog, s)
 	return nil
 }
 
