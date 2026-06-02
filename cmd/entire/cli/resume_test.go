@@ -26,6 +26,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const resumeTestStrategy = "manual-commit"
+
 type recordingResumeAgent struct {
 	sessionDir     string
 	writtenSession *agent.AgentSession
@@ -531,7 +533,7 @@ func writeCommittedResumeCheckpointWithTranscript(
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		CreatedAt:    createdAt,
-		Strategy:     "manual-commit",
+		Strategy:     resumeTestStrategy,
 		Transcript:   redact.AlreadyRedacted(rawTranscript),
 		Prompts:      []string{"resume prompt"},
 		Agent:        agentType,
