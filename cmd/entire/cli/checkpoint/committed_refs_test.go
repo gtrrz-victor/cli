@@ -9,8 +9,11 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
 
-// Only the JSON string "1.1" opts into the v1.1 mirror; everything else is
-// v1-only. Not parallel: uses t.Chdir() so settings.Load resolves the test repo.
+// What counts as opting in is the parsing concern of
+// settings.MirrorsToV1CustomRef (covered by its own tests); the resolver only
+// sees the resulting boolean. These cases cover the two topologies the
+// resolver produces.
+// Not parallel: uses t.Chdir() so settings.Load resolves the test repo.
 func TestResolveCommittedRefs(t *testing.T) {
 	v1, custom := v1BranchRef(), customRef()
 	tests := []struct {
@@ -19,11 +22,7 @@ func TestResolveCommittedRefs(t *testing.T) {
 		want    CommittedRefs
 	}{
 		{"unset", "", CommittedRefs{Primary: v1, Read: v1}},
-		{"string 1.1", `"1.1"`, CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
-		{"string 1", `"1"`, CommittedRefs{Primary: v1, Read: v1}},
-		{"numeric 1", `1`, CommittedRefs{Primary: v1, Read: v1}},
-		{"numeric 1.1 (string only)", `1.1`, CommittedRefs{Primary: v1, Read: v1}},
-		{"garbage", `"abc"`, CommittedRefs{Primary: v1, Read: v1}},
+		{"opted in", `"1.1"`, CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,8 +47,7 @@ func TestResolveCommittedRefsFromSettings(t *testing.T) {
 	}{
 		{"nil", nil, CommittedRefs{Primary: v1, Read: v1}},
 		{"empty", &settings.EntireSettings{}, CommittedRefs{Primary: v1, Read: v1}},
-		{"1.1", version("1.1"), CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
-		{"1", version("1"), CommittedRefs{Primary: v1, Read: v1}},
+		{"opted in", version("1.1"), CommittedRefs{Primary: v1, Read: custom, Mirror: custom}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
