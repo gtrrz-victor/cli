@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	checkpointid "github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/redact"
@@ -111,7 +109,7 @@ func TestLocalMode_ReadsV1CustomRefWhenEnabled(t *testing.T) {
 	}
 
 	// Mirror enabled: reads resolve against the custom ref.
-	enableV1CustomRefMirror(t)
+	writeV1CustomRefMirrorSettings(t, dir)
 	got, err = Run(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
@@ -981,34 +979,13 @@ func moveCheckpointsToCustomRefOnly(t *testing.T, repoDir string) {
 	}
 }
 
-// mirrorEnabledSettings returns settings opted into the v1 custom-ref mirror.
+// writeV1CustomRefMirrorSettings opts repoDir into the v1 custom-ref mirror.
 // "1.1" is the on-disk checkpoints_version encoding read by
 // settings.MirrorsToV1CustomRef.
-func mirrorEnabledSettings() *settings.EntireSettings {
-	return &settings.EntireSettings{
-		Enabled:         true,
-		StrategyOptions: map[string]any{"checkpoints_version": "1.1"},
-	}
-}
-
-// enableV1CustomRefMirror opts the current repo into the v1 custom-ref mirror.
-func enableV1CustomRefMirror(t *testing.T) {
-	t.Helper()
-	if err := settings.Save(context.Background(), mirrorEnabledSettings()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// writeV1CustomRefMirrorSettings opts repoDir into the v1 custom-ref mirror by
-// writing its .entire/settings.json directly (settings.Save resolves relative
-// to cwd, not an arbitrary repo).
 func writeV1CustomRefMirrorSettings(t *testing.T, repoDir string) {
 	t.Helper()
-	data, err := json.MarshalIndent(mirrorEnabledSettings(), "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	testutil.WriteFile(t, repoDir, ".entire/settings.json", string(data))
+	testutil.WriteFile(t, repoDir, ".entire/settings.json",
+		`{"enabled": true, "strategy_options": {"checkpoints_version": "1.1"}}`)
 }
 
 func addOriginRemote(t *testing.T, repoDir string) {
