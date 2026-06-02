@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-06-02
+
+### Fixed
+
+- Fixed a bug where internal API calls didn't follow a redirect properly ([#1327](https://github.com/entireio/cli/pull/1327))
+
 ## [0.7.2] - 2026-06-02
 
 ### Fixed
