@@ -230,8 +230,13 @@ func TestRemoveAllContexts(t *testing.T) {
 	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"bob","exp":%d}`, exp)), true); err != nil {
 		t.Fatalf("record b: %v", err)
 	}
-	if err := contexts.BindCluster(cfgDir, "cluster.example.com", a); err != nil {
-		t.Fatalf("bind cluster: %v", err)
+	// Seed a legacy cluster_contexts entry directly to prove RemoveAllContexts
+	// still clears the inert field on a full logout.
+	if err := contexts.Modify(cfgDir, func(f *contexts.File) (bool, error) {
+		f.ClusterContexts = map[string]string{"cluster.example.com": a}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("seed legacy binding: %v", err)
 	}
 
 	n, err := RemoveAllContexts()

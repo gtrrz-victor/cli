@@ -123,57 +123,6 @@ func TestUpsert_ReplacesByName(t *testing.T) {
 	}
 }
 
-func TestResolve_ClusterBindingWins(t *testing.T) {
-	f := &contexts.File{
-		CurrentContext: "default",
-		ClusterContexts: map[string]string{
-			"royalcanin.partial.to": "special",
-		},
-		Contexts: []*contexts.Context{
-			{Name: "default"},
-			{Name: "special"},
-		},
-	}
-	got := f.Resolve("royalcanin.partial.to")
-	if got == nil || got.Name != "special" {
-		t.Errorf("Resolve = %v, want context %q", got, "special")
-	}
-}
-
-func TestResolve_FallsBackToCurrent(t *testing.T) {
-	f := &contexts.File{
-		CurrentContext: "default",
-		Contexts:       []*contexts.Context{{Name: "default"}},
-	}
-	got := f.Resolve("unbound.example")
-	if got == nil || got.Name != "default" {
-		t.Errorf("Resolve = %v, want fallback to %q", got, "default")
-	}
-}
-
-func TestResolve_StaleBindingFallsBack(t *testing.T) {
-	// Binding points at a deleted context — Resolve must not return nil
-	// just because someone forgot to clean up; fall back to current.
-	f := &contexts.File{
-		CurrentContext: "default",
-		ClusterContexts: map[string]string{
-			"royalcanin.partial.to": "deleted-name",
-		},
-		Contexts: []*contexts.Context{{Name: "default"}},
-	}
-	got := f.Resolve("royalcanin.partial.to")
-	if got == nil || got.Name != "default" {
-		t.Errorf("stale binding: Resolve = %v, want fallback to %q", got, "default")
-	}
-}
-
-func TestResolve_NoCurrentNoBindingReturnsNil(t *testing.T) {
-	f := &contexts.File{}
-	if got := f.Resolve("anything.example"); got != nil {
-		t.Errorf("Resolve on empty file = %v, want nil", got)
-	}
-}
-
 func TestDelete_DropsContextAndBindings(t *testing.T) {
 	f := &contexts.File{
 		CurrentContext: "stays",
@@ -226,39 +175,6 @@ func TestDelete_OfLastClearsCurrent(t *testing.T) {
 	}
 	if len(f.Contexts) != 0 {
 		t.Errorf("len(Contexts) = %d, want 0", len(f.Contexts))
-	}
-}
-
-func TestBindCluster_PersistsAndRequiresExistingContext(t *testing.T) {
-	dir := t.TempDir()
-	if err := contexts.Save(dir, &contexts.File{
-		CurrentContext: "eu-paul",
-		Contexts:       []*contexts.Context{{Name: "eu-paul"}},
-	}); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Binding to a non-existent context is rejected — stale bindings are
-	// a foot-gun.
-	if err := contexts.BindCluster(dir, "host.example", "no-such-context"); err == nil {
-		t.Error("BindCluster to missing context: want error, got nil")
-	}
-
-	if err := contexts.BindCluster(dir, "host.example", "eu-paul"); err != nil {
-		t.Fatalf("BindCluster: %v", err)
-	}
-
-	got, err := contexts.Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.ClusterContexts["host.example"] != "eu-paul" {
-		t.Errorf("ClusterContexts[host.example] = %q, want %q", got.ClusterContexts["host.example"], "eu-paul")
-	}
-
-	// Idempotent: same binding twice is fine.
-	if err := contexts.BindCluster(dir, "host.example", "eu-paul"); err != nil {
-		t.Fatalf("idempotent BindCluster: %v", err)
 	}
 }
 
@@ -373,16 +289,6 @@ func TestModify_HoldsLockAcrossLoadAndSave(t *testing.T) {
 	}
 	if got.CurrentContext != strconv.Itoa(n) {
 		t.Errorf("CurrentContext = %q, want %q (lost updates indicate non-atomic RMW)", got.CurrentContext, strconv.Itoa(n))
-	}
-}
-
-func TestBindCluster_RejectsEmptyArgs(t *testing.T) {
-	dir := t.TempDir()
-	if err := contexts.BindCluster(dir, "", "name"); err == nil {
-		t.Error("empty host: want error")
-	}
-	if err := contexts.BindCluster(dir, "host", ""); err == nil {
-		t.Error("empty name: want error")
 	}
 }
 

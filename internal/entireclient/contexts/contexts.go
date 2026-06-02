@@ -46,12 +46,15 @@ type Context struct {
 
 // File is the on-disk shape of contexts.json.
 type File struct {
-	// CurrentContext is the fallback for unbound clusters and the default
-	// for direct CLI commands. Empty until the first login.
+	// CurrentContext is the active login; the default identity for cluster
+	// operations and direct CLI commands. Empty until the first login.
 	CurrentContext string `json:"current_context,omitempty"`
-	// ClusterContexts maps entire-server cluster host → context name.
-	// Populated lazily after a successful op against the cluster, or
-	// explicitly via `entire-core context bind HOST NAME`.
+	// ClusterContexts is a legacy cluster host → context name binding map.
+	// No longer read or written: the cluster's cores are cached separately
+	// (discovery.ClusterCoresCache) and the account is chosen fresh per
+	// operation. The field is retained only so an existing contexts.json
+	// round-trips without losing data; Delete still prunes entries and a
+	// full logout clears it. Safe to drop once no deployed tool writes it.
 	ClusterContexts map[string]string `json:"cluster_contexts,omitempty"`
 	// Contexts is the list of stored credentials. Order is preserved on
 	// disk so list output stays stable across saves.
@@ -149,25 +152,6 @@ func (f *File) Find(name string) *Context {
 	return nil
 }
 
-// Resolve picks the context to use for an entire-server cluster. The
-// binding wins when present and points at an existing context;
-// otherwise we fall back to the current context. Returns nil when
-// neither resolves.
-func (f *File) Resolve(clusterHost string) *Context {
-	if f == nil {
-		return nil
-	}
-	if name, ok := f.ClusterContexts[clusterHost]; ok && name != "" {
-		if c := f.Find(name); c != nil {
-			return c
-		}
-		// Stale binding (context deleted out from under it). Treat as
-		// no binding rather than erroring — the current_context fallback
-		// is the safer behaviour.
-	}
-	return f.Find(f.CurrentContext)
-}
-
 // Upsert replaces the context with matching Name, or appends. Sets the
 // current context when there isn't one already (first login).
 func (f *File) Upsert(c *Context) {
@@ -245,28 +229,6 @@ func Modify(configDir string, fn func(*File) (changed bool, err error)) error {
 		return nil
 	}
 	return writeNoLock(path, f)
-}
-
-// BindCluster sets cluster_contexts[host] = name atomically. Errors
-// when the named context doesn't exist (a stale binding is a foot-gun).
-// Idempotent.
-func BindCluster(configDir, host, name string) error {
-	if host == "" || name == "" {
-		return errors.New("BindCluster requires non-empty host and context name")
-	}
-	return Modify(configDir, func(f *File) (bool, error) {
-		if f.Find(name) == nil {
-			return false, fmt.Errorf("no context named %q", name)
-		}
-		if f.ClusterContexts == nil {
-			f.ClusterContexts = map[string]string{}
-		}
-		if f.ClusterContexts[host] == name {
-			return false, nil
-		}
-		f.ClusterContexts[host] = name
-		return true, nil
-	})
 }
 
 func lockFile(path string) (func(), error) {

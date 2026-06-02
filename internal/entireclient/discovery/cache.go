@@ -130,7 +130,7 @@ func lockCache(path string) (func(), error) {
 // readCacheFile reads and unmarshals a JSON cache file. A missing file or a
 // corrupt one both yield a fresh empty value (newEmpty), so a damaged cache
 // self-heals on the next write instead of wedging callers.
-func readCacheFile[T any](path string, newEmpty func() T) (T, error) { //nolint:ireturn // generic helper returns the caller's concrete cache type, not an abstract interface
+func readCacheFile[T any](path string, newEmpty func() T) (T, error) {
 	data, exists, err := readCacheBytes(path)
 	if err != nil {
 		var zero T
