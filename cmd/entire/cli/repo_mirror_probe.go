@@ -142,7 +142,7 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 
 	cloning := false
 	for {
-		ready, status := mirrorAdvertisesHead(ctx, checkURL, token)
+		ready, status := mirrorAdvertisesHead(ctx, probeClient, checkURL, token)
 		switch {
 		case ready:
 			if cloning {
@@ -198,17 +198,28 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 // 0 for transport/build/decode failures, treated as "not ready, keep
 // waiting". Auth is the repo-scoped token as HTTP basic-auth password, the
 // same shape git presents over the entire:// transport.
-func mirrorAdvertisesHead(ctx context.Context, checkURL, token string) (ready bool, status int) {
+func mirrorAdvertisesHead(ctx context.Context, client *http.Client, checkURL, token string) (ready bool, status int) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL, nil)
 	if err != nil {
 		return false, 0
 	}
 	req.SetBasicAuth("entire-cli", token)
-	resp, err := probeClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false, 0
 	}
-	defer func() { _ = resp.Body.Close() }()
+	// Drain before close so the transport can return the connection to the
+	// idle pool and reuse the TLS session on the next tick. Go only recycles
+	// a conn whose body was read to EOF before Close, and the Decode error
+	// returns below leave the body partially read. Drain to EOF, uncapped:
+	// the maxProbeBytes cap on the read below bounds the Decode *allocation*,
+	// but draining to io.Discard is O(1) memory, and a LimitReader cap
+	// shorter than the body would stop before EOF and silently defeat reuse.
+	// The client Timeout still bounds how long the drain can run.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body) //nolint:errcheck // best-effort drain to enable conn reuse; copy errors are irrelevant
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return false, resp.StatusCode
 	}
