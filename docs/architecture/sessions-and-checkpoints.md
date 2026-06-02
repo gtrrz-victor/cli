@@ -79,7 +79,7 @@ type Store interface {
     ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error)
     ListTemporary(ctx context.Context) ([]TemporaryInfo, error)
 
-    // Committed checkpoint operations (entire/checkpoints/v1 branch - metadata only)
+    // Committed checkpoint operations (metadata only)
     // Writes target v1. Reads use the configured committed-read ref.
     WriteCommitted(ctx context.Context, opts WriteCommittedOptions) error
     ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
