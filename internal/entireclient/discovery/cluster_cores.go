@@ -13,7 +13,7 @@ const (
 	// near-static infra — once a cluster is homed to a core it stays — so a
 	// long TTL is fine. On expiry we re-fetch /.well-known and only fall back
 	// to the stale entry if that fetch fails.
-	ClusterCoresTTL = 7 * 24 * time.Hour
+	ClusterCoresTTL = 24 * time.Hour
 )
 
 // ClusterCoresCache maps a cluster host to the control-plane core URLs that
