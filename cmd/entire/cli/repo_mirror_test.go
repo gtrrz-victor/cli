@@ -30,7 +30,7 @@ func TestExplainSuspendedMirror(t *testing.T) {
 		// prove detection survives the wrapping chain.
 		err := fmt.Errorf("authorize clone probe: %w", fmt.Errorf("repo-scoped token exchange: %w", auth.ErrRepoTargetUnknown))
 		var buf bytes.Buffer
-		handled, serr := explainSuspendedMirror(&buf, id, err)
+		handled, serr := explainSuspendedMirror(&buf, id, false, err)
 		if !handled {
 			t.Fatal("expected handled=true for ErrRepoTargetUnknown")
 		}
@@ -47,10 +47,28 @@ func TestExplainSuspendedMirror(t *testing.T) {
 		}
 	})
 
+	t.Run("fresh create passes invalid_target through as propagation lag", func(t *testing.T) {
+		t.Parallel()
+		// Same invalid_target signature, but on a just-created placement it's
+		// eventual-consistency lag, not suspension — don't misdirect to resume.
+		err := fmt.Errorf("authorize clone probe: %w", fmt.Errorf("repo-scoped token exchange: %w", auth.ErrRepoTargetUnknown))
+		var buf bytes.Buffer
+		handled, serr := explainSuspendedMirror(&buf, id, true, err)
+		if handled {
+			t.Error("expected handled=false for a fresh create")
+		}
+		if serr != nil {
+			t.Errorf("expected nil error, got %v", serr)
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no output, got %q", buf.String())
+		}
+	})
+
 	t.Run("unrelated error passes through untouched", func(t *testing.T) {
 		t.Parallel()
 		var buf bytes.Buffer
-		handled, serr := explainSuspendedMirror(&buf, id, errors.New("timed out waiting for initial clone"))
+		handled, serr := explainSuspendedMirror(&buf, id, false, errors.New("timed out waiting for initial clone"))
 		if handled {
 			t.Error("expected handled=false for an unrelated error")
 		}

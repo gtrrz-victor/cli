@@ -139,11 +139,17 @@ func checkProbeRedirect(req *http.Request, via []*http.Request) error {
 // suspended mirrors behind invalid_target. Recovery is operator-side, so we
 // name the exact resume command rather than leaking the raw OAuth error.
 //
+// freshCreate gates the diagnosis: a mirror created moments ago cannot be
+// suspended (suspension only happens after upstream access is lost), so an
+// invalid_target on a fresh create is propagation lag, not suspension.
+// Diagnosing that as "suspended" would misdirect the user to a resume command
+// that does nothing, so we decline (handled=false) and let the raw error surface.
+//
 // Returns handled=false for any other error so the caller surfaces it
 // verbatim. When handled, the message is already written to w and the
 // returned error is a SilentError so main.go won't reprint it.
-func explainSuspendedMirror(w io.Writer, mirrorID string, err error) (bool, error) {
-	if !errors.Is(err, auth.ErrRepoTargetUnknown) {
+func explainSuspendedMirror(w io.Writer, mirrorID string, freshCreate bool, err error) (bool, error) {
+	if freshCreate || !errors.Is(err, auth.ErrRepoTargetUnknown) {
 		return false, nil
 	}
 	fmt.Fprintf(w,
