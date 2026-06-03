@@ -155,6 +155,10 @@ func writeDoctorBundle(ctx context.Context, repoRoot, outPath string, raw bool) 
 func entireRefsReport(ctx context.Context, repoRoot string) string {
 	var sb strings.Builder
 
+	// Deliberately broad namespace globs rather than the resolved topology
+	// refs: refs/heads/entire covers the metadata branch (paths.
+	// MetadataBranchName) plus shadow/trails branches, and refs/entire covers
+	// the v1.1 mirror (paths.MetadataRefName) and any future custom refs.
 	cmd := exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname) %(objectname)",
 		"refs/heads/entire", "refs/entire", "refs/remotes/origin/entire")
 	cmd.Dir = repoRoot

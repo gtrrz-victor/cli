@@ -442,10 +442,10 @@ func TestDiagnoseCommittedMetadataMirror(t *testing.T) {
 			setMirror(t, repo, ahead)
 			return want{status: MirrorDiverged, primary: v1, mirror: ahead}
 		}},
-		{"primary missing without mirror", `"1.1"`, func(_ *testing.T, _ *git.Repository) want {
-			return want{status: MirrorPrimaryMissing}
+		{"no metadata when neither ref exists", `"1.1"`, func(_ *testing.T, _ *git.Repository) want {
+			return want{status: MirrorNoMetadata}
 		}},
-		{"primary missing with leftover mirror", `"1.1"`, func(t *testing.T, repo *git.Repository) want {
+		{"primary missing when mirror outlives v1", `"1.1"`, func(t *testing.T, repo *git.Repository) want {
 			head, err := repo.Head()
 			require.NoError(t, err)
 			setMirror(t, repo, head.Hash())

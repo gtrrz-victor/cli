@@ -26,19 +26,23 @@ type MirrorStatus int
 const (
 	MirrorNotConfigured  MirrorStatus = iota // topology has no mirror (v1 mode)
 	MirrorOK                                 // mirror == primary tip
+	MirrorNoMetadata                         // neither primary nor mirror exists yet (fresh repo)
 	MirrorMissing                            // primary exists, mirror ref absent
 	MirrorBehind                             // mirror is an ancestor of the primary tip
 	MirrorDiverged                           // mirror is not an ancestor of the primary tip
-	MirrorPrimaryMissing                     // local primary metadata ref absent
+	MirrorPrimaryMissing                     // mirror exists but the primary ref it mirrors is gone
 )
 
-// String returns the status name used in doctor and bundle output.
+// String returns the status name; doctor and bundle output derive their
+// labels from here so the two surfaces cannot drift.
 func (s MirrorStatus) String() string {
 	switch s {
 	case MirrorNotConfigured:
 		return "NOT CONFIGURED"
 	case MirrorOK:
 		return "OK"
+	case MirrorNoMetadata:
+		return "NO METADATA"
 	case MirrorMissing:
 		return "MISSING"
 	case MirrorBehind:
@@ -46,7 +50,7 @@ func (s MirrorStatus) String() string {
 	case MirrorDiverged:
 		return "DIVERGED"
 	case MirrorPrimaryMissing:
-		return "V1 MISSING"
+		return "V1 BRANCH MISSING"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", int(s))
 	}
@@ -86,7 +90,11 @@ func DiagnoseCommittedMetadataMirror(ctx context.Context, repo *git.Repository) 
 	primaryRef, err := repo.Reference(refs.Primary, true)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			diag.Status = MirrorPrimaryMissing
+			if diag.Mirror.IsZero() {
+				diag.Status = MirrorNoMetadata // fresh repo: nothing committed yet
+			} else {
+				diag.Status = MirrorPrimaryMissing // mirror outlived its primary
+			}
 			return diag, nil
 		}
 		return diag, fmt.Errorf("read primary metadata ref %s: %w", refs.Primary, err)

@@ -505,7 +505,7 @@ func TestCheckCommittedMetadataMirror_WarnsWhenV1MissingButMirrorExists(t *testi
 	require.NoError(t, checkCommittedMetadataMirror(cmd, true)) // even --force must not "fix" this
 
 	out := stdout.String()
-	assert.Contains(t, out, "Checkpoint read mirror: v1 BRANCH MISSING")
+	assert.Contains(t, out, "Checkpoint read mirror: V1 BRANCH MISSING")
 	assert.Contains(t, out, "git fetch origin entire/checkpoints/v1:entire/checkpoints/v1")
 
 	got, ok := metadataMirrorHash(t, repo)

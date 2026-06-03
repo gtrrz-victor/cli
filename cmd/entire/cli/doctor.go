@@ -369,22 +369,11 @@ func checkDisconnectedMetadata(cmd *cobra.Command, force bool) error {
 	fmt.Fprintln(w, "  Fix: cherry-pick local checkpoints onto remote tip (preserves all data).")
 
 	if !force {
-		var confirmed bool
-		form := NewAccessibleForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Fix disconnected metadata branches?").
-					Value(&confirmed),
-			),
-		)
-		if formErr := form.Run(); formErr != nil {
-			if errors.Is(formErr, huh.ErrUserAborted) {
-				return nil
-			}
-			return fmt.Errorf("prompt failed: %w", formErr)
+		proceed, promptErr := confirmDoctorFix(w, "Fix disconnected metadata branches?")
+		if promptErr != nil {
+			return promptErr
 		}
-		if !confirmed {
-			fmt.Fprintln(w, "  -> Skipped")
+		if !proceed {
 			return nil
 		}
 	}
@@ -415,6 +404,7 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 	}
 
 	w := cmd.OutOrStdout()
+	primary := diag.Refs.Primary.Short()
 
 	switch diag.Status {
 	case strategy.MirrorNotConfigured:
@@ -422,52 +412,40 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 	case strategy.MirrorOK:
 		fmt.Fprintln(w, "✓ Checkpoint read mirror: OK")
 		return nil
+	case strategy.MirrorNoMetadata:
+		fmt.Fprintln(w, "✓ Checkpoint read mirror: OK (no committed metadata yet)")
+		return nil
 	case strategy.MirrorPrimaryMissing:
-		if diag.Mirror.IsZero() {
-			fmt.Fprintln(w, "✓ Checkpoint read mirror: OK (no committed metadata yet)")
-			return nil
-		}
-		fmt.Fprintln(w, "Checkpoint read mirror: v1 BRANCH MISSING")
+		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
 		fmt.Fprintf(w, "  The read mirror %s exists, but the %s branch it mirrors is gone.\n",
-			diag.Refs.Mirror, paths.MetadataBranchName)
+			diag.Refs.Mirror, primary)
 		fmt.Fprintln(w, "  Restore the branch and re-run doctor:")
-		fmt.Fprintf(w, "    git fetch origin %s:%s\n", paths.MetadataBranchName, paths.MetadataBranchName)
+		fmt.Fprintf(w, "    git fetch origin %s:%s\n", primary, primary)
 		return nil
 	case strategy.MirrorMissing:
-		fmt.Fprintln(w, "Checkpoint read mirror: MISSING")
-		fmt.Fprintf(w, "  %s does not exist; v1.1 reads will find no checkpoints.\n", diag.Refs.Mirror)
-		fmt.Fprintf(w, "  Fix: seed the mirror at the %s tip.\n", paths.MetadataBranchName)
+		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
+		fmt.Fprintf(w, "  %s does not exist; reads will find no checkpoints.\n", diag.Refs.Mirror)
+		fmt.Fprintf(w, "  Fix: seed the mirror at the %s tip.\n", primary)
 	case strategy.MirrorBehind:
-		fmt.Fprintln(w, "Checkpoint read mirror: STALE")
+		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
 		fmt.Fprintf(w, "  Mirror is at %s, behind %s at %s; reads miss newer checkpoints.\n",
-			shortMirrorHash(diag.Mirror), paths.MetadataBranchName, shortMirrorHash(diag.Primary))
-		fmt.Fprintln(w, "  Fix: advance the mirror to the v1 tip.")
+			shortMirrorHash(diag.Mirror), primary, shortMirrorHash(diag.Primary))
+		fmt.Fprintln(w, "  Fix: advance the mirror to its tip.")
 	case strategy.MirrorDiverged:
-		fmt.Fprintln(w, "Checkpoint read mirror: DIVERGED")
+		fmt.Fprintf(w, "Checkpoint read mirror: %s\n", diag.Status)
 		fmt.Fprintf(w, "  Mirror at %s has commits not on %s (at %s). Writes never target the\n",
-			shortMirrorHash(diag.Mirror), paths.MetadataBranchName, shortMirrorHash(diag.Primary))
+			shortMirrorHash(diag.Mirror), primary, shortMirrorHash(diag.Primary))
 		fmt.Fprintln(w, "  mirror, so something outside entire moved it.")
-		fmt.Fprintln(w, "  Fix: reset the mirror to the v1 tip — the diverged mirror commits are")
-		fmt.Fprintln(w, "  discarded (v1 is the source of truth).")
+		fmt.Fprintf(w, "  Fix: reset the mirror to the %s tip — the diverged mirror commits\n", primary)
+		fmt.Fprintf(w, "  are discarded (%s is the source of truth).\n", primary)
 	}
 
 	if !force {
-		var confirmed bool
-		form := NewAccessibleForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Repair checkpoint read mirror?").
-					Value(&confirmed),
-			),
-		)
-		if formErr := form.Run(); formErr != nil {
-			if errors.Is(formErr, huh.ErrUserAborted) {
-				return nil
-			}
-			return fmt.Errorf("prompt failed: %w", formErr)
+		proceed, promptErr := confirmDoctorFix(w, "Repair checkpoint read mirror?")
+		if promptErr != nil {
+			return promptErr
 		}
-		if !confirmed {
-			fmt.Fprintln(w, "  -> Skipped")
+		if !proceed {
 			return nil
 		}
 	}
@@ -475,8 +453,32 @@ func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
 	if fixErr := strategy.MirrorCommittedMetadataRef(ctx, repo, diag.Refs); fixErr != nil {
 		return fmt.Errorf("failed to repair checkpoint read mirror: %w", fixErr)
 	}
-	fmt.Fprintf(w, "  ✓ Fixed: mirror now points at the %s tip\n", paths.MetadataBranchName)
+	fmt.Fprintf(w, "  ✓ Fixed: mirror now points at the %s tip\n", primary)
 	return nil
+}
+
+// confirmDoctorFix asks a yes/no fix confirmation shared by doctor checks.
+// Returns false with no error when the user declines (prints "-> Skipped")
+// or aborts the prompt.
+func confirmDoctorFix(w io.Writer, title string) (bool, error) {
+	var confirmed bool
+	form := NewAccessibleForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Value(&confirmed),
+		),
+	)
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return false, nil
+		}
+		return false, fmt.Errorf("prompt failed: %w", err)
+	}
+	if !confirmed {
+		fmt.Fprintln(w, "  -> Skipped")
+	}
+	return confirmed, nil
 }
 
 // shortMirrorHash abbreviates a hash for mirror-check output; "none" when zero.
