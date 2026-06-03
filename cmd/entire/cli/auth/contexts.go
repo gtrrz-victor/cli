@@ -70,15 +70,17 @@ func RecordLoginContext(rawToken, refreshToken string, activate bool) (string, e
 		}
 	}
 
-	encoded := tokenstore.EncodeTokenWithExpiration(rawToken, expiresIn)
-	if err := tokenstore.Set(keychainService, handle, encoded); err != nil {
-		return "", fmt.Errorf("store login token in keyring: %w", err)
-	}
-
 	// The refresh token lives in the paired "<service>:refresh" slot (raw,
 	// no expiry suffix). Clear any prior one when this login carries none,
 	// so a stale token from an earlier session can't later be replayed
 	// against the server's single-use rotation and revoke the family.
+	//
+	// Write the refresh slot BEFORE the access token, matching
+	// contextTokenStore.SaveTokens: a partial write must never leave a fresh
+	// access token paired with a stale refresh token left over from an
+	// earlier login. Refresh-first means a failed refresh write aborts before
+	// the access token is touched (old pair preserved), rather than committing
+	// a new access JWT against a dead refresh token.
 	refreshSlot := tokenstore.RefreshService(keychainService)
 	if refreshToken != "" {
 		if err := tokenstore.Set(refreshSlot, handle, refreshToken); err != nil {
@@ -86,6 +88,11 @@ func RecordLoginContext(rawToken, refreshToken string, activate bool) (string, e
 		}
 	} else {
 		_ = tokenstore.Delete(refreshSlot, handle) //nolint:errcheck // best-effort cleanup of a stale refresh token
+	}
+
+	encoded := tokenstore.EncodeTokenWithExpiration(rawToken, expiresIn)
+	if err := tokenstore.Set(keychainService, handle, encoded); err != nil {
+		return "", fmt.Errorf("store login token in keyring: %w", err)
 	}
 
 	var name string

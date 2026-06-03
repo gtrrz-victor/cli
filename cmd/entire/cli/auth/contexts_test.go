@@ -25,6 +25,45 @@ func makeJWT(t *testing.T, payloadJSON string) string {
 	return header + "." + payload + "." + enc.EncodeToString([]byte("sig"))
 }
 
+// RecordLoginContext must persist the refresh token before the access token,
+// so a failed access write never commits a fresh access JWT against a stale
+// refresh token left over from an earlier login.
+func TestRecordLoginContext_RefreshFirstOrdering(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+
+	const coreURL = "https://core.example.com"
+	const handle = "alice"
+	svc := tokenstore.CoreKeyringService(coreURL)
+	path := filepath.Join(t.TempDir(), "tokens.json")
+
+	// A prior login left a stale refresh token in the slot.
+	seedRestore := tokenstore.UseFileBackendForTesting(path)
+	if err := tokenstore.Set(tokenstore.RefreshService(svc), handle, "entr_stale"); err != nil {
+		t.Fatalf("seed stale refresh: %v", err)
+	}
+	seedRestore()
+
+	// Fail the access-token write only.
+	failAccess := func(service, _ string) bool { return service == svc }
+	restore := tokenstore.UseFailingBackendForTesting(path, failAccess)
+	t.Cleanup(restore)
+
+	exp := time.Now().Add(2 * time.Hour).Unix()
+	token := makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":%q,"exp":%d}`, coreURL, handle, exp))
+	if _, err := RecordLoginContext(token, "entr_login_new", true); err == nil {
+		t.Fatal("RecordLoginContext: want error when access write fails")
+	}
+	// The refresh token must already be the new one (written first), and no
+	// access token may sit alongside the stale refresh token.
+	if r, _ := tokenstore.Get(tokenstore.RefreshService(svc), handle); r != "entr_login_new" { //nolint:errcheck // read-back
+		t.Fatalf("refresh slot = %q, want entr_login_new persisted before the access write", r)
+	}
+	if v, err := tokenstore.Get(svc, handle); !errors.Is(err, tokenstore.ErrNotFound) {
+		t.Fatalf("access slot = %q (err=%v); a fresh access token must not be committed when its write failed", v, err)
+	}
+}
+
 func TestRecordLoginContext_WritesContextAndToken(t *testing.T) {
 	// Sets ENTIRE_CONFIG_DIR and swaps the keyring backend — process-global
 	// state, so this test cannot run in parallel.
