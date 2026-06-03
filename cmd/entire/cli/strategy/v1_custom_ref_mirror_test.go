@@ -228,6 +228,31 @@ func TestCondenseSession_MirrorsV1CustomRefWhenEnabled(t *testing.T) {
 }
 
 // Not parallel: uses t.Chdir().
+func TestDeleteOrphanedCheckpoints_MirrorsV1CustomRefWhenEnabled(t *testing.T) {
+	dir := setupGitRepo(t)
+	t.Chdir(dir)
+	enableV1CustomRefMirror(t, dir)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	setV1MetadataBranch(t, repo)
+	v1HashBefore := v1MetadataBranchHash(t, repo)
+
+	cpID := id.MustCheckpointID("aabbccdd1122")
+	deleted, failed, err := DeleteOrphanedCheckpoints(t.Context(), []string{cpID.String()})
+	require.NoError(t, err)
+	require.Empty(t, failed)
+	require.Equal(t, []string{cpID.String()}, deleted)
+
+	v1HashAfter := v1MetadataBranchHash(t, repo)
+	require.NotEqual(t, v1HashBefore, v1HashAfter, "cleanup must advance v1 with a new commit")
+
+	mirrorHash, ok := v1CustomRefHash(t, repo)
+	require.True(t, ok, "expected %s to exist", paths.MetadataRefName)
+	assert.Equal(t, v1HashAfter, mirrorHash, "v1.1 mirror should track v1 after DeleteOrphanedCheckpoints")
+}
+
+// Not parallel: uses t.Chdir().
 func TestFinalizeAllTurnCheckpoints_MirrorsV1CustomRefWhenEnabled(t *testing.T) {
 	dir := setupGitRepo(t)
 	t.Chdir(dir)
