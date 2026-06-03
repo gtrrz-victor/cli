@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -196,11 +197,15 @@ func TestRemoveCurrentContext(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour).Unix()
 	token := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := RecordLoginContext(token, "", true); err != nil {
+	if _, err := RecordLoginContext(token, "entr_refresh", true); err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
 	if _, ok := CurrentContextToken(); !ok {
 		t.Fatal("precondition: expected a current context token")
+	}
+	svc := tokenstore.CoreKeyringService("https://core.example.com")
+	if r, _ := tokenstore.Get(tokenstore.RefreshService(svc), "alice"); r != "entr_refresh" { //nolint:errcheck // read-back; only the value matters
+		t.Fatalf("precondition: expected refresh slot seeded, got %q", r)
 	}
 
 	if err := RemoveCurrentContext(); err != nil {
@@ -208,6 +213,15 @@ func TestRemoveCurrentContext(t *testing.T) {
 	}
 	if _, ok := CurrentContextToken(); ok {
 		t.Fatal("after RemoveCurrentContext, expected no current context token")
+	}
+	// Logout must scrub both slots: the access token and the long-lived
+	// refresh token. A leftover refresh token would let any keyring-capable
+	// process mint fresh access tokens after logout.
+	if v, err := tokenstore.Get(svc, "alice"); !errors.Is(err, tokenstore.ErrNotFound) {
+		t.Fatalf("access slot survived logout: value=%q err=%v", v, err)
+	}
+	if v, err := tokenstore.Get(tokenstore.RefreshService(svc), "alice"); !errors.Is(err, tokenstore.ErrNotFound) {
+		t.Fatalf("refresh slot survived logout: value=%q err=%v", v, err)
 	}
 
 	// Idempotent: a second call with nothing current is a no-op.
@@ -223,10 +237,10 @@ func TestRemoveAllContexts(t *testing.T) {
 	t.Cleanup(restore)
 
 	exp := time.Now().Add(time.Hour).Unix()
-	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), "", true); err != nil {
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://a.example.com","handle":"alice","exp":%d}`, exp)), "entr_a", true); err != nil {
 		t.Fatalf("record a: %v", err)
 	}
-	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"bob","exp":%d}`, exp)), "", true); err != nil {
+	if _, err := RecordLoginContext(makeJWT(t, fmt.Sprintf(`{"iss":"https://b.example.com","handle":"bob","exp":%d}`, exp)), "entr_b", true); err != nil {
 		t.Fatalf("record b: %v", err)
 	}
 	n, err := RemoveAllContexts()
@@ -242,6 +256,19 @@ func TestRemoveAllContexts(t *testing.T) {
 	}
 	if len(f.Contexts) != 0 || f.CurrentContext != "" {
 		t.Fatalf("expected fully cleared, got contexts=%d current=%q", len(f.Contexts), f.CurrentContext)
+	}
+	// Every refresh slot must be gone too, for both removed contexts.
+	for _, tc := range []struct{ iss, handle string }{
+		{"https://a.example.com", "alice"},
+		{"https://b.example.com", "bob"},
+	} {
+		svc := tokenstore.CoreKeyringService(tc.iss)
+		if v, err := tokenstore.Get(svc, tc.handle); !errors.Is(err, tokenstore.ErrNotFound) {
+			t.Fatalf("access slot for %s survived: value=%q err=%v", tc.handle, v, err)
+		}
+		if v, err := tokenstore.Get(tokenstore.RefreshService(svc), tc.handle); !errors.Is(err, tokenstore.ErrNotFound) {
+			t.Fatalf("refresh slot for %s survived: value=%q err=%v", tc.handle, v, err)
+		}
 	}
 
 	// Idempotent.

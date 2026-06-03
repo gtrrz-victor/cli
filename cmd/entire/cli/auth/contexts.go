@@ -79,7 +79,7 @@ func RecordLoginContext(rawToken, refreshToken string, activate bool) (string, e
 	// no expiry suffix). Clear any prior one when this login carries none,
 	// so a stale token from an earlier session can't later be replayed
 	// against the server's single-use rotation and revoke the family.
-	refreshSlot := keychainService + ":refresh"
+	refreshSlot := tokenstore.RefreshService(keychainService)
 	if refreshToken != "" {
 		if err := tokenstore.Set(refreshSlot, handle, refreshToken); err != nil {
 			return "", fmt.Errorf("store refresh token in keyring: %w", err)
