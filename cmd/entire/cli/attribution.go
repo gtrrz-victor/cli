@@ -361,7 +361,6 @@ func (r *attributionResolver) resolveLine(raw rawBlameLine, file string) attribu
 		return line
 	}
 
-	line.Authorship = attributionAI
 	var candidates []attributionCandidate
 	for _, cpID := range cpIDs {
 		candidates = append(candidates, candidateFromContext(r.checkpointContext(cpID, file)))
@@ -369,9 +368,7 @@ func (r *attributionResolver) resolveLine(raw rawBlameLine, file string) attribu
 
 	preferred := preferredAttributionCandidate(candidates, file)
 	applyPreferredToLine(&line, preferred)
-	if preferred != nil && preferred.Mixed {
-		line.Authorship = attributionMixed
-	}
+	line.Authorship = authorshipForPreferred(preferred)
 	if len(candidates) > 0 {
 		line.Candidates = candidates
 	}
@@ -417,9 +414,6 @@ func (r *attributionResolver) readCheckpointContext(cpID id.CheckpointID, file s
 	}
 
 	ctx.FilesTouched = normalizePathSlice(summary.FilesTouched)
-	if attributionIsMixed(summary.CombinedAttribution) {
-		ctx.Mixed = true
-	}
 
 	selected := checkpointSessionForFile{}
 	var fallback checkpointSessionForFile
@@ -427,9 +421,6 @@ func (r *attributionResolver) readCheckpointContext(cpID id.CheckpointID, file s
 		sessionCtx, readErr := r.readSessionForCheckpoint(cpID, i)
 		if readErr != nil {
 			continue
-		}
-		if attributionIsMixed(sessionCtx.Attribution) {
-			ctx.Mixed = true
 		}
 		if fallback.SessionID == "" {
 			fallback = sessionCtx
@@ -442,6 +433,19 @@ func (r *attributionResolver) readCheckpointContext(cpID id.CheckpointID, file s
 	if selected.SessionID == "" {
 		selected = fallback
 	}
+
+	// Mixed authorship is scoped to the session whose work actually touched
+	// this file, not the checkpoint as a whole. A checkpoint that edited one
+	// file with the agent and another by hand is "combined" overall, but a
+	// line from the agent-only file is still purely [AI]. Fall back to the
+	// checkpoint-wide attribution only when no session metadata resolved.
+	switch {
+	case selected.Attribution != nil:
+		ctx.Mixed = attributionIsMixed(selected.Attribution)
+	case selected.SessionID == "":
+		ctx.Mixed = attributionIsMixed(summary.CombinedAttribution)
+	}
+
 	ctx.SessionID = selected.SessionID
 	ctx.Agent = selected.Agent
 	ctx.Model = selected.Model
@@ -467,7 +471,6 @@ func enrichAttributionLineWithFetch(ctx context.Context, file string, line *attr
 	defer resolver.Close()
 
 	candidates := make([]attributionCandidate, 0, len(line.Candidates))
-	authorship := attributionAI
 	for _, candidate := range line.Candidates {
 		cpID, idErr := id.NewCheckpointID(candidate.CheckpointID)
 		if idErr != nil {
@@ -476,15 +479,13 @@ func enrichAttributionLineWithFetch(ctx context.Context, file string, line *attr
 		}
 		cpCtx := resolver.checkpointContext(cpID, file)
 		checkpoints[cpCtx.CheckpointID] = cpCtx
-		if cpCtx.Mixed {
-			authorship = attributionMixed
-		}
 		candidates = append(candidates, candidateFromContext(cpCtx))
 	}
-	applyPreferredToLine(line, preferredAttributionCandidate(candidates, file))
+	preferred := preferredAttributionCandidate(candidates, file)
+	applyPreferredToLine(line, preferred)
 	line.Candidates = candidates
-	line.Authorship = authorship
-	line.Tag = attributionTag(authorship)
+	line.Authorship = authorshipForPreferred(preferred)
+	line.Tag = attributionTag(line.Authorship)
 	return nil
 }
 
@@ -1064,6 +1065,19 @@ func applyPreferredToLine(line *attributionLine, preferred *attributionCandidate
 	line.Prompt = preferred.Prompt
 	line.Intent = preferred.Intent
 	line.MetadataMissing = preferred.MetadataMissing
+}
+
+// authorshipForPreferred maps the preferred candidate to a line's authorship.
+// A committed line that carries a checkpoint trailer is [AI]; it is [MX] only
+// when the candidate that actually produced it (the session whose work touched
+// this file) reflects mixed AI+human work. Both the initial blame resolution
+// and the why-time remote enrichment use this single rule, so a line never
+// changes tag between `entire blame` and `entire why`.
+func authorshipForPreferred(preferred *attributionCandidate) attributionAuthorship {
+	if preferred != nil && preferred.Mixed {
+		return attributionMixed
+	}
+	return attributionAI
 }
 
 func preferredAttributionCandidate(candidates []attributionCandidate, file string) *attributionCandidate {

@@ -353,6 +353,46 @@ func TestAttributionBlameMixedUsesFileMatchingCheckpoint(t *testing.T) {
 	require.Equal(t, 1, payload.Summary.AILines)
 }
 
+func TestAttributionBlameScopesMixedToSessionNotCheckpoint(t *testing.T) {
+	repoRoot := newAttributionRepo(t)
+	writeAttributionCheckpoint(t, repoRoot, "a9b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+		SessionID:        "session-scoped-12345678",
+		Prompts:          []string{"Agent-only edit to auth.py."},
+		FilesTouched:     []string{"auth.py"},
+		Agent:            agent.AgentTypeClaudeCode,
+		CheckpointsCount: 1,
+		// The session that touched auth.py is purely agent work...
+		InitialAttribution: &checkpoint.InitialAttribution{
+			AgentLines:        1,
+			TotalCommitted:    1,
+			TotalLinesChanged: 1,
+			AgentPercentage:   100,
+			MetricVersion:     2,
+		},
+		// ...even though the checkpoint as a whole mixed agent and human work
+		// (e.g. a human-edited file elsewhere in the same checkpoint).
+		CombinedAttribution: &checkpoint.InitialAttribution{
+			AgentLines:        1,
+			HumanModified:     1,
+			TotalCommitted:    2,
+			TotalLinesChanged: 2,
+			AgentPercentage:   50,
+			MetricVersion:     2,
+		},
+	})
+	testutil.WriteFile(t, repoRoot, "auth.py", "human_line = 1\nai_line = 2\n")
+	testutil.GitAdd(t, repoRoot, "auth.py")
+	testutil.GitCommit(t, repoRoot, trailers.FormatCheckpoint("scoped update", checkpointid.MustCheckpointID("a9b2c3d4e5f6")))
+
+	var out bytes.Buffer
+	require.NoError(t, runAttributionBlame(context.Background(), &out, "auth.py", attributionBlameOptions{LineFlag: "2", JSON: true}))
+	var payload fileAttributionResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+	require.Len(t, payload.Lines, 1)
+	require.Equal(t, attributionAI, payload.Lines[0].Authorship)
+	require.Equal(t, 0, payload.Summary.MixedLines)
+}
+
 func TestRunGitBlameWrapsExecError(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
 
