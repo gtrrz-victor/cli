@@ -425,7 +425,9 @@ type CommittedInfo struct {
 	// CreatedAt is when the checkpoint was created
 	CreatedAt time.Time
 
-	// CheckpointsCount is the total number of checkpoints across all sessions
+	// CheckpointsCount is the aggregate displayed "steps" count across sessions:
+	// the sum of per-session prompt-window counts. Despite the historical name,
+	// it is not a count of checkpoint records.
 	CheckpointsCount int
 
 	// FilesTouched are files modified during all sessions
