@@ -242,8 +242,6 @@ go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
 | `entire disable` | Remove Entire hooks from repository                                                               |
 | `entire doctor`  | Fix or clean up stuck sessions                                                                    |
 | `entire enable`  | Enable Entire in your repository                                                                  |
-| `entire blame`   | Show which current file lines came from Entire checkpoints                                        |
-| `entire why`     | Show the prompt/checkpoint behind a file or line                                                  |
 | `entire checkpoint`        | List, explain, rewind, and search checkpoints                                           |
 | `entire checkpoint explain` | Explain a session, commit, or checkpoint                                               |
 | `entire checkpoint rewind` | Rewind to a previous checkpoint                                                         |
@@ -255,9 +253,9 @@ go test -tags=integration ./cmd/entire/cli/integration_test -run TestLogin
 | `entire doctor trace` | Show hook performance traces                                                                 |
 | `entire version` | Show Entire CLI version                                                                           |
 
-`entire blame <file>` and `entire why <file>:<line>` help review AI-assisted
-code after an agent edits a repo. Instead of only seeing that `auth.py`
-changed, you can see which lines came from an Entire checkpoint and jump from a
+`entire blame` and `entire why` are experimental Labs commands. Run `entire
+labs` to discover them. `entire blame <file>` shows which current file lines
+came from an Entire checkpoint, and `entire why <file>:<line>` jumps from a
 specific line back to the prompt, session, and checkpoint that created it. Use
 `entire blame <file> --long` for the full agent, model, author, and session
 table.
