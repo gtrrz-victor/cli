@@ -103,7 +103,7 @@ func TestNewRefreshingLoginProvider_ExpiredNoRefresh(t *testing.T) {
 
 	svc := tokenstore.CoreKeyringService("https://core.example")
 	expired := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example","handle":"alice","exp":%d}`, time.Now().Add(-time.Hour).Unix()))
-	if err := tokenstore.Set(svc, "alice", tokenstore.EncodeTokenWithExpiration(expired, -3600)); err != nil {
+	if err := tokenstore.Set(svc, "alice", expired+tokenstore.TokenExpirationSeparator+"0"); err != nil {
 		t.Fatalf("seed token: %v", err)
 	}
 
