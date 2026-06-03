@@ -34,13 +34,18 @@ Checks performed:
      entire/checkpoints/v1 branches share no common ancestor (caused by a
      previous bug). Fixes by cherry-picking local checkpoints onto remote tip.
 
+  2. Checkpoint read mirror (checkpoints v1.1 only): detects when the
+     local-only refs/entire/checkpoints/v1.1 read mirror is missing, stale,
+     or diverged relative to entire/checkpoints/v1, which makes reads miss
+     checkpoints. Fixes by pointing the mirror at the v1 tip.
+
   When Codex hooks are installed:
-  2. Codex hook trust: warn when hooks declared in .codex/hooks.json
+  3. Codex hook trust: warn when hooks declared in .codex/hooks.json
      lack a trusted_hash entry in the user's Codex config (i.e. /hooks
      review hasn't run yet on this machine, or a newer entire release
      added a hook the user hasn't approved yet).
 
-  3. Stuck sessions: sessions stuck in ACTIVE or ENDED phase that need cleanup.
+  4. Stuck sessions: sessions stuck in ACTIVE or ENDED phase that need cleanup.
 
 A session is considered stuck if:
   - It is in ACTIVE phase with no interaction for over 1 hour
@@ -89,6 +94,15 @@ func runSessionsFix(cmd *cobra.Command, force bool) error {
 	if metadataErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Error: metadata check failed: %v\n", metadataErr)
 		finalErr = NewSilentError(fmt.Errorf("metadata check failed: %w", metadataErr))
+	}
+
+	// Check 2: v1.1 committed-read mirror drift (runs after check 1 because
+	// reconciliation rewrites v1 and re-mirrors; this catches residual drift).
+	if mirrorErr := checkCommittedMetadataMirror(cmd, force); mirrorErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Error: checkpoint read mirror check failed: %v\n", mirrorErr)
+		if finalErr == nil {
+			finalErr = NewSilentError(fmt.Errorf("checkpoint read mirror check failed: %w", mirrorErr))
+		}
 	}
 	fmt.Fprintln(cmd.OutOrStdout())
 
@@ -381,6 +395,96 @@ func checkDisconnectedMetadata(cmd *cobra.Command, force bool) error {
 
 	fmt.Fprintln(w, "  ✓ Fixed: metadata branches reconciled")
 	return nil
+}
+
+// checkCommittedMetadataMirror detects and optionally repairs a v1.1
+// committed-read mirror that drifted from the v1 metadata branch. Read paths
+// use the mirror as-is (no read-time self-repair), so doctor is the repair
+// tool. Silent when checkpoints_version doesn't configure a mirror.
+func checkCommittedMetadataMirror(cmd *cobra.Command, force bool) error {
+	ctx := cmd.Context()
+	repo, err := openRepository(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+	defer repo.Close()
+
+	diag, err := strategy.DiagnoseCommittedMetadataMirror(ctx, repo)
+	if err != nil {
+		return fmt.Errorf("could not check checkpoint read mirror state: %w", err)
+	}
+
+	w := cmd.OutOrStdout()
+
+	switch diag.Status {
+	case strategy.MirrorNotConfigured:
+		return nil
+	case strategy.MirrorOK:
+		fmt.Fprintln(w, "✓ Checkpoint read mirror: OK")
+		return nil
+	case strategy.MirrorPrimaryMissing:
+		if diag.Mirror.IsZero() {
+			fmt.Fprintln(w, "✓ Checkpoint read mirror: OK (no committed metadata yet)")
+			return nil
+		}
+		fmt.Fprintln(w, "Checkpoint read mirror: v1 BRANCH MISSING")
+		fmt.Fprintf(w, "  The read mirror %s exists, but the %s branch it mirrors is gone.\n",
+			diag.Refs.Mirror, paths.MetadataBranchName)
+		fmt.Fprintln(w, "  Restore the branch and re-run doctor:")
+		fmt.Fprintf(w, "    git fetch origin %s:%s\n", paths.MetadataBranchName, paths.MetadataBranchName)
+		return nil
+	case strategy.MirrorMissing:
+		fmt.Fprintln(w, "Checkpoint read mirror: MISSING")
+		fmt.Fprintf(w, "  %s does not exist; v1.1 reads will find no checkpoints.\n", diag.Refs.Mirror)
+		fmt.Fprintf(w, "  Fix: seed the mirror at the %s tip.\n", paths.MetadataBranchName)
+	case strategy.MirrorBehind:
+		fmt.Fprintln(w, "Checkpoint read mirror: STALE")
+		fmt.Fprintf(w, "  Mirror is at %s, behind %s at %s; reads miss newer checkpoints.\n",
+			shortMirrorHash(diag.Mirror), paths.MetadataBranchName, shortMirrorHash(diag.Primary))
+		fmt.Fprintln(w, "  Fix: advance the mirror to the v1 tip.")
+	case strategy.MirrorDiverged:
+		fmt.Fprintln(w, "Checkpoint read mirror: DIVERGED")
+		fmt.Fprintf(w, "  Mirror at %s has commits not on %s (at %s). Writes never target the\n",
+			shortMirrorHash(diag.Mirror), paths.MetadataBranchName, shortMirrorHash(diag.Primary))
+		fmt.Fprintln(w, "  mirror, so something outside entire moved it.")
+		fmt.Fprintln(w, "  Fix: reset the mirror to the v1 tip — the diverged mirror commits are")
+		fmt.Fprintln(w, "  discarded (v1 is the source of truth).")
+	}
+
+	if !force {
+		var confirmed bool
+		form := NewAccessibleForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Repair checkpoint read mirror?").
+					Value(&confirmed),
+			),
+		)
+		if formErr := form.Run(); formErr != nil {
+			if errors.Is(formErr, huh.ErrUserAborted) {
+				return nil
+			}
+			return fmt.Errorf("prompt failed: %w", formErr)
+		}
+		if !confirmed {
+			fmt.Fprintln(w, "  -> Skipped")
+			return nil
+		}
+	}
+
+	if fixErr := strategy.MirrorCommittedMetadataRef(ctx, repo, diag.Refs); fixErr != nil {
+		return fmt.Errorf("failed to repair checkpoint read mirror: %w", fixErr)
+	}
+	fmt.Fprintf(w, "  ✓ Fixed: mirror now points at the %s tip\n", paths.MetadataBranchName)
+	return nil
+}
+
+// shortMirrorHash abbreviates a hash for mirror-check output; "none" when zero.
+func shortMirrorHash(h plumbing.Hash) string {
+	if h.IsZero() {
+		return "none"
+	}
+	return h.String()[:7]
 }
 
 // checkCodexHookTrust warns about two kinds of drift in the Codex hook

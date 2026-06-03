@@ -19,6 +19,109 @@ import (
 // SetReference NotFound on the mirror itself.
 var ErrPrimaryMetadataMissing = errors.New("primary metadata ref missing")
 
+// MirrorStatus classifies the committed-metadata mirror's relationship to the
+// primary metadata ref.
+type MirrorStatus int
+
+const (
+	MirrorNotConfigured  MirrorStatus = iota // topology has no mirror (v1 mode)
+	MirrorOK                                 // mirror == primary tip
+	MirrorMissing                            // primary exists, mirror ref absent
+	MirrorBehind                             // mirror is an ancestor of the primary tip
+	MirrorDiverged                           // mirror is not an ancestor of the primary tip
+	MirrorPrimaryMissing                     // local primary metadata ref absent
+)
+
+// String returns the status name used in doctor and bundle output.
+func (s MirrorStatus) String() string {
+	switch s {
+	case MirrorNotConfigured:
+		return "NOT CONFIGURED"
+	case MirrorOK:
+		return "OK"
+	case MirrorMissing:
+		return "MISSING"
+	case MirrorBehind:
+		return "STALE"
+	case MirrorDiverged:
+		return "DIVERGED"
+	case MirrorPrimaryMissing:
+		return "V1 MISSING"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", int(s))
+	}
+}
+
+// MirrorDiagnosis reports the mirror's state plus the resolved topology so
+// callers can repair with MirrorCommittedMetadataRef.
+type MirrorDiagnosis struct {
+	Status  MirrorStatus
+	Refs    checkpoint.CommittedRefs
+	Primary plumbing.Hash // zero when the primary ref is missing
+	Mirror  plumbing.Hash // zero when the mirror ref is missing
+}
+
+// DiagnoseCommittedMetadataMirror classifies the mirror ref against the local
+// primary metadata ref. Read-only: it never creates, advances, or deletes
+// refs — repair is the caller's decision (e.g. `entire doctor`). Diagnosis is
+// against the local primary only; a remote-tracking ref ahead of the local
+// primary is an entire-managed fetch concern, not a mirror one.
+func DiagnoseCommittedMetadataMirror(ctx context.Context, repo *git.Repository) (MirrorDiagnosis, error) {
+	refs := checkpoint.ResolveCommittedRefs(ctx)
+	diag := MirrorDiagnosis{Status: MirrorNotConfigured, Refs: refs}
+	if !refs.HasMirror() {
+		return diag, nil
+	}
+
+	mirrorRef, err := repo.Reference(refs.Mirror, true)
+	switch {
+	case errors.Is(err, plumbing.ErrReferenceNotFound):
+		// Mirror absent — diag.Mirror stays zero.
+	case err != nil:
+		return diag, fmt.Errorf("read mirror ref %s: %w", refs.Mirror, err)
+	default:
+		diag.Mirror = mirrorRef.Hash()
+	}
+
+	primaryRef, err := repo.Reference(refs.Primary, true)
+	if err != nil {
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			diag.Status = MirrorPrimaryMissing
+			return diag, nil
+		}
+		return diag, fmt.Errorf("read primary metadata ref %s: %w", refs.Primary, err)
+	}
+	diag.Primary = primaryRef.Hash()
+
+	switch {
+	case diag.Mirror.IsZero():
+		diag.Status = MirrorMissing
+		return diag, nil
+	case diag.Mirror == diag.Primary:
+		diag.Status = MirrorOK
+		return diag, nil
+	}
+
+	mirrorCommit, err := repo.CommitObject(diag.Mirror)
+	if err != nil {
+		return diag, fmt.Errorf("read mirror commit %s: %w", diag.Mirror, err)
+	}
+	primaryCommit, err := repo.CommitObject(diag.Primary)
+	if err != nil {
+		return diag, fmt.Errorf("read primary commit %s: %w", diag.Primary, err)
+	}
+	isAncestor, err := mirrorCommit.IsAncestor(primaryCommit)
+	if err != nil {
+		return diag, fmt.Errorf("check mirror ancestry against %s: %w", refs.Primary, err)
+	}
+	if isAncestor {
+		diag.Status = MirrorBehind
+	} else {
+		diag.Status = MirrorDiverged
+	}
+	return diag, nil
+}
+
 // MirrorCommittedMetadataRef points the committed-metadata mirror at the primary
 // ref's tip. No-op when the topology has no mirror.
 func MirrorCommittedMetadataRef(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) error {
