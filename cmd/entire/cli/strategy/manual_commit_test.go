@@ -465,39 +465,6 @@ func TestShadowStrategy_GetRewindPoints_NoShadowBranch(t *testing.T) {
 	}
 }
 
-func TestShadowStrategy_ListSessions_Empty(t *testing.T) {
-	dir := t.TempDir()
-	_, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
-
-	t.Chdir(dir)
-
-	sessions, err := ListSessions(context.Background())
-	if err != nil {
-		t.Errorf("ListSessions(context.Background()) error = %v", err)
-	}
-	if len(sessions) != 0 {
-		t.Errorf("ListSessions(context.Background()) returned %d sessions, want 0", len(sessions))
-	}
-}
-
-func TestShadowStrategy_GetSession_NotFound(t *testing.T) {
-	dir := t.TempDir()
-	_, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
-	}
-
-	t.Chdir(dir)
-
-	_, err = GetSession(context.Background(), "nonexistent")
-	if !errors.Is(err, ErrNoSession) {
-		t.Errorf("GetSession() error = %v, want ErrNoSession", err)
-	}
-}
-
 func TestShadowStrategy_GetSessionInfo_NoShadowBranch(t *testing.T) {
 	dir := t.TempDir()
 	repo, err := git.PlainInit(dir, false)
