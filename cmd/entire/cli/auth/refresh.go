@@ -134,7 +134,7 @@ func NewRefreshingLoginProvider(c *contexts.Context, transport http.RoundTripper
 	mgr, err := tokenmanager.New(tokenmanager.Config{
 		Issuer:            strings.TrimRight(c.CoreURL, "/"),
 		ClientID:          CurrentProvider().ClientID,
-		RefreshPath:       refreshGrantPath,
+		RefreshPath:       CurrentProvider().TokenPath,
 		Store:             contextTokenStore{service: c.KeychainService, handle: c.Handle},
 		Transport:         transport,
 		AllowInsecureHTTP: allowInsecureHTTP,
