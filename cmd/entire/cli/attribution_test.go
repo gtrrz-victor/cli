@@ -429,6 +429,24 @@ func TestAttributionFlagsSessionFallbackForUnmatchedFile(t *testing.T) {
 	require.Contains(t, whyOut.String(), "may have been renamed")
 }
 
+func TestSummarizeAttributionLinesPercentagesSumTo100(t *testing.T) {
+	lines := []attributionLine{
+		{Authorship: attributionAI},
+		{Authorship: attributionHuman},
+		{Authorship: attributionMixed},
+	}
+	summary := summarizeAttributionLines(lines)
+	require.Equal(t, 100, summary.AIPercentage+summary.HumanPercentage+summary.MixedPercentage)
+
+	// An uncommitted line shares the 100%, so the three visible percentages
+	// total less than 100 rather than each independently flooring to a sum
+	// that drifts away from a coherent whole.
+	lines = append(lines, attributionLine{Authorship: attributionUncommitted})
+	summary = summarizeAttributionLines(lines)
+	visible := summary.AIPercentage + summary.HumanPercentage + summary.MixedPercentage
+	require.Equal(t, 75, visible)
+}
+
 func TestRunGitBlameWrapsExecError(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
 

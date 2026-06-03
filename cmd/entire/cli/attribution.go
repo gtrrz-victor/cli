@@ -747,12 +747,55 @@ func summarizeAttributionLines(lines []attributionLine) attributionSummary {
 			summary.UncommittedLines++
 		}
 	}
-	if summary.TotalLines > 0 {
-		summary.AIPercentage = summary.AILines * 100 / summary.TotalLines
-		summary.HumanPercentage = summary.HumanLines * 100 / summary.TotalLines
-		summary.MixedPercentage = summary.MixedLines * 100 / summary.TotalLines
-	}
+	// Apportion percentages with the largest-remainder method across all four
+	// buckets so the displayed AI/Human/Mixed figures don't drift (e.g. three
+	// equal thirds rendering as 33/33/33 = 99). Uncommitted shares the 100% but
+	// is shown only as a count, so when it is present the three visible
+	// percentages correctly total less than 100.
+	pct := largestRemainderPercent(
+		[]int{summary.AILines, summary.HumanLines, summary.MixedLines, summary.UncommittedLines},
+		summary.TotalLines,
+	)
+	summary.AIPercentage = pct[0]
+	summary.HumanPercentage = pct[1]
+	summary.MixedPercentage = pct[2]
 	return summary
+}
+
+// largestRemainderPercent apportions integer percentages that sum to 100 across
+// counts whose own sum is total, using the largest-remainder (Hamilton) method.
+// It avoids the truncation drift where independently floored shares total 99.
+// Returns all-zero when total is non-positive.
+func largestRemainderPercent(counts []int, total int) []int {
+	pct := make([]int, len(counts))
+	if total <= 0 {
+		return pct
+	}
+	allocated := 0
+	order := make([]int, len(counts))
+	for i, c := range counts {
+		pct[i] = c * 100 / total
+		allocated += pct[i]
+		order[i] = i
+	}
+	leftover := 100 - allocated
+	if leftover <= 0 {
+		return pct
+	}
+	// Hand the leftover points to the largest fractional remainders, breaking
+	// ties by lower index for deterministic output.
+	remainder := func(i int) int { return (counts[i] * 100) % total }
+	sort.SliceStable(order, func(a, b int) bool {
+		ra, rb := remainder(order[a]), remainder(order[b])
+		if ra == rb {
+			return order[a] < order[b]
+		}
+		return ra > rb
+	})
+	for i := 0; i < leftover && i < len(order); i++ {
+		pct[order[i]]++
+	}
+	return pct
 }
 
 func renderAttributionBlame(w io.Writer, result *fileAttributionResult, lineFlag string, longOutput bool) {
