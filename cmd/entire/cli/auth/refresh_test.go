@@ -151,7 +151,7 @@ func TestNewRefreshingLoginProvider_RefreshesAndRotates(t *testing.T) {
 
 	svc := tokenstore.CoreKeyringService(srv.URL)
 	expired := makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":"alice","exp":%d}`, srv.URL, time.Now().Add(-time.Hour).Unix()))
-	if err := tokenstore.Set(svc, "alice", tokenstore.EncodeTokenWithExpiration(expired, -3600)); err != nil {
+	if err := tokenstore.Set(svc, "alice", expired+tokenstore.TokenExpirationSeparator+"0"); err != nil {
 		t.Fatalf("seed access token: %v", err)
 	}
 	if err := tokenstore.Set(tokenstore.RefreshService(svc), "alice", "entr_old"); err != nil {
