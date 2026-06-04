@@ -20,7 +20,6 @@ var errOPFAbortedByUser = errors.New("OPF prompt aborted by user; push cancelled
 
 // PrePush is called by the git pre-push hook before pushing to a remote.
 // It pushes the entire/checkpoints/v1 branch alongside the user's push.
-// Legacy checkpoints v2 settings are ignored and warn before falling back to v1.
 //
 // If a checkpoint_remote is configured in settings, checkpoint branches/refs
 // are pushed to the derived URL instead of the user's push remote.
@@ -40,8 +39,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	if ps.pushDisabled {
 		return nil
 	}
-
-	settings.WarnIfCheckpointsV2Disallowed(ctx)
 
 	// OPF pre-push rewrite: if OPF is configured, resolve the user's
 	// decision (env > settings > prompt > non-TTY auto-run), then
