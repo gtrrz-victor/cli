@@ -93,36 +93,26 @@ func NewClient(httpClient *http.Client, allowInsecureHTTP bool) *Client {
 	}
 }
 
-// BrowserAuthFlow is one in-progress loopback authorization-code login.
-// It wraps an authcode.Flow so login.go can depend on a small interface
-// (and fake it in tests) rather than the concrete library type that owns
-// a live loopback listener.
-type BrowserAuthFlow interface {
-	// AuthorizationURL is the URL to open in the user's browser.
-	AuthorizationURL() string
-	// Wait blocks until the browser is redirected to the loopback
-	// listener, returning the authorization code.
-	Wait(ctx context.Context) (code string, err error)
-	// Exchange redeems code for access + refresh tokens.
-	Exchange(ctx context.Context, code string) (accessToken, refreshToken string, err error)
-	// Close tears down the loopback listener. Safe to call after Wait.
-	Close() error
-}
-
-// browserAuthFlow adapts *authcode.Flow to BrowserAuthFlow, flattening the
-// TokenSet to the (access, refresh) pair login.go persists — mirroring how
-// PollDeviceAuth flattens the device-flow result.
-type browserAuthFlow struct {
+// BrowserAuthFlow is one in-progress loopback authorization-code login. It
+// wraps an authcode.Flow, flattening the TokenSet to the (access, refresh)
+// pair login.go persists — mirroring how PollDeviceAuth flattens the
+// device-flow result. login.go depends on a small local interface that this
+// concrete type satisfies, so it can fake the flow in tests.
+type BrowserAuthFlow struct {
 	inner *authcode.Flow
 }
 
-func (f *browserAuthFlow) AuthorizationURL() string { return f.inner.AuthorizationURL }
+// AuthorizationURL is the URL to open in the user's browser.
+func (f *BrowserAuthFlow) AuthorizationURL() string { return f.inner.AuthorizationURL }
 
-func (f *browserAuthFlow) Wait(ctx context.Context) (string, error) {
+// Wait blocks until the browser is redirected to the loopback listener,
+// returning the authorization code.
+func (f *BrowserAuthFlow) Wait(ctx context.Context) (string, error) {
 	return f.inner.Wait(ctx) //nolint:wrapcheck // shim preserves the lib's wrapped errors verbatim for errors.Is
 }
 
-func (f *browserAuthFlow) Exchange(ctx context.Context, code string) (string, string, error) {
+// Exchange redeems code for access + refresh tokens.
+func (f *BrowserAuthFlow) Exchange(ctx context.Context, code string) (accessToken, refreshToken string, err error) {
 	ts, err := f.inner.Exchange(ctx, code)
 	if err != nil {
 		return "", "", err //nolint:wrapcheck // shim returns authcode errors verbatim so callers can errors.Is on sentinels
@@ -130,20 +120,19 @@ func (f *browserAuthFlow) Exchange(ctx context.Context, code string) (string, st
 	return ts.AccessToken, ts.RefreshToken, nil
 }
 
-func (f *browserAuthFlow) Close() error {
+// Close tears down the loopback listener. Safe to call after Wait.
+func (f *BrowserAuthFlow) Close() error {
 	return f.inner.Close() //nolint:wrapcheck // shutdown error is best-effort; caller logs at most
 }
 
 // StartBrowserAuth begins the loopback authorization-code flow: it binds a
 // local listener and returns a flow carrying the browser URL to open.
-//
-//nolint:ireturn // returns the BrowserAuthFlow interface deliberately so login.go can substitute a fake in tests; the concrete impl owns a live listener and stays unexported.
-func (c *Client) StartBrowserAuth(ctx context.Context) (BrowserAuthFlow, error) {
+func (c *Client) StartBrowserAuth(ctx context.Context) (*BrowserAuthFlow, error) {
 	f, err := c.browser.Start(ctx)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // shim returns authcode errors verbatim so callers can errors.Is on sentinels
 	}
-	return &browserAuthFlow{inner: f}, nil
+	return &BrowserAuthFlow{inner: f}, nil
 }
 
 // BaseURL returns the issuer base URL this client talks to.

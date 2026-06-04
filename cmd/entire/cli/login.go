@@ -47,11 +47,14 @@ type deviceAuthClient interface {
 	BaseURL() string
 }
 
-// browserAuthClient abstracts the loopback authorization-code client so
-// runBrowserLogin can be unit-tested without binding a real listener.
-type browserAuthClient interface {
-	StartBrowserAuth(ctx context.Context) (auth.BrowserAuthFlow, error)
-	BaseURL() string
+// browserAuthFlow abstracts an in-progress loopback authorization-code
+// login so runBrowserLogin can be unit-tested with a fake instead of a real
+// listener. *auth.BrowserAuthFlow satisfies it.
+type browserAuthFlow interface {
+	AuthorizationURL() string
+	Wait(ctx context.Context) (code string, err error)
+	Exchange(ctx context.Context, code string) (accessToken, refreshToken string, err error)
+	Close() error
 }
 
 func newLoginCmd() *cobra.Command {
@@ -74,7 +77,11 @@ func newLoginCmd() *cobra.Command {
 			// the same both-flows-with-fallback shape gh / gcloud / aws sso
 			// ship. --device forces the device flow explicitly.
 			if shouldUseBrowserLogin(useDevice, interactive.CanPromptInteractively()) {
-				return runBrowserLogin(cmd.Context(), outW, errW, client, openBrowser)
+				flow, err := client.StartBrowserAuth(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("start login: %w", err)
+				}
+				return runBrowserLogin(cmd.Context(), outW, errW, flow, client.BaseURL(), openBrowser)
 			}
 			if !useDevice {
 				fmt.Fprintln(errW, "No interactive terminal detected; using device-code flow.")
@@ -138,15 +145,12 @@ func shouldUseBrowserLogin(useDevice, canPrompt bool) bool {
 	return !useDevice && canPrompt
 }
 
-// runBrowserLogin runs the loopback authorization-code flow: open the
-// authorization URL in the user's browser, wait for the redirect back to
-// the local listener, then exchange the code for tokens. Shares the token
-// validation + persistence tail with runLogin via persistLogin.
-func runBrowserLogin(ctx context.Context, outW, errW io.Writer, client browserAuthClient, openURL browserOpenFunc) error {
-	flow, err := client.StartBrowserAuth(ctx)
-	if err != nil {
-		return fmt.Errorf("start login: %w", err)
-	}
+// runBrowserLogin runs the loopback authorization-code flow on an
+// already-started flow: open the authorization URL in the user's browser,
+// wait for the redirect back to the local listener, then exchange the code
+// for tokens. Shares the token validation + persistence tail with runLogin
+// via persistLogin.
+func runBrowserLogin(ctx context.Context, outW, errW io.Writer, flow browserAuthFlow, baseURL string, openURL browserOpenFunc) error {
 	// Wait tears the listener down on return, but Close is idempotent and
 	// covers the error paths before Wait runs.
 	defer func() { _ = flow.Close() }()
@@ -161,7 +165,7 @@ func runBrowserLogin(ctx context.Context, outW, errW io.Writer, client browserAu
 	// loopback redirect make it long and unreadable, and the browser is
 	// opened for the user anyway. The full URL is only printed below as a
 	// fallback when the browser can't be opened.
-	fmt.Fprintf(outW, "Logging in to:  %s\n\n", client.BaseURL())
+	fmt.Fprintf(outW, "Logging in to: %s\n\n", baseURL)
 	fmt.Fprint(outW, "Press Enter to open in browser...")
 
 	// Read from /dev/tty so we get a real keypress and don't consume piped stdin.
@@ -175,7 +179,7 @@ func runBrowserLogin(ctx context.Context, outW, errW io.Writer, client browserAu
 		fmt.Fprintf(outW, "Open this URL in your browser to sign in: %s\n", authURL)
 	}
 
-	fmt.Fprint(outW, "\nWaiting for sign-in... ")
+	fmt.Fprint(outW, "Waiting for sign-in... ")
 
 	code, err := flow.Wait(ctx)
 	if err != nil {
@@ -187,7 +191,7 @@ func runBrowserLogin(ctx context.Context, outW, errW io.Writer, client browserAu
 		return fmt.Errorf("complete login: %w", err)
 	}
 
-	return persistLogin(outW, errW, client.BaseURL(), token, refreshToken)
+	return persistLogin(outW, errW, baseURL, token, refreshToken)
 }
 
 // persistLogin validates the freshly-issued access token, saves it to the

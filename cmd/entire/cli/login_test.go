@@ -302,7 +302,7 @@ func TestWaitForApproval_ContextCancelled(t *testing.T) {
 	}
 }
 
-// fakeBrowserFlow implements auth.BrowserAuthFlow for unit tests.
+// fakeBrowserFlow implements the browserAuthFlow interface for unit tests.
 type fakeBrowserFlow struct {
 	authURL     string
 	waitCode    string
@@ -329,22 +329,6 @@ func (f *fakeBrowserFlow) Close() error {
 	return nil
 }
 
-// fakeBrowserClient implements browserAuthClient for unit tests.
-type fakeBrowserClient struct {
-	flow     *fakeBrowserFlow
-	startErr error
-}
-
-//nolint:ireturn // mirrors the browserAuthClient interface, which returns the auth.BrowserAuthFlow interface by design.
-func (c *fakeBrowserClient) StartBrowserAuth(context.Context) (auth.BrowserAuthFlow, error) {
-	if c.startErr != nil {
-		return nil, c.startErr
-	}
-	return c.flow, nil
-}
-
-func (c *fakeBrowserClient) BaseURL() string { return "http://test" }
-
 func TestShouldUseBrowserLogin(t *testing.T) {
 	t.Parallel()
 
@@ -365,23 +349,10 @@ func TestShouldUseBrowserLogin(t *testing.T) {
 	}
 }
 
-func TestRunBrowserLogin_StartError(t *testing.T) {
-	t.Parallel()
-
-	client := &fakeBrowserClient{startErr: errors.New("bind failed")}
-	noopOpen := func(context.Context, string) error { return nil }
-
-	err := runBrowserLogin(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, client, noopOpen)
-	if err == nil || !strings.Contains(err.Error(), "start login") {
-		t.Fatalf("err = %v, want start login error", err)
-	}
-}
-
 func TestRunBrowserLogin_OpensAuthorizationURL(t *testing.T) {
 	t.Parallel()
 
 	flow := &fakeBrowserFlow{authURL: "https://auth.test/authorize?x=1", waitErr: errors.New("stop")}
-	client := &fakeBrowserClient{flow: flow}
 
 	var openedURL string
 	openURL := func(_ context.Context, u string) error {
@@ -393,7 +364,7 @@ func TestRunBrowserLogin_OpensAuthorizationURL(t *testing.T) {
 	// The stubbed Wait returns an error, so runBrowserLogin stops before
 	// persistLogin (which would hit the real keyring); we assert on the
 	// side effects up to that point.
-	if err := runBrowserLogin(context.Background(), &out, &bytes.Buffer{}, client, openURL); err == nil {
+	if err := runBrowserLogin(context.Background(), &out, &bytes.Buffer{}, flow, "https://auth.test", openURL); err == nil {
 		t.Fatal("expected error from stubbed Wait")
 	}
 
@@ -420,11 +391,10 @@ func TestRunBrowserLogin_OpenBrowserFallback(t *testing.T) {
 	t.Parallel()
 
 	flow := &fakeBrowserFlow{authURL: "https://auth.test/authorize", waitErr: errors.New("stop")}
-	client := &fakeBrowserClient{flow: flow}
 	failOpen := func(context.Context, string) error { return errors.New("no browser") }
 
 	var out, errW bytes.Buffer
-	if err := runBrowserLogin(context.Background(), &out, &errW, client, failOpen); err == nil {
+	if err := runBrowserLogin(context.Background(), &out, &errW, flow, "https://auth.test", failOpen); err == nil {
 		t.Fatal("expected error from stubbed Wait")
 	}
 
@@ -441,10 +411,9 @@ func TestRunBrowserLogin_WaitError(t *testing.T) {
 
 	denied := errors.New("access_denied")
 	flow := &fakeBrowserFlow{authURL: "https://auth.test/authorize", waitErr: denied}
-	client := &fakeBrowserClient{flow: flow}
 	noopOpen := func(context.Context, string) error { return nil }
 
-	err := runBrowserLogin(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, client, noopOpen)
+	err := runBrowserLogin(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, flow, "https://auth.test", noopOpen)
 	if !errors.Is(err, denied) {
 		t.Fatalf("err = %v, want wrapped %v", err, denied)
 	}
@@ -458,10 +427,9 @@ func TestRunBrowserLogin_ExchangeError(t *testing.T) {
 		waitCode: "the-code",
 		exchErr:  errors.New("invalid_grant"),
 	}
-	client := &fakeBrowserClient{flow: flow}
 	noopOpen := func(context.Context, string) error { return nil }
 
-	err := runBrowserLogin(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, client, noopOpen)
+	err := runBrowserLogin(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, flow, "https://auth.test", noopOpen)
 	if err == nil || !strings.Contains(err.Error(), "complete login") {
 		t.Fatalf("err = %v, want complete login error", err)
 	}
