@@ -20,11 +20,12 @@ type tokenStore interface {
 	DeleteToken(baseURL string) error
 }
 
-// revokeCurrentFunc revokes the CLI's current login session server-side.
-// The caller resolves the active context's core URL + bearer up-front and
-// binds them into the closure, so the revocation hits the same core that
-// `auth status` lists.
-type revokeCurrentFunc func(ctx context.Context) error
+// boundRevokeFunc revokes login session(s) server-side — either just the
+// current session or every session on the core, depending on which the caller
+// selected (--everywhere). The caller resolves the active context's core URL +
+// bearer up-front and binds them into the closure, so the revocation hits the
+// same core that `auth status` lists.
+type boundRevokeFunc func(ctx context.Context) error
 
 // clearContextFunc removes the active contexts.json context (and its
 // keyring token) so logout actually logs out under the contexts model.
@@ -147,7 +148,7 @@ func revokeAllAuthSessions(ctx context.Context, coreURL, token string) error {
 // when --everywhere is set. Either way the local keyring entry and active
 // context are removed, so the CLI reports logged-out even if the server call
 // fails.
-func runLogout(ctx context.Context, outW, errW io.Writer, store tokenStore, revoke revokeCurrentFunc, clearContext clearContextFunc, baseURL string) error {
+func runLogout(ctx context.Context, outW, errW io.Writer, store tokenStore, revoke boundRevokeFunc, clearContext clearContextFunc, baseURL string) error {
 	token, err := store.GetToken(baseURL)
 	if err != nil {
 		// Fall through to the local delete: we still want the keyring entry
