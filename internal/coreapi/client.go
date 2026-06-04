@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ogen-go/ogen/ogenerrors"
@@ -28,6 +29,30 @@ const apiBasePath = "/api/v1"
 // bearer is resolved lazily per request, re-minting silently from the stored
 // refresh token.
 func New() (*Client, error) {
+	// ENTIRE_TOKEN bypass: CI / workload-identity runners inject a short-
+	// lived login or sa-session JWT and want control-plane commands to use
+	// it verbatim, with no contexts.json (the runner never ran `entire
+	// login`) and no keyring (the runner has none). Mirrors the env-token
+	// path in cmd/git-remote-entire/main.go:resolveCreds — presence of the
+	// var (LookupEnv, including blank) commits the CLI to this mode.
+	//
+	// Fail-closed: a blank or malformed value is fatal rather than a silent
+	// fallback to contexts.json, which would mask a misconfigured runner.
+	// The token's own aud claim becomes the control-plane origin we dial —
+	// CoreURLFromEnvToken validates aud is a https bare-origin URL, and
+	// makes that the resource the static bearer is sent to.
+	if raw, ok := os.LookupEnv(auth.EnvTokenVar); ok {
+		envToken := strings.TrimSpace(raw)
+		if envToken == "" {
+			return nil, fmt.Errorf("%s is set but blank", auth.EnvTokenVar)
+		}
+		coreURL, err := auth.CoreURLFromEnvToken(envToken)
+		if err != nil {
+			return nil, err //nolint:wrapcheck // CoreURLFromEnvToken already prefixes with EnvTokenVar
+		}
+		return NewWithBearer(coreURL, envToken)
+	}
+
 	target, err := auth.ResolveControlPlaneTarget()
 	if err != nil {
 		return nil, fmt.Errorf("resolve control-plane target: %w", err)
