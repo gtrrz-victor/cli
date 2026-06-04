@@ -638,7 +638,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		// layer, so rawTranscript is always false when generate is true; the
 		// direct-to-w write path inside explainTemporaryCheckpoint is not
 		// reachable here and won't leak partial output on error.
-		output, found, tempErr := explainTemporaryCheckpoint(ctx, w, errW, lookup.repo, checkpoint.NewGitStore(lookup.repo), checkpointIDPrefix, verbose, full, rawTranscript)
+		output, found, tempErr := explainTemporaryCheckpoint(ctx, w, errW, lookup.repo, checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx)), checkpointIDPrefix, verbose, full, rawTranscript)
 		if tempErr != nil {
 			return tempErr
 		}
@@ -678,13 +678,13 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// Handle summary generation — uses raw transcript.
 	if generate {
 		stopLoad(false) // generation prints its own progress to w/errW
-		writeStore := checkpoint.NewGitStore(lookup.repo)
+		writeStore := checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx))
 		if err := generateCheckpointSummary(ctx, w, errW, writeStore, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
 			return err
 		}
 		// Reload to get the updated summary.
 		stopLoad = startSpinner(errW, fmt.Sprintf("Reloading checkpoint %s", fullCheckpointID))
-		lookup.store = checkpoint.NewCommittedReadStore(ctx, lookup.repo)
+		lookup.store = checkpoint.NewGitStore(lookup.repo, checkpoint.ResolveCommittedRefs(ctx))
 		lookup.store.SetBlobFetcher(FetchBlobsByHash)
 		content, err = checkpoint.ReadLatestSessionContent(ctx, lookup.store, fullCheckpointID, summary)
 		if err != nil {
@@ -848,7 +848,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	// `git fetch` fails against partial-clone repos with "did not send all
 	// necessary objects"). Falls back to a full metadata-branch fetch if
 	// fetch-pack also can't reach the blobs.
-	store := checkpoint.NewCommittedReadStore(ctx, repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	store.SetBlobFetcher(FetchBlobsByHash)
 
 	lookup := &explainCheckpointLookup{
@@ -2002,7 +2002,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	// Warn (once per process) if metadata branches are disconnected
 	strategy.WarnIfMetadataDisconnected()
 
-	store := checkpoint.NewCommittedReadStore(ctx, repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	// Get all committed checkpoints for lookup.
 	committedInfos, err := store.ListCommitted(ctx)
@@ -2106,7 +2106,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	}
 
 	// Get temporary checkpoints from ALL shadow branches whose base commit is reachable from HEAD.
-	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, checkpoint.NewGitStore(repo), head.Hash(), isOnDefault, limit)
+	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx)), head.Hash(), isOnDefault, limit)
 	points = append(points, tempPoints...)
 
 	// Sort by date, most recent first

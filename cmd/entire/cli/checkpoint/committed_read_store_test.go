@@ -67,7 +67,7 @@ func customRefHash(t *testing.T, repo *git.Repository) (plumbing.Hash, bool) {
 // writeV1Checkpoint writes a committed checkpoint to the v1 branch.
 func writeV1Checkpoint(t *testing.T, repo *git.Repository, cpID id.CheckpointID) {
 	t.Helper()
-	require.NoError(t, NewGitStore(repo).WriteCommitted(context.Background(), WriteCommittedOptions{
+	require.NoError(t, NewGitStore(repo, DefaultV1Refs()).WriteCommitted(context.Background(), WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "session",
 		Strategy:     "manual-commit",
@@ -98,27 +98,48 @@ func writeSettings(t *testing.T, dir, version string) {
 
 func TestGitStore_CommittedReadRef(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, v1BranchRef(), NewGitStore(nil).CommittedReadRef())
-	assert.Equal(t, customRef(), NewGitStoreWithRef(nil, customRef()).CommittedReadRef())
+	assert.Equal(t, v1BranchRef(), NewGitStore(nil, DefaultV1Refs()).CommittedReadRef())
+
+	customRefs := CommittedRefs{
+		Primary: v1BranchRef(),
+		Read:    customRef(),
+		Mirror:  customRef(),
+		Push:    []plumbing.ReferenceName{v1BranchRef()},
+	}
+	assert.Equal(t, customRef(), NewGitStore(nil, customRefs).CommittedReadRef())
+}
+
+func TestNewGitStore_UsesRefs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	synthetic := plumbing.ReferenceName("refs/entire/checkpoints/synthetic")
+	refs := CommittedRefs{Primary: synthetic, Read: synthetic, Push: []plumbing.ReferenceName{synthetic}}
+	store := NewGitStore(repo, refs)
+	assert.Equal(t, synthetic, store.CommittedReadRef())
+	assert.Equal(t, refs, store.Refs())
 }
 
 // Not parallel: uses t.Chdir() so settings.Load resolves the test repo.
-func TestNewCommittedReadStore_SelectsRefByVersion(t *testing.T) {
+func TestNewGitStore_SelectsRefByVersion(t *testing.T) {
 	dir, repo, h := newTestRepo(t)
 	setRef(t, repo, v1BranchRef(), h)
 	t.Chdir(dir)
 
 	writeSettings(t, dir, "") // v1 only
-	assert.Equal(t, v1BranchRef(), NewCommittedReadStore(context.Background(), repo).CommittedReadRef())
+	assert.Equal(t, v1BranchRef(), NewGitStore(repo, ResolveCommittedRefs(context.Background())).CommittedReadRef())
 
 	writeSettings(t, dir, `"1.1"`)
-	assert.Equal(t, customRef(), NewCommittedReadStore(context.Background(), repo).CommittedReadRef())
+	assert.Equal(t, customRef(), NewGitStore(repo, ResolveCommittedRefs(context.Background())).CommittedReadRef())
 }
 
 // v1.1 reads always go through the custom ref as-is (no v1 fallback, and no
 // read-time seeding from v1).
 // Not parallel: subtests use t.Chdir().
-func TestNewCommittedReadStore_V11Reads(t *testing.T) {
+func TestNewGitStore_V11Reads(t *testing.T) {
 	tests := []struct {
 		name      string
 		mutate    func(t *testing.T, dir string, repo *git.Repository) (wantCustomHash plumbing.Hash, wantCustomExists bool)
@@ -154,7 +175,7 @@ func TestNewCommittedReadStore_V11Reads(t *testing.T) {
 			writeV1Checkpoint(t, repo, cpID)
 			wantCustomHash, wantCustomExists := tt.mutate(t, dir, repo)
 
-			store := NewCommittedReadStore(context.Background(), repo)
+			store := NewGitStore(repo, ResolveCommittedRefs(context.Background()))
 			require.Equal(t, customRef(), store.CommittedReadRef(), "must read the custom ref, not fall back to v1")
 
 			summary, err := store.ReadCommitted(context.Background(), cpID)

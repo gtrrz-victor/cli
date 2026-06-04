@@ -1346,7 +1346,7 @@ func LookupSessionLog(ctx context.Context, cpID id.CheckpointID) ([]byte, string
 		return nil, "", fmt.Errorf("failed to open git repository: %w", err)
 	}
 	defer repo.Close()
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, ResolveCommittedRefs(ctx))
 	return store.GetSessionLog(ctx, cpID)
 }
 
@@ -1781,19 +1781,17 @@ func (s *GitStore) getFetchingTree(ctx context.Context) (*FetchingTree, error) {
 	return NewFetchingTree(ctx, tree, s.repo.Storer, s.blobFetcher), nil
 }
 
-// getSessionsBranchTree returns the tree object for the configured committed
-// ref (the v1 branch by default, or the v1.1 custom ref for v1.1 read stores).
-// For the default v1 branch it falls back to origin/entire/checkpoints/v1 when
-// the local branch is missing; the v1.1 custom ref is local-only, so no remote
-// fallback applies there.
+// getSessionsBranchTree returns the tree object at the configured read ref.
+// Falls back to origin's remote-tracking ref when Read equals Primary and
+// Primary is in Push (origin tracks it). When reads target the local-only
+// mirror, the fallback skips because origin doesn't track the mirror.
 func (s *GitStore) getSessionsBranchTree() (*object.Tree, error) {
-	ref, err := s.repo.Reference(s.committedReadRef, true)
+	ref, err := s.repo.Reference(s.refs.Read, true)
 	if err != nil {
-		if s.committedReadRef != defaultCommittedReadRef() {
-			return nil, fmt.Errorf("sessions ref %s not found: %w", s.committedReadRef, err)
+		if s.refs.Read != s.refs.Primary || !s.refs.PrimaryFetchableFromOrigin() {
+			return nil, fmt.Errorf("sessions ref %s not found: %w", s.refs.Read, err)
 		}
-		// Local v1 branch doesn't exist, try remote-tracking branch
-		remoteRefName := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
+		remoteRefName := plumbing.NewRemoteReferenceName("origin", s.refs.Primary.Short())
 		ref, err = s.repo.Reference(remoteRefName, true)
 		if err != nil {
 			return nil, fmt.Errorf("sessions branch not found: %w", err)
@@ -2203,7 +2201,7 @@ type Author struct {
 // Finds the commit whose subject matches "Checkpoint: <id>" and returns its author.
 // Returns empty Author if the checkpoint is not found or the sessions branch doesn't exist.
 func (s *GitStore) GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error) {
-	return getCheckpointAuthorFromRef(ctx, s.repo, s.committedReadRef, checkpointID)
+	return getCheckpointAuthorFromRef(ctx, s.repo, s.refs.Read, checkpointID)
 }
 
 func getCheckpointAuthorFromRef(ctx context.Context, repo *git.Repository, refName plumbing.ReferenceName, checkpointID id.CheckpointID) (Author, error) {

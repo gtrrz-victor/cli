@@ -68,7 +68,7 @@ func (s *ManualCommitStrategy) getCheckpointLog(ctx context.Context, checkpointI
 	defer repo.Close()
 
 	WarnIfMetadataDisconnected()
-	store := s.getCheckpointStore(repo)
+	store := s.getCheckpointStore(ctx, repo)
 
 	summary, err := cpkg.ReadCommittedCheckpoint(ctx, store, checkpointID)
 	if err != nil {
@@ -184,7 +184,7 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		return skipped, nil
 	}
 
-	store := s.getCheckpointStore(repo)
+	store := s.getCheckpointStore(ctx, repo)
 
 	// Get author info
 	authorName, authorEmail := GetGitAuthorFromRepo(repo)

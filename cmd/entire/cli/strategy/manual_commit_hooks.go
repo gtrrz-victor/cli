@@ -1061,7 +1061,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	repoDir string,
 ) error {
 	logCtx := logging.WithComponent(ctx, "attribution")
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	summary, err := store.ReadCommitted(ctx, checkpointID)
 	if err != nil {
@@ -2770,7 +2770,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		prompts[i] = redact.String(p)
 	}
 
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2886,7 +2886,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	start := time.Now()
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.

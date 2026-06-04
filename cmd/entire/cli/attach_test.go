@@ -337,7 +337,7 @@ func TestAttach_AppendsAsAdditionalSessionWhenIDDiffers(t *testing.T) {
 		t.Fatalf("second attach failed: %v", err)
 	}
 
-	store := cpkg.NewGitStore(repo)
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
 	summary, err := store.ReadCommitted(context.Background(), checkpointID)
 	if err != nil {
 		t.Fatalf("ReadCommitted(%s): %v", checkpointID, err)
@@ -395,7 +395,7 @@ func TestAttach_RefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := cpkg.NewGitStore(repo)
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
 	summary, err := store.ReadCommitted(context.Background(), "ffffffffeeee")
 	if err != nil {
 		t.Fatalf("ReadCommitted: %v", err)
@@ -423,7 +423,7 @@ func TestAttach_RefusesWhenCheckpointOnlyInRemoteTrackingRef(t *testing.T) {
 
 	// Seed the local branch with a checkpoint representing Alice's session.
 	alicesCheckpoint := id.MustCheckpointID("abcdef012345")
-	store := cpkg.NewGitStore(repo)
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
 	if writeErr := store.WriteCommitted(context.Background(), cpkg.WriteCommittedOptions{
 		CheckpointID: alicesCheckpoint,
 		SessionID:    "alice-original",
@@ -1146,7 +1146,7 @@ func TestAttach_ReviewAppendsAsAdditionalSessionWhenIDDiffers(t *testing.T) {
 	// Pre-fix observation: session 0 is OVERWRITTEN with the review session,
 	// losing the original attach. The summary has only one session entry
 	// despite two attach calls with different IDs.
-	store := cpkg.NewGitStore(repo)
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
 	summary, err := store.ReadCommitted(context.Background(), checkpointID)
 	if err != nil {
 		t.Fatalf("ReadCommitted(%s): %v", checkpointID, err)
@@ -1222,7 +1222,7 @@ func TestAttach_ReviewRefusesWhenCheckpointMissingFromLocalBranch(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := cpkg.NewGitStore(repo)
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
 	summary, err := store.ReadCommitted(context.Background(), "ffffffffeeee")
 	if err != nil {
 		t.Fatalf("ReadCommitted: %v", err)
