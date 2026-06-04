@@ -151,6 +151,11 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 					fmt.Fprintf(out, "Mirror already exists (%s)\n", created.MirrorId)
 				}
 				fmt.Fprintf(out, "  %s\n", created.MirrorUrl)
+				if created.Empty {
+					// No refs upstream, so there's no clone to wait for.
+					fmt.Fprintln(out, "Upstream has no commits yet — nothing to clone. The mirror will pick up refs once the upstream is pushed to.")
+					return nil
+				}
 				if noWait {
 					fmt.Fprintf(out, "Initial clone may still be in progress; `git clone %s` will work once it completes.\n", created.MirrorUrl)
 					return nil
