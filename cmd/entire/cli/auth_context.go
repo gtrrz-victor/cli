@@ -24,7 +24,7 @@ func newAuthUseCmd() *cobra.Command {
 		Long: "Switch the active login context.\n\n" +
 			"The active context is the preferred identity for `git clone entire://…` and\n" +
 			"the control-plane commands (auth status, org/project/repo/grant), which dial\n" +
-			"the context's core. The switch takes effect on the next operation.\n\n" +
+			"the context's login server. The switch takes effect on the next operation.\n\n" +
 			"Data-API commands (activity/search/trail/dispatch) still target\n" +
 			"ENTIRE_API_BASE_URL and do not follow the active context yet.",
 		Args:              cobra.ExactArgs(1),

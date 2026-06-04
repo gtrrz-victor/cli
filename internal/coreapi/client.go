@@ -19,14 +19,16 @@ const apiBasePath = "/api/v1"
 // New returns a *Client wired to talk to the Entire control plane (Core
 // API) as the currently logged-in user.
 //
-// The host and bearer come from auth.ResolveControlPlaneTarget: the active
-// contexts.json login's core (so `entire auth use <ctx>` retargets the
-// control plane), or — when no context is active — the configured auth host
-// (ENTIRE_AUTH_BASE_URL or the default). The Core API is served at
-// <core>/api/v1. The bearer is resolved lazily per request; for an active
-// context it re-mints silently from the stored refresh token, and for the
-// static path an RFC 8693 exchange happens transparently when the stored
-// token's audience doesn't cover the core.
+// The host and bearer come from auth.ResolveControlPlaneTarget. Control-plane
+// commands target a login server directly — unlike `git clone` or the data
+// API, there's no resource host to match a context against — so the active
+// contexts.json login is used as-is, and `entire auth use <ctx>` retargets the
+// control plane onto that login server. ENTIRE_AUTH_BASE_URL / the default is
+// only the fallback when no context is active, not an override. The Core API
+// is served at <host>/api/v1. The bearer is resolved lazily per request; for
+// an active context it re-mints silently from the stored refresh token, and
+// for the fallback path an RFC 8693 exchange happens transparently when the
+// stored token's audience doesn't cover the host.
 func New() (*Client, error) {
 	target, err := auth.ResolveControlPlaneTarget()
 	if err != nil {
@@ -35,7 +37,7 @@ func New() (*Client, error) {
 	src := &providerSource{provide: target.TokenSource}
 	client, err := NewClient(strings.TrimRight(target.CoreURL, "/")+apiBasePath, src)
 	if err != nil {
-		return nil, fmt.Errorf("build core API client: %w", err)
+		return nil, fmt.Errorf("build Entire API client: %w", err)
 	}
 	return client, nil
 }
@@ -49,13 +51,13 @@ func NewWithBearer(coreBaseURL, token string) (*Client, error) {
 	base := strings.TrimRight(coreBaseURL, "/")
 	client, err := NewClient(base+apiBasePath, staticBearer{token: token})
 	if err != nil {
-		return nil, fmt.Errorf("build core API client: %w", err)
+		return nil, fmt.Errorf("build Entire API client: %w", err)
 	}
 	return client, nil
 }
 
 // staticBearer is a SecuritySource that returns a fixed bearer token. Same
-// sessionAuth-skipping rationale as bearerSource.
+// sessionAuth-skipping rationale as providerSource.
 type staticBearer struct{ token string }
 
 func (s staticBearer) BearerAuth(context.Context, OperationName) (BearerAuth, error) {
