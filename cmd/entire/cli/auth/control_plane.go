@@ -23,22 +23,19 @@ type ControlPlaneTarget struct {
 // ResolveControlPlaneTarget chooses which core the control-plane commands talk
 // to and how their bearer is obtained. The control-plane host *is* a core, so
 // there is no /.well-known discovery here — the active context already names
-// the core. Precedence:
+// the core. Precedence (matching `auth status`):
 //
-//  1. ENTIRE_AUTH_BASE_URL explicitly set -> that origin verbatim, bearer via
-//     the singleton manager (TokenForResource), exactly as before. The env
-//     var stays an unconditional override so split-host / local-dev
-//     invocations are untouched.
-//  2. otherwise the active contexts.json login -> its CoreURL, with a
-//     per-context refreshing bearer (silent JWT re-mint). This is what makes
+//  1. the active contexts.json login -> its CoreURL, with a per-context
+//     refreshing bearer (silent JWT re-mint). This is what makes
 //     `entire auth use <ctx>` retarget the control plane onto that core.
-//  3. no active context -> the configured default origin + TokenForResource,
-//     the pre-contexts behaviour for users who never ran `entire auth use`.
+//  2. no active context -> the configured auth origin (ENTIRE_AUTH_BASE_URL or
+//     the default) + TokenForResource, the pre-contexts fallback.
+//
+// ENTIRE_AUTH_BASE_URL is the fallback host, not an override: a token minted
+// by the active context's core can't authenticate against a different host, so
+// "use the override host but the context's identity" can't succeed. The active
+// context always wins when present.
 func ResolveControlPlaneTarget() (ControlPlaneTarget, error) {
-	if api.AuthBaseURLOverridden() {
-		return staticControlPlaneTarget(), nil
-	}
-
 	c, ok, err := activeContext()
 	if err != nil {
 		return ControlPlaneTarget{}, err
@@ -58,11 +55,10 @@ func ResolveControlPlaneTarget() (ControlPlaneTarget, error) {
 	return ControlPlaneTarget{CoreURL: strings.TrimRight(c.CoreURL, "/"), TokenSource: src}, nil
 }
 
-// staticControlPlaneTarget is the pre-contexts path: dial the configured auth
-// origin and resolve the bearer through the singleton manager, which performs
-// an RFC 8693 exchange when the stored token's audience doesn't cover the
-// core. Used for an explicit ENTIRE_AUTH_BASE_URL override and as the
-// no-active-context fallback.
+// staticControlPlaneTarget is the no-active-context fallback: dial the
+// configured auth origin (ENTIRE_AUTH_BASE_URL or the default) and resolve the
+// bearer through the singleton manager, which performs an RFC 8693 exchange
+// when the stored token's audience doesn't cover the core.
 func staticControlPlaneTarget() ControlPlaneTarget {
 	base := strings.TrimRight(api.AuthBaseURL(), "/")
 	// The exchange's resource must be the bare origin; OriginOnly strips any

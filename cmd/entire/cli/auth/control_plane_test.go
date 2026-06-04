@@ -25,22 +25,23 @@ func writeActiveContext(t *testing.T, configDir, name, coreURL, handle, svc stri
 	}
 }
 
-// An explicit ENTIRE_AUTH_BASE_URL pins the core to that origin and skips the
-// active-context lookup entirely — the override is unconditional.
-func TestResolveControlPlaneTarget_EnvOverrideWins(t *testing.T) {
+// The active context wins even when ENTIRE_AUTH_BASE_URL is set to a different
+// origin: the env var is a fallback host, not an override (a token from the
+// context's core can't authenticate against the env host anyway).
+func TestResolveControlPlaneTarget_ActiveContextBeatsEnv(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
 	t.Setenv(api.AuthBaseURLEnvVar, "https://override.example")
 
-	// An active context on a *different* core must be ignored under override.
-	writeActiveContext(t, configDir, "ctx", "https://other-core.example", "alice", "svc")
+	const coreURL = "https://other-core.example"
+	writeActiveContext(t, configDir, "ctx", coreURL, "alice", "svc")
 
 	target, err := ResolveControlPlaneTarget()
 	if err != nil {
 		t.Fatalf("ResolveControlPlaneTarget: %v", err)
 	}
-	if want := api.AuthBaseURL(); target.CoreURL != want {
-		t.Fatalf("CoreURL = %q, want the override origin %q (not the context core)", target.CoreURL, want)
+	if target.CoreURL != coreURL {
+		t.Fatalf("CoreURL = %q, want the active context's core %q (env is only a fallback)", target.CoreURL, coreURL)
 	}
 }
 
@@ -80,18 +81,35 @@ func TestResolveControlPlaneTarget_ActiveContextWins(t *testing.T) {
 	}
 }
 
-// With no override and no active context, the target falls back to the
-// configured default auth origin (pre-contexts behaviour).
-func TestResolveControlPlaneTarget_NoContextFallsBackToDefault(t *testing.T) {
-	configDir := t.TempDir() // empty: no contexts.json
-	t.Setenv("ENTIRE_CONFIG_DIR", configDir)
-	t.Setenv(api.AuthBaseURLEnvVar, "")
+// With no active context, the target falls back to the configured auth origin
+// — the default when ENTIRE_AUTH_BASE_URL is unset, or the env value when set
+// (the env var is the fallback host).
+func TestResolveControlPlaneTarget_NoContextFallsBackToAuthBaseURL(t *testing.T) {
+	t.Run("default when env unset", func(t *testing.T) {
+		configDir := t.TempDir() // empty: no contexts.json
+		t.Setenv("ENTIRE_CONFIG_DIR", configDir)
+		t.Setenv(api.AuthBaseURLEnvVar, "")
 
-	target, err := ResolveControlPlaneTarget()
-	if err != nil {
-		t.Fatalf("ResolveControlPlaneTarget: %v", err)
-	}
-	if want := api.AuthBaseURL(); target.CoreURL != want {
-		t.Fatalf("CoreURL = %q, want the default auth origin %q", target.CoreURL, want)
-	}
+		target, err := ResolveControlPlaneTarget()
+		if err != nil {
+			t.Fatalf("ResolveControlPlaneTarget: %v", err)
+		}
+		if want := api.AuthBaseURL(); target.CoreURL != want {
+			t.Fatalf("CoreURL = %q, want the default auth origin %q", target.CoreURL, want)
+		}
+	})
+
+	t.Run("env value when set", func(t *testing.T) {
+		configDir := t.TempDir()
+		t.Setenv("ENTIRE_CONFIG_DIR", configDir)
+		t.Setenv(api.AuthBaseURLEnvVar, "https://fallback.example")
+
+		target, err := ResolveControlPlaneTarget()
+		if err != nil {
+			t.Fatalf("ResolveControlPlaneTarget: %v", err)
+		}
+		if want := api.AuthBaseURL(); target.CoreURL != want {
+			t.Fatalf("CoreURL = %q, want the env fallback origin %q", target.CoreURL, want)
+		}
+	})
 }

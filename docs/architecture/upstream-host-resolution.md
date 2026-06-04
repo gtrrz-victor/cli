@@ -40,20 +40,23 @@ sole eligible context, else an error (zero → login hint; ambiguous → asks fo
 ### Control plane (done — this slice)
 
 The host *is* a core, so there is no discovery. `coreapi.New()` consults
-`auth.ResolveControlPlaneTarget()`:
+`auth.ResolveControlPlaneTarget()`, which mirrors `auth status`:
 
-1. **`ENTIRE_AUTH_BASE_URL` set** → that origin, verbatim; bearer via the
-   singleton token manager (`TokenForResource`). The env var is an
-   unconditional override, so split-host / local-dev invocations are
-   untouched.
-2. **else active context** → its `CoreURL`, with a **per-context refreshing**
+1. **active context** → its `CoreURL`, with a **per-context refreshing**
    bearer (`auth.NewRefreshingLoginProvider`): the token manager is keyed on
    `c.CoreURL` as issuer, so store reads and refresh/STS hit the right core,
    and an expired access token is silently re-minted from the stored refresh
    token. This is what makes `entire auth use <ctx>` actually retarget
    `org`/`repo`/`project`/`grant`.
-3. **else** (no active context) → the configured default origin +
-   `TokenForResource` — the pre-contexts behaviour.
+2. **else** (no active context) → the configured auth origin
+   (`ENTIRE_AUTH_BASE_URL` or the default) + `TokenForResource` — the
+   pre-contexts fallback.
+
+`ENTIRE_AUTH_BASE_URL` is the fallback host, **not** an override: a token
+minted by the active context's core can't authenticate against a different
+host, so the active context always wins when present. (At login time the env
+var still chooses where to authenticate, and the resulting context's `CoreURL`
+*is* that host — so local-dev / split-host setups keep working.)
 
 Key files: `cmd/entire/cli/auth/control_plane.go` (resolver),
 `cmd/entire/cli/auth/refresh.go` (per-context refreshing provider),
@@ -97,5 +100,7 @@ auto-selects the right context without also setting `ENTIRE_AUTH_BASE_URL`):
    the `activity` / `search` / `trail` / `dispatch` constructors
    (`NewAuthenticatedAPIClient`, `dispatch.NewCloudClient`, `search.Search`).
 
-`ENTIRE_AUTH_BASE_URL` / `ENTIRE_API_BASE_URL` remain explicit overrides: when
-set they short-circuit discovery; discovery only runs when they are unset.
+`ENTIRE_API_BASE_URL` names the resource host to dial (the discovery target);
+the context is then chosen from the issuers that host advertises. It does not
+need to be paired with `ENTIRE_AUTH_BASE_URL` once discovery exists — that is
+the whole point of the well-known.
