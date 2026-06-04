@@ -44,12 +44,12 @@ func newLogoutCmd() *cobra.Command {
 			"active login from this machine. Other saved logins (contexts) remain and can\n" +
 			"still authenticate `git clone entire://…` against clusters fronted by their\n" +
 			"login server.\n\n" +
-			"Pass --everywhere to revoke every session on the active core server-side\n" +
+			"Pass --everywhere to revoke every session on the active login server\n" +
 			"(all your devices), not just the current one.\n\n" +
 			"Pass --all-contexts to log out of every saved login (context) at once: each\n" +
 			"context's session is revoked server-side and the login is removed from this\n" +
 			"machine. Combine with --everywhere to revoke every session on every context's\n" +
-			"core.\n\n" +
+			"login server.\n\n" +
 			"Without --all-contexts, logging out promotes the next saved login (if any) to\n" +
 			"active, so running `entire logout` repeatedly drains every saved login in turn.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -76,7 +76,7 @@ func newLogoutCmd() *cobra.Command {
 			target := resolveStatusTarget(auth.NewContextStore(), auth.Contexts, api.AuthBaseURL())
 			if !insecureHTTPAuth {
 				if err := api.RequireSecureURL(target.coreURL); err != nil {
-					return fmt.Errorf("context core URL check: %w", err)
+					return fmt.Errorf("context login server URL check: %w", err)
 				}
 			}
 			revokeCurrent := func(ctx context.Context) error {

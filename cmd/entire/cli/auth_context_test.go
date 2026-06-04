@@ -73,7 +73,7 @@ func TestRunAuthContexts(t *testing.T) {
 		t.Fatalf("runAuthContexts: %v", err)
 	}
 	got := out.String()
-	for _, hdr := range []string{"CONTEXT", "HANDLE", "CORE URL"} {
+	for _, hdr := range []string{"CONTEXT", "HANDLE", "LOGIN SERVER"} {
 		if !strings.Contains(got, hdr) {
 			t.Fatalf("listing = %q, want column header %q", got, hdr)
 		}

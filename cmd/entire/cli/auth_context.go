@@ -107,7 +107,7 @@ func renderContextsTable(w io.Writer, all []*contexts.Context, current string) {
 		"", // active marker
 		sty.render(sty.header, "CONTEXT"),
 		sty.render(sty.header, "HANDLE"),
-		sty.render(sty.header, "CORE URL"),
+		sty.render(sty.header, "LOGIN SERVER"),
 	}
 
 	rows := make([][]string, 0, len(all))

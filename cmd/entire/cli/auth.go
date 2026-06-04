@@ -172,7 +172,7 @@ func newAuthStatusCmd() *cobra.Command {
 			// too (it may differ from AuthBaseURL when a context is active).
 			if !insecureHTTPAuth {
 				if err := api.RequireSecureURL(target.coreURL); err != nil {
-					return fmt.Errorf("context core URL check: %w", err)
+					return fmt.Errorf("context login server URL check: %w", err)
 				}
 			}
 			return runAuthStatus(cmd.Context(), cmd.OutOrStdout(), defaultFetchProfile, defaultListAuthSessions, target)
