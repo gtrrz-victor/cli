@@ -334,12 +334,10 @@ func DeleteOrphanedCheckpoints(ctx context.Context, checkpointIDs []string) (del
 		return nil, nil, fmt.Errorf("failed to store commit: %w", err)
 	}
 
-	// Update branch reference
-	newRef := plumbing.NewHashReference(refName, commitHash)
-	if err := repo.Storer.SetReference(newRef); err != nil {
+	// Update branch reference and best-effort mirror
+	if err := AdvanceCommittedPrimary(ctx, repo, checkpoint.ResolveCommittedRefs(ctx), commitHash); err != nil {
 		return nil, nil, fmt.Errorf("failed to update branch: %w", err)
 	}
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
 
 	// All checkpoints deleted successfully
 	return checkpointIDs, []string{}, nil

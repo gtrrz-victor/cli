@@ -125,7 +125,7 @@ func FetchMetadataBranch(ctx context.Context, remoteURL string) error {
 		return nil
 	}
 	defer repo.Close()
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
 	return nil
 }
 

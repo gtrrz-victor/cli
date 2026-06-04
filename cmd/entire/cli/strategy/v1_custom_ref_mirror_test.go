@@ -338,13 +338,75 @@ func TestMirrorCommittedMetadataRef_SetReferenceErrorNamesTarget(t *testing.T) {
 }
 
 // Not parallel: uses t.Chdir().
-func TestMirrorCommittedMetadataRefBestEffort_V1MissingNoOp(t *testing.T) {
-	repo := setupV1CustomRefRepo(t, `"1.1"`) // no v1 metadata branch created
+func TestAdvanceCommittedPrimary_NoMirror(t *testing.T) {
+	repo := setupV1CustomRefRepo(t, "") // v1 only
+	hash := setV1MetadataBranch(t, repo)
+	primary := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 
-	MirrorCommittedMetadataRefBestEffort(t.Context(), repo)
+	refs := checkpoint.CommittedRefs{Primary: primary, Read: primary, Push: []plumbing.ReferenceName{primary}}
+	require.NoError(t, AdvanceCommittedPrimary(t.Context(), repo, refs, hash))
+
+	ref, err := repo.Reference(primary, true)
+	require.NoError(t, err)
+	assert.Equal(t, hash, ref.Hash())
 
 	_, ok := v1CustomRefHash(t, repo)
-	assert.False(t, ok, "v1 custom ref must not be created when v1 metadata branch is absent")
+	assert.False(t, ok, "no mirror configured; v1.1 ref must not exist")
+}
+
+// Not parallel: uses t.Chdir().
+func TestAdvanceCommittedPrimary_AdvancesBothRefs(t *testing.T) {
+	repo := setupV1CustomRefRepo(t, `"1.1"`)
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	require.NoError(t, AdvanceCommittedPrimary(t.Context(), repo, v1CustomRefsForTest(), head.Hash()))
+
+	primaryRef, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	require.NoError(t, err)
+	assert.Equal(t, head.Hash(), primaryRef.Hash())
+
+	mirror, ok := v1CustomRefHash(t, repo)
+	require.True(t, ok)
+	assert.Equal(t, head.Hash(), mirror, "mirror must track primary after advance")
+}
+
+type selectiveSetReferenceErrorStorer struct {
+	storage.Storer
+
+	failRef plumbing.ReferenceName
+	err     error
+}
+
+func (s selectiveSetReferenceErrorStorer) SetReference(ref *plumbing.Reference) error {
+	if ref.Name() == s.failRef {
+		return s.err
+	}
+	return s.Storer.SetReference(ref)
+}
+
+// Not parallel: uses t.Chdir().
+func TestAdvanceCommittedPrimary_MirrorFailureDoesNotFailPrimary(t *testing.T) {
+	repo := setupV1CustomRefRepo(t, `"1.1"`)
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	mirrorRef := plumbing.ReferenceName(paths.MetadataRefName)
+	repo.Storer = selectiveSetReferenceErrorStorer{
+		Storer:  repo.Storer,
+		failRef: mirrorRef,
+		err:     errors.New("mirror set failed"),
+	}
+
+	require.NoError(t, AdvanceCommittedPrimary(t.Context(), repo, v1CustomRefsForTest(), head.Hash()),
+		"mirror failure must be swallowed; only Primary failure should surface")
+
+	primaryRef, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	require.NoError(t, err)
+	assert.Equal(t, head.Hash(), primaryRef.Hash())
+
+	_, ok := v1CustomRefHash(t, repo)
+	assert.False(t, ok, "mirror write was rejected, so the ref must not exist")
 }
 
 // Not parallel: uses t.Chdir().

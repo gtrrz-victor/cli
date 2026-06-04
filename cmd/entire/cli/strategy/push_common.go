@@ -486,7 +486,7 @@ func mirrorSyncedMetadataBranch(ctx context.Context, repo *git.Repository, branc
 			slog.String("primary_short", refs.Primary.Short()))
 		return
 	}
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
 }
 
 // getMergeBase returns the merge base hash of two commits, or an error if they

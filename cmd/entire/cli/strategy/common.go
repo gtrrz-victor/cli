@@ -454,6 +454,7 @@ func resolveAgentType(ctxAgentType types.AgentType, state *SessionState) types.A
 // branch is missing or empty, creates/updates the local branch from it.
 // Otherwise creates an empty orphan.
 func EnsureMetadataBranch(ctx context.Context, repo *git.Repository) error {
+	refs := checkpoint.ResolveCommittedRefs(ctx)
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 
 	// Check if remote-tracking branch exists (e.g., after clone/fetch)
@@ -474,11 +475,9 @@ func EnsureMetadataBranch(ctx context.Context, repo *git.Repository) error {
 			}
 			if isEmpty {
 				// Empty orphan — just point to remote
-				ref := plumbing.NewHashReference(refName, remoteRef.Hash())
-				if setErr := repo.Storer.SetReference(ref); setErr != nil {
+				if setErr := AdvanceCommittedPrimary(ctx, repo, refs, remoteRef.Hash()); setErr != nil {
 					return fmt.Errorf("failed to update metadata branch from remote: %w", setErr)
 				}
-				MirrorCommittedMetadataRefBestEffort(ctx, repo)
 				fmt.Fprintf(os.Stderr, "[entire] Updated local branch '%s' from origin\n", paths.MetadataBranchName)
 			} else {
 				// Local has real data and differs from remote — if disconnected
@@ -498,11 +497,9 @@ func EnsureMetadataBranch(ctx context.Context, repo *git.Repository) error {
 
 	// Local branch doesn't exist — create from remote if available
 	if remoteErr == nil {
-		ref := plumbing.NewHashReference(refName, remoteRef.Hash())
-		if err := repo.Storer.SetReference(ref); err != nil {
+		if err := AdvanceCommittedPrimary(ctx, repo, refs, remoteRef.Hash()); err != nil {
 			return fmt.Errorf("failed to create metadata branch from remote: %w", err)
 		}
-		MirrorCommittedMetadataRefBestEffort(ctx, repo)
 		fmt.Fprintf(os.Stderr, "✓ Created local branch '%s' from origin\n", paths.MetadataBranchName)
 		return nil
 	}
@@ -557,11 +554,9 @@ func EnsureMetadataBranch(ctx context.Context, repo *git.Repository) error {
 	}
 
 	// Create branch reference
-	ref := plumbing.NewHashReference(refName, commitHash)
-	if err := repo.Storer.SetReference(ref); err != nil {
+	if err := AdvanceCommittedPrimary(ctx, repo, refs, commitHash); err != nil {
 		return fmt.Errorf("failed to create metadata branch: %w", err)
 	}
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
 
 	fmt.Fprintf(os.Stderr, "  ✓ Created orphan branch %s for session metadata\n", paths.MetadataBranchName)
 	return nil

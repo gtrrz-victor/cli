@@ -14,13 +14,26 @@ import (
 )
 
 // ErrPrimaryMetadataMissing is returned by MirrorCommittedMetadataRef when the
-// primary ref does not exist yet. Callers can match this sentinel to
-// distinguish "expected on first use" from a real read failure, and from a
-// SetReference NotFound on the mirror itself.
+// primary ref does not exist yet. Callers match this sentinel to distinguish
+// "expected on first use" from a real read failure, and from a SetReference
+// NotFound on the mirror itself.
 var ErrPrimaryMetadataMissing = errors.New("primary metadata ref missing")
 
-// MirrorCommittedMetadataRef points the committed-metadata mirror at the primary
-// ref's tip. No-op when the topology has no mirror.
+// AdvanceCommittedPrimary points refs.Primary at hash and best-effort-advances
+// refs.Mirror. Used by autonomous flows (hooks, push rebase, condensation,
+// reconcile) where mirror failure must not abort the primary operation.
+// User-foreground commands (attach, explain summary) call
+// MirrorCommittedMetadataRef directly when they want to surface mirror errors.
+func AdvanceCommittedPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs, hash plumbing.Hash) error {
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(refs.Primary, hash)); err != nil {
+		return fmt.Errorf("set primary metadata ref %s to %s: %w", refs.Primary, hash, err)
+	}
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
+	return nil
+}
+
+// MirrorCommittedMetadataRef points refs.Mirror at refs.Primary's tip. No-op
+// when the topology has no mirror.
 func MirrorCommittedMetadataRef(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) error {
 	if !refs.HasMirror() {
 		return nil
@@ -44,24 +57,19 @@ func MirrorCommittedMetadataRef(ctx context.Context, repo *git.Repository, refs 
 	return nil
 }
 
-// MirrorCommittedMetadataRefBestEffort mirrors committed metadata for callers
-// where mirror failure must not affect the primary operation.
-//
-// The mirror runs under context.WithoutCancel so a parent deadline that is
-// already near-expired (e.g. the 2-minute fetch budget) cannot silently fail
-// settings.Load and skip the mirror with no log. Trace/value context is
-// preserved; only cancellation is detached. The mirror itself is short.
-func MirrorCommittedMetadataRefBestEffort(ctx context.Context, repo *git.Repository) {
+// mirrorCommittedMetadataRefBestEffort runs MirrorCommittedMetadataRef under a
+// detached cancellation context, swallowing errors as logs. The detached
+// context preserves trace/value context but prevents a near-expired parent
+// deadline (e.g. the 2-minute fetch budget) from silently failing
+// settings.Load and skipping the mirror with no log. The mirror itself is
+// short.
+func mirrorCommittedMetadataRefBestEffort(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) {
 	ctx = context.WithoutCancel(ctx)
-
-	refs := checkpoint.ResolveCommittedRefs(ctx)
 	if !refs.HasMirror() {
 		return
 	}
-
 	if err := MirrorCommittedMetadataRef(ctx, repo, refs); err != nil {
 		if errors.Is(err, ErrPrimaryMetadataMissing) {
-			// No primary metadata ref yet — nothing to mirror. Expected on first use.
 			logging.Debug(ctx, "committed-ref mirror skipped: primary metadata ref unavailable",
 				slog.String("error", err.Error()))
 			return
@@ -69,6 +77,5 @@ func MirrorCommittedMetadataRefBestEffort(ctx context.Context, repo *git.Reposit
 		logging.Warn(ctx, "committed-ref mirror failed",
 			slog.String("ref", refs.Mirror.String()),
 			slog.String("error", err.Error()))
-		return
 	}
 }

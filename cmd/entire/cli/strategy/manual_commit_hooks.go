@@ -1156,8 +1156,8 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	}
 
 	// Combined attribution is a committed write in the post-commit hook, so the
-	// v1 custom ref must track it too when opted in (local-only, never pushed).
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	// mirror must track it too when configured (best-effort).
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	return nil
 }
@@ -2812,10 +2812,10 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 	}
 
-	// Mirror the finalized v1 metadata to the v1 custom ref when opted in
-	// (local-only, never pushed; failures are logged, not fatal). Once after the
-	// loop is enough — it tracks v1's final commit.
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	// Mirror the finalized primary metadata to refs.Mirror when configured
+	// (best-effort; failures are logged, not fatal). Once after the loop is
+	// enough — it tracks Primary's final commit.
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	// Clear turn checkpoint IDs. Do NOT update CheckpointTranscriptStart here — it was
 	// already set correctly by PostCommit: condenseAndUpdateState sets it to the total

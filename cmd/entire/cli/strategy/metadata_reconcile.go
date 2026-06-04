@@ -108,6 +108,7 @@ func ReconcileDisconnectedMetadataBranch(
 	remoteRefName plumbing.ReferenceName,
 	w io.Writer,
 ) error {
+	refs := checkpoint.ResolveCommittedRefs(ctx)
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 
 	// Check local branch
@@ -179,11 +180,9 @@ func ReconcileDisconnectedMetadataBranch(
 
 	if len(dataCommits) == 0 {
 		// Local only had empty orphan — just point to remote
-		ref := plumbing.NewHashReference(refName, remoteHash)
-		if err := repo.Storer.SetReference(ref); err != nil {
+		if err := AdvanceCommittedPrimary(ctx, repo, refs, remoteHash); err != nil {
 			return fmt.Errorf("failed to reset metadata branch to remote: %w", err)
 		}
-		MirrorCommittedMetadataRefBestEffort(ctx, repo)
 		fmt.Fprintln(w, "[entire] Done — local had no checkpoint data, reset to remote")
 		return nil
 	}
@@ -195,12 +194,9 @@ func ReconcileDisconnectedMetadataBranch(
 		return fmt.Errorf("failed to cherry-pick local commits onto remote: %w", err)
 	}
 
-	// Update local branch ref
-	ref := plumbing.NewHashReference(refName, newTip)
-	if err := repo.Storer.SetReference(ref); err != nil {
+	if err := AdvanceCommittedPrimary(ctx, repo, refs, newTip); err != nil {
 		return fmt.Errorf("failed to update metadata branch: %w", err)
 	}
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
 
 	fmt.Fprintln(w, "[entire] Done — all local and remote checkpoints preserved")
 	return nil
