@@ -63,7 +63,7 @@ func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterH
 		return nil, err
 	}
 
-	return selectContext(f, clusterHost, coreURLs, debugf)
+	return selectContext(f, "cluster "+clusterHost, coreURLs, debugf)
 }
 
 // ResolveClusterCores returns the trusted control-plane core URLs that
@@ -124,16 +124,19 @@ func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, http
 	return body.CoreURLs, nil
 }
 
-// selectContext applies the account-selection rules over the cluster's
-// advertised cores. See ResolveContextForCluster for the rationale.
-func selectContext(f *contexts.File, clusterHost string, coreURLs []string, debugf DebugFunc) (*contexts.Context, error) {
+// selectContext applies the account-selection rules over a resource's
+// advertised trusted issuers. subject is a noun phrase identifying the
+// resource ("cluster nyc.entire.io" / "API host partial.to") used in
+// messages, so the same rules serve both the git-cluster and data-API
+// resolvers. See ResolveContextForCluster for the rationale.
+func selectContext(f *contexts.File, subject string, coreURLs []string, debugf DebugFunc) (*contexts.Context, error) {
 	eligible := eligibleContexts(f, coreURLs)
 
-	// 1. Active context wins when it's eligible for this cluster.
+	// 1. Active context wins when it's eligible for this resource.
 	if current := f.Find(f.CurrentContext); current != nil {
 		for _, c := range eligible {
 			if c.Name == current.Name {
-				debugf("cluster %s -> active context %s", clusterHost, current.Name)
+				debugf("%s -> active context %s", subject, current.Name)
 				return current, nil
 			}
 		}
@@ -142,12 +145,12 @@ func selectContext(f *contexts.File, clusterHost string, coreURLs []string, debu
 	// 2. Otherwise the eligible set decides.
 	switch len(eligible) {
 	case 0:
-		return nil, errors.New(RenderLoginHint(clusterHost, coreURLs))
+		return nil, errors.New(renderLoginHint(subject, coreURLs))
 	case 1:
-		debugf("cluster %s -> sole eligible context %s", clusterHost, eligible[0].Name)
+		debugf("%s -> sole eligible context %s", subject, eligible[0].Name)
 		return eligible[0], nil
 	default:
-		return nil, ambiguousContextError(clusterHost, eligible)
+		return nil, ambiguousContextError(subject, eligible)
 	}
 }
 
@@ -169,16 +172,16 @@ func eligibleContexts(f *contexts.File, coreURLs []string) []*contexts.Context {
 }
 
 // ambiguousContextError is returned when more than one local context could
-// authenticate against the cluster and none is active. We refuse to guess —
+// authenticate against the resource and none is active. We refuse to guess —
 // the user picks explicitly. Names are sorted so the message is stable.
-func ambiguousContextError(clusterHost string, eligible []*contexts.Context) error {
+func ambiguousContextError(subject string, eligible []*contexts.Context) error {
 	names := make([]string, len(eligible))
 	for i, c := range eligible {
 		names[i] = c.Name
 	}
 	sort.Strings(names)
-	return fmt.Errorf("multiple login contexts can authenticate against cluster %s (%s); choose one with `entire auth use <context>` and re-run",
-		clusterHost, strings.Join(names, ", "))
+	return fmt.Errorf("multiple login contexts can authenticate against %s (%s); choose one with `entire auth use <context>` and re-run",
+		subject, strings.Join(names, ", "))
 }
 
 // formatDiscoveryError turns a Discover error into the message

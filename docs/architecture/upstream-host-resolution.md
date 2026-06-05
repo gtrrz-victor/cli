@@ -20,7 +20,7 @@ accept a core's JWTs.
 |---|---|---|---|
 | **Core** — IdP **and** control-plane API, co-located | `entire-core` (`us.auth.entire.io`) | `org` / `repo` / `project` / `grant`, `auth *`, `login` | none needed — the host *is* the core |
 | **Resource: git cluster** | `entire-server` / `entiredb` | `git-remote-entire` (clone/push) | `/.well-known/entire-cluster.json` → `core_urls` |
-| **Resource: web/data API** | `entire.io` (`partial.to`) | `activity` / `search` / `trail` / `dispatch` | **none today** — see [Deferred](#deferred) |
+| **Resource: web/data API** | `entire.io` (`partial.to`) | `activity` / `search` / `trail` / `dispatch` | `/.well-known/entire-api.json` → `trusted_issuers` + `audience` |
 
 `contexts.json` (`$ENTIRE_CONFIG_DIR/contexts.json`, shared with entiredb's
 CLIs) stores each login as `{Name, CoreURL, Handle, KeychainService}` plus a
@@ -69,38 +69,59 @@ api.AuthBaseURL()`. When the active context lives on a *different* core, both
 its token-store reads and its STS/refresh endpoint are keyed on the wrong
 host. The per-context provider fixes that by keying on `c.CoreURL`.
 
-## Deferred: the web/data API (`entire.io`)
+### Web/data API (done)
 
 `activity` / `search` / `trail` / `dispatch` dial `ENTIRE_API_BASE_URL`
-(default `entire.io`) and statically resolve their token. `entire.io` is a
-**resource server** — it validates incoming JWTs against statically-configured
-trusted issuers (`ENTIRE_CORE_BASE_URL` + `ENTIRE_CORE_TRUSTED_ISSUERS`) and a
-fixed audience (`ENTIRE_CORE_JWT_AUDIENCE`, e.g. `entire-web-api`) — but it
-does **not advertise** any of this. So the CLI can't map an `entire.io` host
-back to a core/context the way it does for a git cluster.
+(default `entire.io`; staging `partial.to`). `entire.io` is a **resource
+server** — it validates incoming JWTs against trusted issuers
+(`ENTIRE_CORE_BASE_URL` + `ENTIRE_CORE_TRUSTED_ISSUERS`) and a fixed audience
+(`ENTIRE_CORE_JWT_AUDIENCE`). It now **advertises** all of this at
+`/.well-known/entire-api.json`, so the CLI can map the API host back to a
+core/context just like a git cluster:
 
-To close the gap (so `ENTIRE_API_BASE_URL=https://partial.to entire activity`
-auto-selects the right context without also setting `ENTIRE_AUTH_BASE_URL`):
+```json
+{
+  "issuer": "https://us.auth.partial.to",
+  "trusted_issuers": ["https://us.auth.partial.to", "https://eu.auth.partial.to"],
+  "audience": "https://partial.to",
+  "jwks_uri": "https://us.auth.partial.to/.well-known/jwks.json"
+}
+```
 
-1. **Server**: `entire.io` grows a `/.well-known/entire-api.json` advertising
-   its trust roots. Unlike the cluster blob (`core_urls` only), the API blob
-   must also carry the **audience** the CLI exchanges for:
-   ```json
-   {
-     "issuer": "https://us.auth.partial.to",
-     "trusted_issuers": ["https://us.auth.partial.to", "https://eu.auth.partial.to"],
-     "audience": "entire-web-api",
-     "jwks_uri": "https://us.auth.partial.to/.well-known/jwks.json"
-   }
-   ```
-2. **CLI**: generalize the cluster resolver into a shared "host → trusted
-   issuers → pick context" path whose *source* of trusted issuers is pluggable
-   (cluster.json / api.json / the core itself), then exchange the context's
-   token for the advertised audience via `auth.TokenForResource`. Wire it into
-   the `activity` / `search` / `trail` / `dispatch` constructors
-   (`NewAuthenticatedAPIClient`, `dispatch.NewCloudClient`, `search.Search`).
+> **Audience = the data host origin, not an opaque string.** entire.io's
+> `ENTIRE_CORE_JWT_AUDIENCE` is `https://entire.io` (prod) / `https://partial.to`
+> (staging). The core's STS exchange stamps `aud` = the requested audience for
+> api-access exchanges, so the CLI requests exactly the advertised value. We
+> advertise it (rather than assume host==audience) so the server can change it
+> without a CLI release.
 
-`ENTIRE_API_BASE_URL` names the resource host to dial (the discovery target);
-the context is then chosen from the issuers that host advertises. It does not
-need to be paired with `ENTIRE_AUTH_BASE_URL` once discovery exists — that is
-the whole point of the well-known.
+Resolution (`auth.ResolveDataAPIToken`):
+
+1. Fetch the API host's `/.well-known/entire-api.json` (TLS-authenticated —
+   it's a trust root) and read `trusted_issuers` + `audience`.
+2. Pick the context with the **same cluster semantics** as the git path:
+   active-context-wins-if-eligible → sole eligible → explicit-choice error.
+   This is the lever that makes `ENTIRE_API_BASE_URL=https://partial.to entire
+   activity` authenticate as the partial.to login even while the active context
+   is a prod entire.io login — without also setting `ENTIRE_AUTH_BASE_URL`.
+3. Exchange that context's login JWT at **its** core for the advertised
+   audience (`auth.NewRefreshingResourceProvider`, keyed on `c.CoreURL` like the
+   control-plane provider, plus the RFC 8693 step the data API requires).
+4. **Fallback**: if the host doesn't advertise discovery (404 / unreachable /
+   503 / malformed — a deployment predating the well-known), fall back to the
+   pre-discovery static path (`TokenForResource` via the singleton manager), so
+   behaviour is never worse than before. A *reachable* host whose context
+   selection fails surfaces that error — the user must log in or pick one.
+
+The selection rule differs from the control plane (where the active context
+*always* wins because there's no host to match): here a host **is** matched, so
+the active context wins only when eligible.
+
+Key files: `cmd/entire/cli/auth/data_api.go` (`ResolveDataAPIToken` + fallback),
+`cmd/entire/cli/auth/refresh.go` (`NewRefreshingResourceProvider`),
+`internal/entireclient/clusterdiscovery/api_discovery.go` (`DiscoverAPI`,
+`ResolveContextForAPI`, sharing `selectContext` with the cluster path). Seams:
+`NewAuthenticatedAPIClient` (activity/trail/search-completion),
+`dispatch/mode_local.go` `lookupResourceToken` (dispatch),
+`search_cmd.go` `resolveSearchToken` (search). Server:
+entire.io `api/src/app.ts` + `buildAPIDiscoveryDoc` in `api/src/lib/core-jwt.ts`.
