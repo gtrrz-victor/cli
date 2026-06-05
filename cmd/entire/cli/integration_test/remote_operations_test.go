@@ -68,6 +68,52 @@ func TestPrePush_PushesCheckpointBranchToOrigin(t *testing.T) {
 	}
 }
 
+// TestPrePush_PushesV1CustomRefWhenOptedIn verifies that with
+// checkpoints_version "1.1", PrePush pushes refs/entire/checkpoints/v1.1
+// alongside the v1 branch, and that the pushed mirror matches the v1 tip on
+// the remote.
+func TestPrePush_PushesV1CustomRefWhenOptedIn(t *testing.T) {
+	t.Parallel()
+	env := NewFeatureBranchEnv(t)
+
+	// Opt into v1.1 before any session activity so condensation mirrors v1.1
+	// and the resolver puts v1.1 in the push set.
+	env.PatchSettings(map[string]any{
+		"strategy_options": map[string]any{"checkpoints_version": "1.1"},
+	})
+
+	bareDir := env.SetupBareRemote()
+
+	session := env.NewSession()
+	transcriptPath := session.CreateTranscript("Add auth module", []FileChange{
+		{Path: "auth.go", Content: "package auth"},
+	})
+	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(session.ID, "Add auth module", transcriptPath); err != nil {
+		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
+	}
+	env.WriteFile("auth.go", "package auth")
+	env.GitAdd("auth.go")
+	if err := env.SimulateStop(session.ID, transcriptPath); err != nil {
+		t.Fatalf("SimulateStop failed: %v", err)
+	}
+	env.GitCommitWithShadowHooks("Add auth module", "auth.go")
+
+	env.RunPrePush("origin")
+
+	// The v1 branch still pushes as before.
+	if !env.BranchExistsOnRemote(bareDir, paths.MetadataBranchName) {
+		t.Fatalf("%s should exist on bare remote after PrePush", paths.MetadataBranchName)
+	}
+
+	// The v1.1 ref must now exist on the remote and point at the same commit as
+	// the v1 branch (revParse fails the test if the v1.1 ref is absent).
+	remoteV1 := revParse(t, bareDir, "refs/heads/"+paths.MetadataBranchName)
+	remoteCustom := revParse(t, bareDir, paths.MetadataRefName)
+	if remoteV1 != remoteCustom {
+		t.Errorf("remote %s = %s, want %s (remote v1 tip)", paths.MetadataRefName, remoteCustom, remoteV1)
+	}
+}
+
 // TestPrePush_NoOpWhenNoCheckpoints verifies that PrePush is a no-op
 // when no sessions or checkpoints exist.
 func TestPrePush_NoOpWhenNoCheckpoints(t *testing.T) {

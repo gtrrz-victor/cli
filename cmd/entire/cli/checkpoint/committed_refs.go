@@ -69,6 +69,11 @@ func committedRefsFor(mirrorEnabled bool) CommittedRefs {
 		custom := plumbing.ReferenceName(paths.MetadataRefName)
 		refs.Read = custom
 		refs.Mirror = custom
+		// Push v1.1 alongside v1 so the new ref exists on the remote before a
+		// later milestone flips it to Primary. Primary stays v1, so
+		// PrimaryFetchableFromOrigin (which requires Primary.IsBranch) is
+		// unaffected by adding the non-branch v1.1 ref here.
+		refs.Push = append(refs.Push, custom)
 	}
 	return refs
 }
