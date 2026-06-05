@@ -1781,10 +1781,9 @@ func (s *GitStore) getFetchingTree(ctx context.Context) (*FetchingTree, error) {
 	return NewFetchingTree(ctx, tree, s.repo.Storer, s.blobFetcher), nil
 }
 
-// getSessionsBranchTree returns the tree object at the configured read ref.
-// Falls back to origin's remote-tracking ref when reads are bootstrappable
-// from origin. When reads target a local-only mirror, the fallback skips
-// because origin doesn't track the mirror.
+// getSessionsBranchTree returns the tree object at refs.Read. Falls back to
+// origin's remote-tracking ref for Primary when ReadBootstrappableFromOrigin
+// is true.
 func (s *GitStore) getSessionsBranchTree() (*object.Tree, error) {
 	ref, err := s.repo.Reference(s.refs.Read, true)
 	if err != nil {
