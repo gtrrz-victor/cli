@@ -104,6 +104,60 @@ func (s contextTokenStore) DeleteTokens(string) error {
 	return nil
 }
 
+// newContextTokenManager builds the per-context auth-go tokenmanager that both
+// NewRefreshingLoginProvider and NewRefreshingResourceProvider sit on. Keying
+// Issuer on c.CoreURL is the whole point: store reads, the refresh grant, and
+// the STS exchange all target that context's core (the bug the singleton
+// manager — pinned to AuthBaseURL — has when the active context lives on a
+// different core).
+//
+// STSPath is set unconditionally even for the login-only provider: Refresh()
+// never reaches the exchange path, so an unused STSPath is harmless, and a
+// single config keeps the two providers from drifting.
+//
+// transport carries the caller's TLS configuration; allowInsecureHTTP permits
+// an http:// core/resource for loopback/dev.
+func newContextTokenManager(c *contexts.Context, transport http.RoundTripper, allowInsecureHTTP bool) (*tokenmanager.Manager, error) {
+	if c == nil {
+		return nil, errors.New("nil context")
+	}
+	if c.KeychainService == "" || c.Handle == "" {
+		return nil, fmt.Errorf("context %q has no keychain slot", c.Name)
+	}
+	mgr, err := tokenmanager.New(tokenmanager.Config{
+		Issuer:            strings.TrimRight(c.CoreURL, "/"),
+		ClientID:          CurrentProvider().ClientID,
+		STSPath:           CurrentProvider().STSPath,
+		RefreshPath:       CurrentProvider().TokenPath,
+		Store:             contextTokenStore{service: c.KeychainService, handle: c.Handle},
+		Transport:         transport,
+		AllowInsecureHTTP: allowInsecureHTTP,
+		UserAgent:         CurrentProvider().ClientID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init token manager for context %q: %w", c.Name, err)
+	}
+	return mgr, nil
+}
+
+// contextReauthError maps the two re-auth sentinels a per-context manager can
+// return into a single friendly message that names the context and its core
+// (so a multi-core user logs back into the right one — matching
+// clusterdiscovery.RenderLoginHint's idiom). Returns nil when err is neither
+// sentinel, leaving the caller to wrap the residual error in its own terms
+// (refresh vs exchange).
+func contextReauthError(c *contexts.Context, err error) error {
+	coreURL := strings.TrimRight(c.CoreURL, "/")
+	relogin := fmt.Sprintf("ENTIRE_AUTH_BASE_URL=%s entire login", coreURL)
+	switch {
+	case errors.Is(err, tokenmanager.ErrReauthRequired):
+		return fmt.Errorf("login session for %q (%s) expired; run `%s` to re-authenticate", c.Name, coreURL, relogin)
+	case errors.Is(err, tokenmanager.ErrNotLoggedIn):
+		return fmt.Errorf("no usable login for %q (%s); run `%s`", c.Name, coreURL, relogin)
+	}
+	return nil
+}
+
 // NewRefreshingLoginProvider returns a login-JWT provider (the shape
 // repocreds wants) for context c that transparently re-mints an expired
 // login JWT from the stored refresh token.
@@ -125,37 +179,16 @@ func (s contextTokenStore) DeleteTokens(string) error {
 // transport carries the caller's TLS configuration; allowInsecureHTTP
 // permits an http:// core for loopback/dev.
 func NewRefreshingLoginProvider(c *contexts.Context, transport http.RoundTripper, allowInsecureHTTP bool) (func(context.Context) (string, error), error) {
-	if c == nil {
-		return nil, errors.New("nil context")
-	}
-	if c.KeychainService == "" || c.Handle == "" {
-		return nil, fmt.Errorf("context %q has no keychain slot", c.Name)
-	}
-	mgr, err := tokenmanager.New(tokenmanager.Config{
-		Issuer:            strings.TrimRight(c.CoreURL, "/"),
-		ClientID:          CurrentProvider().ClientID,
-		RefreshPath:       CurrentProvider().TokenPath,
-		Store:             contextTokenStore{service: c.KeychainService, handle: c.Handle},
-		Transport:         transport,
-		AllowInsecureHTTP: allowInsecureHTTP,
-		UserAgent:         CurrentProvider().ClientID,
-	})
+	mgr, err := newContextTokenManager(c, transport, allowInsecureHTTP)
 	if err != nil {
-		return nil, fmt.Errorf("init token manager for context %q: %w", c.Name, err)
+		return nil, err
 	}
-	name := c.Name
-	coreURL := strings.TrimRight(c.CoreURL, "/")
-	// Name the core in the re-login hint so a multi-core user logs back
-	// into the right one; matches clusterdiscovery.RenderLoginHint's idiom.
-	relogin := fmt.Sprintf("ENTIRE_AUTH_BASE_URL=%s entire login", coreURL)
 	return func(ctx context.Context) (string, error) {
 		tok, err := mgr.Refresh(ctx)
-		switch {
-		case errors.Is(err, tokenmanager.ErrReauthRequired):
-			return "", fmt.Errorf("login session for %q (%s) expired; run `%s` to re-authenticate", name, coreURL, relogin)
-		case errors.Is(err, tokenmanager.ErrNotLoggedIn):
-			return "", fmt.Errorf("no usable login for %q (%s); run `%s`", name, coreURL, relogin)
-		case err != nil:
+		if mapped := contextReauthError(c, err); mapped != nil {
+			return "", mapped
+		}
+		if err != nil {
 			return "", fmt.Errorf("refresh login token: %w", err)
 		}
 		return tok, nil
@@ -169,48 +202,26 @@ func NewRefreshingLoginProvider(c *contexts.Context, transport http.RoundTripper
 // control plane / cluster cases, where the host is the core), this performs
 // the token exchange the data API requires.
 //
-// Both the silent login-JWT re-mint and the exchange run through a
-// tokenmanager keyed on c.CoreURL as Issuer, so store reads, refresh, and the
-// STS endpoint all target the right core — the same fix the control-plane
-// per-context provider applies, extended with an exchange step. resourceOrigin
-// must already be origin-only (no path); audience is passed verbatim as the
-// RFC 8693 audience param. Exchanged tokens are cached in-process by the
+// Both the silent login-JWT re-mint and the exchange run through the shared
+// per-context tokenmanager (newContextTokenManager). resourceOrigin must
+// already be origin-only (no path); audience is passed verbatim as the RFC
+// 8693 audience param. Exchanged tokens are cached in-process by the
 // tokenmanager for the life of this process.
 //
 // transport carries the caller's TLS configuration; allowInsecureHTTP permits
 // an http:// core/resource for loopback/dev.
 func NewRefreshingResourceProvider(c *contexts.Context, resourceOrigin, audience string, transport http.RoundTripper, allowInsecureHTTP bool) (func(context.Context) (string, error), error) {
-	if c == nil {
-		return nil, errors.New("nil context")
-	}
-	if c.KeychainService == "" || c.Handle == "" {
-		return nil, fmt.Errorf("context %q has no keychain slot", c.Name)
-	}
-	mgr, err := tokenmanager.New(tokenmanager.Config{
-		Issuer:            strings.TrimRight(c.CoreURL, "/"),
-		ClientID:          CurrentProvider().ClientID,
-		STSPath:           CurrentProvider().STSPath,
-		RefreshPath:       CurrentProvider().TokenPath,
-		Store:             contextTokenStore{service: c.KeychainService, handle: c.Handle},
-		Transport:         transport,
-		AllowInsecureHTTP: allowInsecureHTTP,
-		UserAgent:         CurrentProvider().ClientID,
-	})
+	mgr, err := newContextTokenManager(c, transport, allowInsecureHTTP)
 	if err != nil {
-		return nil, fmt.Errorf("init token manager for context %q: %w", c.Name, err)
+		return nil, err
 	}
-	name := c.Name
-	coreURL := strings.TrimRight(c.CoreURL, "/")
-	relogin := fmt.Sprintf("ENTIRE_AUTH_BASE_URL=%s entire login", coreURL)
 	req := tokenmanager.TokenRequest{Resource: resourceOrigin, Audience: audience}
 	return func(ctx context.Context) (string, error) {
 		tok, err := mgr.Token(ctx, req)
-		switch {
-		case errors.Is(err, tokenmanager.ErrReauthRequired):
-			return "", fmt.Errorf("login session for %q (%s) expired; run `%s` to re-authenticate", name, coreURL, relogin)
-		case errors.Is(err, tokenmanager.ErrNotLoggedIn):
-			return "", fmt.Errorf("no usable login for %q (%s); run `%s`", name, coreURL, relogin)
-		case err != nil:
+		if mapped := contextReauthError(c, err); mapped != nil {
+			return "", mapped
+		}
+		if err != nil {
 			return "", fmt.Errorf("exchange token for %s: %w", resourceOrigin, err)
 		}
 		return tok, nil
