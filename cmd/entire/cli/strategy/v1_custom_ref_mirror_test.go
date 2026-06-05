@@ -537,9 +537,8 @@ func TestDiagnoseCommittedMetadataMirror(t *testing.T) {
 	}
 }
 
-// TestPrePush_PushesV1CustomRefWhenOptedIn proves the v1.1-push milestone: with
-// the mirror opted in and both refs present locally, pre-push pushes the v1
-// branch and the v1 custom ref alongside it.
+// TestPrePush_PushesV1CustomRefWhenOptedIn proves that with the mirror opted
+// in, pre-push pushes the v1 branch and the v1 custom ref alongside it.
 //
 // Not parallel: uses t.Chdir().
 func TestPrePush_PushesV1CustomRefWhenOptedIn(t *testing.T) {

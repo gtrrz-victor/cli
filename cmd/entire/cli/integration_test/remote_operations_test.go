@@ -69,15 +69,12 @@ func TestPrePush_PushesCheckpointBranchToOrigin(t *testing.T) {
 }
 
 // TestPrePush_PushesV1CustomRefWhenOptedIn verifies that with
-// checkpoints_version "1.1", PrePush pushes refs/entire/checkpoints/v1.1
-// alongside the v1 branch, and that the pushed mirror matches the v1 tip on
-// the remote.
+// checkpoints_version "1.1", PrePush pushes the v1.1 ref to the remote at the v1 tip.
 func TestPrePush_PushesV1CustomRefWhenOptedIn(t *testing.T) {
 	t.Parallel()
 	env := NewFeatureBranchEnv(t)
 
-	// Opt into v1.1 before any session activity so condensation mirrors v1.1
-	// and the resolver puts v1.1 in the push set.
+	// Opt in before session activity so condensation mirrors v1.1.
 	env.PatchSettings(map[string]any{
 		"strategy_options": map[string]any{"checkpoints_version": "1.1"},
 	})
@@ -100,13 +97,11 @@ func TestPrePush_PushesV1CustomRefWhenOptedIn(t *testing.T) {
 
 	env.RunPrePush("origin")
 
-	// The v1 branch still pushes as before.
 	if !env.BranchExistsOnRemote(bareDir, paths.MetadataBranchName) {
 		t.Fatalf("%s should exist on bare remote after PrePush", paths.MetadataBranchName)
 	}
 
-	// The v1.1 ref must now exist on the remote and point at the same commit as
-	// the v1 branch (revParse fails the test if the v1.1 ref is absent).
+	// v1.1 must exist on the remote at the v1 tip (revParse fails if absent).
 	remoteV1 := revParse(t, bareDir, "refs/heads/"+paths.MetadataBranchName)
 	remoteCustom := revParse(t, bareDir, paths.MetadataRefName)
 	if remoteV1 != remoteCustom {

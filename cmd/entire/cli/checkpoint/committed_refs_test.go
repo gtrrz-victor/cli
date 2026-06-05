@@ -77,8 +77,7 @@ func TestCommittedRefs_PrimaryFetchableFromOrigin(t *testing.T) {
 		want bool
 	}{
 		{"v1 in push", CommittedRefs{Primary: v1, Push: []plumbing.ReferenceName{v1}}, true},
-		// The v1.1-push milestone topology: a non-branch v1.1 alongside the v1
-		// branch in Push must not change v1's origin-fetchability.
+		// Non-branch v1.1 alongside v1 in Push must not change v1's fetchability.
 		{"v1 primary, v1.1 also pushed", CommittedRefs{Primary: v1, Push: []plumbing.ReferenceName{v1, custom}}, true},
 		{"primary not in push", CommittedRefs{Primary: custom, Push: []plumbing.ReferenceName{v1}}, false},
 		{"empty push", CommittedRefs{Primary: v1, Push: nil}, false},
@@ -101,9 +100,8 @@ func TestCommittedRefs_ReadBootstrappableFromOrigin(t *testing.T) {
 		want bool
 	}{
 		{"v1-only: reads target fetchable primary", CommittedRefs{Primary: v1, Read: v1, Push: []plumbing.ReferenceName{v1}}, true},
-		// v1.1-push milestone: v1.1 is pushed, but it's a non-branch ref with no
-		// origin-tracking shadow and Read != Primary, so reads still cannot
-		// bootstrap from origin.
+		// v1.1 is pushed but is a non-branch ref (no origin shadow) and
+		// Read != Primary, so reads still can't bootstrap from origin.
 		{"v1.1 pushed but reads target mirror", CommittedRefs{Primary: v1, Read: custom, Mirror: custom, Push: []plumbing.ReferenceName{v1, custom}}, false},
 		{"reads target primary but primary not pushed", CommittedRefs{Primary: v1, Read: v1, Push: nil}, false},
 	}

@@ -33,9 +33,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 
 	refs := checkpoint.ResolveCommittedRefs(ctx)
 
-	// Re-point the mirror at the primary's current tip before pushing, so we
-	// publish the primary's state and not a tip left stale by an earlier
-	// best-effort advance that failed. Skipped when no mirror is configured.
 	refreshMirrorBeforePush(ctx, refs)
 
 	// Thread the span's context into the push so the network push and any
@@ -51,10 +48,8 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	return nil
 }
 
-// refreshMirrorBeforePush advances the configured mirror to the primary tip
-// just before pushing. Best-effort: a failure to open the repo or refresh the
-// mirror is logged and never blocks the push (the pre-push hook is wrapped in
-// `|| true`). No-op when the topology has no mirror.
+// refreshMirrorBeforePush advances the mirror to the primary tip before
+// pushing. Best-effort: failures are logged, never blocking the push.
 func refreshMirrorBeforePush(ctx context.Context, refs checkpoint.CommittedRefs) {
 	if !refs.HasMirror() {
 		return
