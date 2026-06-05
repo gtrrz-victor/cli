@@ -232,7 +232,9 @@ func gitEmptyConfigPath() string {
 		if err != nil {
 			panic("write git isolation config: " + err.Error())
 		}
-		_ = f.Close()
+		if err := f.Close(); err != nil {
+			panic("close git isolation config: " + err.Error())
+		}
 		gitEmptyConfig = f.Name()
 	})
 	return gitEmptyConfig
