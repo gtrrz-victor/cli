@@ -31,10 +31,10 @@ type APIResponse struct {
 	// advertised (not assumed) so the server can change it without a CLI
 	// release.
 	Audience string `json:"audience"`
-	// JWKSURI is where Issuer publishes its signing keys. Informational
-	// for the CLI today; the API uses it server-side to verify inbound
-	// tokens.
-	JWKSURI string `json:"jwks_uri"`
+	// The server also advertises its JWKS URI(s) for verifying inbound
+	// tokens, but that's a server-side concern — the CLI never fetches
+	// JWKS — so we don't model the field here. Unknown JSON fields are
+	// ignored on decode, so the server's shape can evolve freely.
 }
 
 // ErrDiscoveryUnavailable wraps every "the API didn't give us a usable

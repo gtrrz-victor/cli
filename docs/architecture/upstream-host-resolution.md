@@ -84,9 +84,13 @@ core/context just like a git cluster:
   "issuer": "https://us.auth.partial.to",
   "trusted_issuers": ["https://us.auth.partial.to", "https://eu.auth.partial.to"],
   "audience": "https://partial.to",
-  "jwks_uri": "https://us.auth.partial.to/.well-known/jwks.json"
+  "jwks_uris": {"https://us.auth.partial.to": "https://us.auth.partial.to/.well-known/jwks.json"}
 }
 ```
+
+The CLI reads only `trusted_issuers` and `audience`; `jwks_uris` is a
+server-side verification concern (the CLI never fetches JWKS) and is ignored
+on decode, so the server can evolve that field freely.
 
 > **Audience = the data host origin, not an opaque string.** entire.io's
 > `ENTIRE_CORE_JWT_AUDIENCE` is `https://entire.io` (prod) / `https://partial.to`

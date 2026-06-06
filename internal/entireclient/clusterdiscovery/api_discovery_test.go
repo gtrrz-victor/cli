@@ -23,11 +23,13 @@ func (s schemeRewriteTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return s.base.RoundTrip(req)
 }
 
+// apiDiscoveryBody includes jwks_uris (the server's real field, plural per
+// entire.io#2281) to prove the CLI ignores fields it doesn't model.
 const apiDiscoveryBody = `{
   "issuer": "https://us.auth.partial.to",
   "trusted_issuers": ["https://us.auth.partial.to", "https://eu.auth.partial.to"],
   "audience": "https://partial.to",
-  "jwks_uri": "https://us.auth.partial.to/.well-known/jwks.json"
+  "jwks_uris": {"https://us.auth.partial.to": "https://us.auth.partial.to/.well-known/jwks.json"}
 }`
 
 func TestDiscoverAPI(t *testing.T) {
@@ -141,7 +143,6 @@ func apiHandler(t *testing.T, trustedIssuers ...string) http.HandlerFunc {
 		Issuer:         trustedIssuers[0],
 		TrustedIssuers: trustedIssuers,
 		Audience:       apiTestAudience,
-		JWKSURI:        trustedIssuers[0] + "/.well-known/jwks.json",
 	}
 	body, err := json.Marshal(doc)
 	require.NoError(t, err)
