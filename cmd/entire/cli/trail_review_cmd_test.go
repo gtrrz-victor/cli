@@ -14,6 +14,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 
 	"github.com/spf13/cobra"
 )
@@ -62,6 +63,27 @@ func TestTrailCommandRejectsRemovedReviewCommand(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected removed trail review command to error")
+	}
+}
+
+// Not parallel: uses t.Chdir() to point remote resolution at a fake repo.
+func TestResolveTrailReviewTargetRejectsUnsupportedForge(t *testing.T) {
+	repoDir := t.TempDir()
+	testutil.InitRepo(t, repoDir)
+	cmd := exec.CommandContext(context.Background(), "git", "remote", "add", "origin", "git@gitlab.com:acme/my-app.git")
+	cmd.Dir = repoDir
+	cmd.Env = testutil.GitIsolatedEnv()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git remote add: %v", err)
+	}
+	t.Chdir(repoDir)
+
+	_, err := resolveTrailReviewTarget(context.Background(), api.NewClient("tok"), "")
+	if err == nil {
+		t.Fatal("expected error for gitlab.com origin, got nil")
+	}
+	if !strings.Contains(err.Error(), "not on a forge supported by Entire trails") {
+		t.Fatalf("error message does not mention unsupported forge: %v", err)
 	}
 }
 

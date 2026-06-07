@@ -18,7 +18,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/entireio/cli/cmd/entire/cli/api"
-	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
 	"github.com/spf13/cobra"
@@ -433,9 +432,9 @@ func authenticatedTrailReviewTarget(cmd *cobra.Command, selector string) (*api.C
 }
 
 func resolveTrailReviewTarget(ctx context.Context, client *api.Client, selector string) (trailReviewTarget, error) {
-	host, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	host, owner, repo, err := resolveTrailRemote(ctx)
 	if err != nil {
-		return trailReviewTarget{}, fmt.Errorf("failed to resolve repository: %w", err)
+		return trailReviewTarget{}, err
 	}
 
 	selector = strings.TrimSpace(selector)
