@@ -952,15 +952,11 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 		return
 	}
 
-	// Never send the raw remote: it can carry embedded credentials
-	// (https://token@host/...) or query params. Parse and rebuild a clean,
-	// credential-free URL; skip entirely if it isn't parseable.
-	info, err := gitremote.ParseURL(rawURL)
+	cleanURL, err := cleanRemoteURLForReport(rawURL)
 	if err != nil {
 		logging.Debug(ctx, "skipping enable report: unparseable origin remote", "error", err)
 		return
 	}
-	cleanURL := fmt.Sprintf("https://%s/%s/%s.git", info.Host, info.Owner, info.Repo)
 
 	client, err := NewAuthenticatedAPIClient(ctx, insecureHTTPAuth)
 	if err != nil {
@@ -972,6 +968,19 @@ func reportRepoEnabled(ctx context.Context, insecureHTTPAuth bool) {
 	if _, err := client.ReportEnable(ctx, cleanURL); err != nil {
 		logging.Debug(ctx, "enable report failed", "error", err)
 	}
+}
+
+// cleanRemoteURLForReport turns a raw git remote URL into a clean,
+// credential-free HTTPS URL safe to send to the backend. The raw remote can
+// carry embedded credentials (https://token@host/...) or query params, so we
+// never forward it verbatim: parse it and rebuild from host/owner/repo alone.
+// Returns an error if the URL can't be parsed (the caller skips reporting).
+func cleanRemoteURLForReport(rawURL string) (string, error) {
+	info, err := gitremote.ParseURL(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse remote URL: %w", err)
+	}
+	return fmt.Sprintf("https://%s/%s/%s.git", info.Host, info.Owner, info.Repo), nil
 }
 
 func newDisableCmd() *cobra.Command {
