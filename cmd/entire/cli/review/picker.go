@@ -176,57 +176,35 @@ type crewSlot struct {
 	model string
 }
 
-const (
-	crewActionAdd    = "add"
-	crewActionRemove = "remove"
-	crewActionDone   = "done"
-)
-
-// promptForReviewCrew builds the review crew as an explicit list of worker
-// slots. It seeds one slot per launchable agent (default model) so pressing
-// Done immediately reproduces the all-agents-on-defaults baseline, then lets
-// the user add, remove, or duplicate slots freely — e.g. five Claude slots on
-// different (or identical) models.
+// promptForReviewCrew builds the review crew one worker at a time. It always
+// configures a first slot (agent + model), then keeps offering "Add another"
+// until the user is done — so the crew is never empty and the same agent can be
+// added repeatedly, on different or identical models.
 func promptForReviewCrew(ctx context.Context, out io.Writer, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
-	slots := make([]crewSlot, 0, len(launchable))
-	for _, name := range launchable {
-		slots = append(slots, crewSlot{agent: name})
-	}
-
 	fmt.Fprintln(out, "Build the review crew")
-	fmt.Fprintln(out, "Each slot is one worker: an agent + model. Add as many as you like —")
-	fmt.Fprintln(out, "including the same agent more than once, on different or identical models.")
+	fmt.Fprintln(out, "Add one worker at a time — each is an agent + model. You can add the same")
+	fmt.Fprintln(out, "agent more than once, on different or identical models.")
 	fmt.Fprintln(out)
 
+	slots := make([]crewSlot, 0, len(launchable))
 	for {
-		action, err := promptCrewAction(ctx, slots)
+		agentName, err := promptCrewAgent(ctx, launchable)
 		if err != nil {
 			return settings.ReviewProfileConfig{}, err
 		}
-		switch action {
-		case crewActionAdd:
-			agentName, err := promptCrewAgent(ctx, launchable)
-			if err != nil {
-				return settings.ReviewProfileConfig{}, err
-			}
-			model, err := promptCrewModel(ctx, agentName)
-			if err != nil {
-				return settings.ReviewProfileConfig{}, err
-			}
-			slots = append(slots, crewSlot{agent: agentName, model: model})
-		case crewActionRemove:
-			idx, err := promptCrewRemove(ctx, slots)
-			if err != nil {
-				return settings.ReviewProfileConfig{}, err
-			}
-			if idx >= 0 && idx < len(slots) {
-				slots = append(slots[:idx], slots[idx+1:]...)
-			}
-		case crewActionDone:
-			if len(slots) == 0 {
-				fmt.Fprintln(out, "Add at least one slot before finishing.")
-				continue
-			}
+		model, err := promptCrewModel(ctx, agentName)
+		if err != nil {
+			return settings.ReviewProfileConfig{}, err
+		}
+		slot := crewSlot{agent: agentName, model: model}
+		slots = append(slots, slot)
+		fmt.Fprintf(out, "Added %s  (%d in crew)\n\n", slotLabel(slot), len(slots))
+
+		more, err := promptAddAnotherSlot(ctx)
+		if err != nil {
+			return settings.ReviewProfileConfig{}, err
+		}
+		if !more {
 			return buildCrewProfile(ctx, profileName, slots), nil
 		}
 	}
@@ -253,44 +231,21 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 	return profile
 }
 
-// promptCrewAction shows the current crew and asks what to do next.
-func promptCrewAction(ctx context.Context, slots []crewSlot) (string, error) {
-	options := []huh.Option[string]{huh.NewOption("Add a slot", crewActionAdd)}
-	if len(slots) > 0 {
-		options = append(options,
-			huh.NewOption("Remove a slot", crewActionRemove),
-			huh.NewOption(fmt.Sprintf("Done — %d slot(s)", len(slots)), crewActionDone),
-		)
-	} else {
-		options = append(options, huh.NewOption("Done (no slots yet)", crewActionDone))
-	}
-	picked := crewActionDone
-	if len(slots) == 0 {
-		picked = crewActionAdd
-	}
+// promptAddAnotherSlot asks whether to add another worker. Defaults to Done, so
+// pressing enter finishes the crew.
+func promptAddAnotherSlot(ctx context.Context) (bool, error) {
+	add := false
 	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Review crew").
-			Description(crewSummary(slots)).
-			Options(options...).
-			Height(reviewPickerHeight(len(options))).
-			Value(&picked),
+		huh.NewConfirm().
+			Title("Add another worker?").
+			Affirmative("Add another").
+			Negative("Done").
+			Value(&add),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review crew action: %w", err)
+		return false, fmt.Errorf("review crew add-another: %w", err)
 	}
-	return picked, nil
-}
-
-func crewSummary(slots []crewSlot) string {
-	if len(slots) == 0 {
-		return "No slots yet. Add at least one worker (agent + model)."
-	}
-	lines := make([]string, len(slots))
-	for i, s := range slots {
-		lines[i] = fmt.Sprintf("%d. %s", i+1, slotLabel(s))
-	}
-	return strings.Join(lines, "\n")
+	return add, nil
 }
 
 func slotLabel(s crewSlot) string {
@@ -370,26 +325,6 @@ func promptCrewModel(ctx context.Context, agentName string) (string, error) {
 	default:
 		return picked, nil
 	}
-}
-
-// promptCrewRemove picks which slot to drop. Returns the slot index.
-func promptCrewRemove(ctx context.Context, slots []crewSlot) (int, error) {
-	options := make([]huh.Option[int], 0, len(slots))
-	for i, s := range slots {
-		options = append(options, huh.NewOption(fmt.Sprintf("%d. %s", i+1, slotLabel(s)), i))
-	}
-	picked := 0
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[int]().
-			Title("Remove which slot?").
-			Options(options...).
-			Height(reviewPickerHeight(len(options))).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return -1, fmt.Errorf("review crew remove: %w", err)
-	}
-	return picked, nil
 }
 
 func labelForSimpleAgent(name string) string {
