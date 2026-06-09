@@ -148,7 +148,9 @@ func RenderLoginHint(clusterHost string, coreURLs []string) string {
 // subject is a noun phrase like "cluster nyc.entire.io" or "API host
 // partial.to" so the same hint serves both the git-cluster and data-API
 // resolvers.
-func renderLoginHint(subject string, coreURLs []string) string {
+//
+// We'll display coreURLs (2nd param) to the user as a hint at a later stage.
+func renderLoginHint(subject string, _ []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "no auth context for %s.\n", subject)
 	fmt.Fprint(&b, "Log in with `entire login`, then re-run your command.")
