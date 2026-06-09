@@ -115,19 +115,8 @@ func RunReviewGuidedSetup(
 		profileName = pickedProfile
 	}
 
-	selected := launchable
-	if len(launchable) > 1 {
-		picked, err := promptForSimpleReviewAgents(ctx, launchable)
-		if err != nil {
-			return "", settings.ReviewProfileConfig{}, err
-		}
-		selected = picked
-	}
-	profile, err := defaultReviewProfileForInstalledAgents(ctx, profileName, agentNamesToTypes(selected), reviewerFor)
+	profile, err := promptForReviewCrew(ctx, out, profileName, launchable)
 	if err != nil {
-		return "", settings.ReviewProfileConfig{}, err
-	}
-	if err := promptForSimpleReviewModels(ctx, profileName, &profile, selected); err != nil {
 		return "", settings.ReviewProfileConfig{}, err
 	}
 	if len(profile.Agents) > 1 {
@@ -161,14 +150,6 @@ func launchableInstalledAgentNames(installed []types.AgentName, reviewerFor func
 	return names
 }
 
-func agentNamesToTypes(names []string) []types.AgentName {
-	out := make([]types.AgentName, len(names))
-	for i, name := range names {
-		out[i] = types.AgentName(name)
-	}
-	return out
-}
-
 func promptForSimpleReviewProfile(ctx context.Context) (string, error) {
 	picked := DefaultProfileName
 	form := newAccessibleForm(huh.NewGroup(
@@ -187,101 +168,106 @@ func promptForSimpleReviewProfile(ctx context.Context) (string, error) {
 	return picked, nil
 }
 
-func promptForSimpleReviewAgents(ctx context.Context, launchable []string) ([]string, error) {
-	options := make([]huh.Option[string], 0, len(launchable))
-	for _, name := range launchable {
-		options = append(options, huh.NewOption(labelForSimpleAgent(name), name).Selected(true))
-	}
-	picked := append([]string(nil), launchable...)
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewMultiSelect[string]().
-			Title("Which agents should review?").
-			Description("All are selected by default. Space toggles, enter confirms.").
-			Options(options...).
-			Height(len(options) + 2).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return nil, fmt.Errorf("review agent picker: %w", err)
-	}
-	if len(picked) == 0 {
-		return nil, ErrNoAgentsSelected
-	}
-	sort.Strings(picked)
-	return picked, nil
+// crewAgentChoice tracks one agent row in the "Build the review crew" picker:
+// the multiselect's bound selection of model values for that agent.
+type crewAgentChoice struct {
+	agentName string
+	selected  []string
 }
 
-func promptForSimpleReviewModels(ctx context.Context, profileName string, profile *settings.ReviewProfileConfig, selectedAgents []string) error {
-	customize := false
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title("Choose models?").
-			Description("Optional. Leave this off to use each agent's default model.").
-			Affirmative("Choose models").
-			Negative("Use defaults").
-			Value(&customize),
-	))
+// promptForReviewCrew renders one screen that combines worker-agent and model
+// selection. Each launchable agent gets a multiselect of its advertised models
+// (plus Default and Custom…); checking more than one model under an agent
+// creates that many workers — the same agent on different models. Each agent's
+// Default option is pre-checked, so pressing enter yields one worker per agent
+// on its default model.
+func promptForReviewCrew(ctx context.Context, out io.Writer, profileName string, launchable []string) (settings.ReviewProfileConfig, error) {
+	fmt.Fprintln(out, "Build the review crew")
+	fmt.Fprintln(out, "Each worker is an agent + model. Check more than one model to run the same")
+	fmt.Fprintln(out, "agent on different models. Space toggles, enter confirms.")
+	fmt.Fprintln(out)
+
+	choices := make([]*crewAgentChoice, 0, len(launchable))
+	fields := make([]huh.Field, 0, len(launchable))
+	for _, name := range launchable {
+		models := listAgentModelOptions(ctx, name)
+		options := make([]huh.Option[string], 0, len(models)+2)
+		options = append(options, huh.NewOption("Default (agent's own default model)", reviewModelDefaultSentinel).Selected(true))
+		for _, m := range models {
+			label := m.ID
+			if m.Note != "" {
+				label = m.ID + "  — " + m.Note
+			}
+			options = append(options, huh.NewOption(label, m.ID))
+		}
+		options = append(options, huh.NewOption("Custom… (type any value)", reviewModelCustomSentinel))
+
+		choice := &crewAgentChoice{agentName: name, selected: []string{reviewModelDefaultSentinel}}
+		choices = append(choices, choice)
+		fields = append(fields, huh.NewMultiSelect[string]().
+			Title(labelForSimpleAgent(name)).
+			Options(options...).
+			Height(reviewPickerHeight(len(options))).
+			Value(&choice.selected))
+	}
+
+	form := newAccessibleForm(huh.NewGroup(fields...))
 	if err := form.RunWithContext(ctx); err != nil {
-		return fmt.Errorf("review model setup: %w", err)
-	}
-	if !customize {
-		return nil
+		return settings.ReviewProfileConfig{}, fmt.Errorf("review crew picker: %w", err)
 	}
 
-	for _, workerName := range sortedProfileAgentNames(*profile) {
-		cfg := profile.Agents[workerName]
-		agentName := reviewAgentName(workerName, cfg)
-		model, err := promptForModelChoice(ctx, labelForSimpleAgent(agentName), agentName, strings.TrimSpace(cfg.Model))
-		if err != nil {
-			return fmt.Errorf("review model picker for %s: %w", workerName, err)
+	profile := settings.ReviewProfileConfig{
+		Task:   profileTask(profileName, settings.ReviewProfileConfig{}),
+		Agents: map[string]settings.ReviewConfig{},
+	}
+	for _, choice := range choices {
+		seen := make(map[string]bool, len(choice.selected))
+		for _, value := range choice.selected {
+			model, err := resolveCrewModel(ctx, choice.agentName, value)
+			if err != nil {
+				return settings.ReviewProfileConfig{}, err
+			}
+			if seen[model] {
+				continue
+			}
+			seen[model] = true
+			cfg := defaultReviewAgentConfig(profileName, choice.agentName)
+			// Set Agent explicitly so the worker is valid even when the agent
+			// has no default skills/prompt (e.g. Pi): IsZero is false once Agent
+			// is set, and reviewAgentName resolves the real agent for the worker.
+			cfg.Agent = choice.agentName
+			cfg.Model = model
+			profile.Agents[workerIDForAgentModel(choice.agentName, model, profile.Agents)] = cfg
 		}
-		cfg.Model = model
-		profile.Agents[workerName] = cfg
 	}
+	if len(profile.Agents) == 0 {
+		return settings.ReviewProfileConfig{}, ErrNoAgentsSelected
+	}
+	profile.Master = defaultReviewMaster(ctx, profile.Agents)
+	return profile, nil
+}
 
-	for {
-		addVariant := false
-		variantForm := newAccessibleForm(huh.NewGroup(
-			huh.NewConfirm().
-				Title("Add another model variant?").
-				Description("Use this to run the same agent more than once with different models.").
-				Affirmative("Add variant").
-				Negative("Done").
-				Value(&addVariant),
+// resolveCrewModel maps a crew multiselect value to a concrete model string:
+// Default → "" (agent default), Custom… → a follow-up text prompt, otherwise
+// the model id verbatim.
+func resolveCrewModel(ctx context.Context, agentName, value string) (string, error) {
+	switch value {
+	case reviewModelDefaultSentinel:
+		return "", nil
+	case reviewModelCustomSentinel:
+		model := ""
+		form := newAccessibleForm(huh.NewGroup(
+			huh.NewInput().
+				Title("Custom model for " + labelForSimpleAgent(agentName)).
+				Description("Any value accepted by the agent CLI; leave blank for the default.").
+				Value(&model),
 		))
-		if err := variantForm.RunWithContext(ctx); err != nil {
-			return fmt.Errorf("review model variant picker: %w", err)
+		if err := form.RunWithContext(ctx); err != nil {
+			return "", fmt.Errorf("custom model input: %w", err)
 		}
-		if !addVariant {
-			return nil
-		}
-		agentName := selectedAgents[0]
-		if len(selectedAgents) > 1 {
-			options := make([]huh.Option[string], 0, len(selectedAgents))
-			for _, name := range selectedAgents {
-				options = append(options, huh.NewOption(labelForSimpleAgent(name), name))
-			}
-			selectForm := newAccessibleForm(huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("Which agent should get another model?").
-					Options(options...).Value(&agentName),
-			))
-			if err := selectForm.RunWithContext(ctx); err != nil {
-				return fmt.Errorf("review model variant agent picker: %w", err)
-			}
-		}
-		model, err := promptForModelChoice(ctx, labelForSimpleAgent(agentName), agentName, "")
-		if err != nil {
-			return fmt.Errorf("review model variant value: %w", err)
-		}
-		if model == "" {
-			continue
-		}
-		cfg := defaultReviewAgentConfig(profileName, agentName)
-		cfg.Agent = agentName
-		cfg.Model = model
-		workerName := workerIDForAgentModel(agentName, model, profile.Agents)
-		profile.Agents[workerName] = cfg
+		return strings.TrimSpace(model), nil
+	default:
+		return value, nil
 	}
 }
 
@@ -297,68 +283,10 @@ func labelForSimpleAgent(name string) string {
 // It cannot collide with a real model id (which never contains spaces).
 const reviewModelCustomSentinel = "__custom__"
 
-// promptForModelChoice asks for a worker's model. When the agent advertises
-// models (agent.ModelLister) it shows a select of those plus "Default" and
-// "Custom…"; otherwise it falls back to a free-text input. current pre-selects
-// the existing value. Returns the chosen model ("" means the agent default).
-func promptForModelChoice(ctx context.Context, displayLabel, agentName, current string) (string, error) {
-	models := listAgentModelOptions(ctx, agentName)
-	if len(models) == 0 {
-		model := current
-		form := newAccessibleForm(huh.NewGroup(
-			huh.NewInput().
-				Title("Model for " + displayLabel).
-				Description("Optional; any value accepted by the agent CLI.").
-				Value(&model),
-		))
-		if err := form.RunWithContext(ctx); err != nil {
-			return "", fmt.Errorf("model input: %w", err)
-		}
-		return strings.TrimSpace(model), nil
-	}
-
-	options := make([]huh.Option[string], 0, len(models)+2)
-	options = append(options, huh.NewOption("Default (agent's own default model)", ""))
-	for _, m := range models {
-		label := m.ID
-		if m.Note != "" {
-			label = m.ID + "  — " + m.Note
-		}
-		options = append(options, huh.NewOption(label, m.ID))
-	}
-	options = append(options, huh.NewOption("Custom… (type any value)", reviewModelCustomSentinel))
-
-	picked := current
-	if current != "" && !modelInList(current, models) {
-		picked = reviewModelCustomSentinel
-	}
-	form := newAccessibleForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("Model for " + displayLabel).
-			Description("Pick a model, Default, or Custom… to type any value.").
-			Options(options...).
-			Height(reviewPickerHeight(len(options))).
-			Value(&picked),
-	))
-	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("model picker: %w", err)
-	}
-	if picked != reviewModelCustomSentinel {
-		return picked, nil
-	}
-
-	model := current
-	customForm := newAccessibleForm(huh.NewGroup(
-		huh.NewInput().
-			Title("Custom model for " + displayLabel).
-			Description("Any value accepted by the agent CLI.").
-			Value(&model),
-	))
-	if err := customForm.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("custom model input: %w", err)
-	}
-	return strings.TrimSpace(model), nil
-}
+// reviewModelDefaultSentinel is the crew multiselect value for "use the agent's
+// own default model". Resolves to an empty Model string; distinct from a real
+// model id and from reviewModelCustomSentinel.
+const reviewModelDefaultSentinel = "__default__"
 
 func listAgentModelOptions(ctx context.Context, agentName string) []agent.ModelInfo {
 	ag, err := agent.Get(types.AgentName(agentName))
