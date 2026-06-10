@@ -81,7 +81,10 @@ branch:<name>, repo:<owner/name>, and repo:* to search all accessible repos.`,
 
 			w := cmd.OutOrStdout()
 			isTerminal := interactive.IsTerminalWriter(w)
-			hasFilters := authorFlag != "" || dateFlag != "" || branchFlag != "" || len(repos) > 0
+			// Mirror search.Config.HasFilters (incl. --all-repos) so an empty
+			// query with only filters isn't rejected here. This guard runs
+			// before git/auth, so it can't call searchCfg.HasFilters() directly.
+			hasFilters := authorFlag != "" || dateFlag != "" || branchFlag != "" || len(repos) > 0 || allRepos
 
 			// Fast-fail: no query + non-interactive mode = error (before auth/git checks)
 			if query == "" && !hasFilters && (jsonOutput || !isTerminal || IsAccessibleMode()) {
