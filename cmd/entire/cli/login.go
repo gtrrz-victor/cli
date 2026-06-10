@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/entireio/auth-go/tokens"
@@ -17,6 +18,11 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/spf13/cobra"
+)
+
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
 )
 
 const fallbackDeviceAuthPollInterval = time.Second
@@ -64,16 +70,23 @@ type browserAuthFlow interface {
 }
 
 func newLoginCmd() *cobra.Command {
-	var insecureHTTPAuth bool
-	var useDevice bool
+	var (
+		insecureHTTPAuth bool
+		useDevice        bool
+		server           string
+	)
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Log in to Entire",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
+			loginServer, err := parseLoginServer(server)
+			if err != nil {
+				return fmt.Errorf("invalid --server: %w", err)
+			}
+			if err := requireSecureLoginServer(loginServer, insecureHTTPAuth); err != nil {
 				return err
 			}
-			client := auth.NewClient(nil, insecureHTTPAuth)
+			client := auth.NewClient(loginServer, nil, insecureHTTPAuth)
 			// Closure adapts the concrete *auth.BrowserAuthFlow result to the
 			// browserAuthFlow interface (func types are invariant, so the
 			// method value alone won't do). On error the flow is a typed nil,
@@ -89,9 +102,56 @@ func newLoginCmd() *cobra.Command {
 				})
 		},
 	}
+	cmd.Flags().StringVar(&server, "server", api.DefaultAuthBaseURL,
+		"login server to authenticate against (rarely needed; the default serves all standard accounts)")
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
 	cmd.Flags().BoolVar(&useDevice, "device", false, "Use the device-code flow (enter a code in your browser) instead of the default browser redirect")
 	return cmd
+}
+
+// parseLoginServer validates and canonicalises the --server value: an
+// http(s) origin with nothing but scheme and host. Userinfo, path, query,
+// and fragment are rejected rather than silently dropped — the value
+// becomes the OAuth issuer, the token-exchange target, and the keyring
+// key, so surprising rewrites would surface as confusing auth failures
+// much later. A lone trailing slash is tolerated (normalised away).
+func parseLoginServer(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("empty server URL")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse server URL: %w", err)
+	}
+	switch {
+	case u.Scheme != schemeHTTPS && u.Scheme != schemeHTTP:
+		return "", fmt.Errorf("scheme must be http or https, got %q", raw)
+	case u.Host == "":
+		return "", fmt.Errorf("missing host in %q", raw)
+	case u.User != nil:
+		return "", fmt.Errorf("userinfo not allowed in %q", raw)
+	case u.Path != "" && u.Path != "/":
+		return "", fmt.Errorf("path not allowed in %q (use the bare origin)", raw)
+	case u.RawQuery != "" || u.Fragment != "":
+		return "", fmt.Errorf("query/fragment not allowed in %q", raw)
+	}
+	return api.NormalizeOriginURL(raw), nil
+}
+
+// requireSecureLoginServer enforces TLS for the chosen login server.
+// Unlike requireSecureBaseURL it checks only the server being dialled —
+// login never touches the data API. --insecure-http-auth opts in to
+// http:// (and enables it process-wide for the token save path).
+func requireSecureLoginServer(server string, insecureHTTPAuth bool) error {
+	if insecureHTTPAuth {
+		auth.EnableInsecureHTTP()
+		return nil
+	}
+	if err := api.RequireSecureURL(server); err != nil {
+		return fmt.Errorf("login server check: %w", err)
+	}
+	return nil
 }
 
 func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient, openURL browserOpenFunc, canPrompt bool) error {
@@ -441,7 +501,7 @@ func waitForEnter(ctx context.Context) error {
 
 func openBrowser(ctx context.Context, browserURL string) error {
 	u, err := url.Parse(browserURL)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || (u.Scheme != schemeHTTPS && u.Scheme != schemeHTTP) {
 		return fmt.Errorf("refusing to open non-HTTP URL: %s", browserURL)
 	}
 
