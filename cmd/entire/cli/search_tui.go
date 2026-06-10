@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ const (
 type searchResultsMsg struct {
 	results []search.Result
 	total   int
+	counts  *search.TypeCounts
 	err     error
 }
 
@@ -55,6 +57,8 @@ type searchStyles struct {
 	helpSep      lipgloss.Style // dim separator dots in footer
 	detailTitle  lipgloss.Style // colored title and section headers (orange, bold)
 	detailBorder lipgloss.Style // border style for detail card
+	tabActive    lipgloss.Style // active type tab
+	tabInactive  lipgloss.Style // inactive type tab
 }
 
 // Search palette mirrors activity's dark-mode CSS variables (Tailwind 400-level).
@@ -81,6 +85,8 @@ func newSearchStyles(ss statusStyles) searchStyles {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(searchAccentPurple)).
 		Padding(1, 2)
+	s.tabActive = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(searchAccentOrange))
+	s.tabInactive = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	return s
 }
 
@@ -92,6 +98,16 @@ func (s searchStyles) helpItem(keyLabel, desc string) string {
 }
 
 const resultsPerPage = 25
+
+// typeFilter represents the active type tab in the TUI.
+type typeFilter string
+
+const (
+	typeFilterAll         typeFilter = ""
+	typeFilterCheckpoints typeFilter = typeFilter(search.TypeCheckpoint)
+	typeFilterCommits     typeFilter = typeFilter(search.TypeCommit)
+	typeFilterSessions    typeFilter = typeFilter(search.TypeSession)
+)
 
 // searchModel is the bubbletea model for interactive search results.
 type searchModel struct {
@@ -109,8 +125,10 @@ type searchModel struct {
 	searchCfg    search.Config
 	apiPage      int // 1-based last-fetched API page
 	styles       searchStyles
-	detailVP     viewport.Model // full-screen detail view
-	browseVP     viewport.Model // scrollable browse view
+	detailVP     viewport.Model     // full-screen detail view
+	browseVP     viewport.Model     // scrollable browse view
+	filterType   typeFilter         // active type tab filter
+	counts       *search.TypeCounts // per-type counts from API
 
 	// darkBg is captured once before bubbletea takes over the terminal so the
 	// snippet renderer never re-queries the terminal via OSC during the Update
@@ -118,25 +136,46 @@ type searchModel struct {
 	darkBg bool
 }
 
+// filteredResults returns results matching the active type filter.
+func (m searchModel) filteredResults() []search.Result {
+	if m.filterType == typeFilterAll {
+		return m.results
+	}
+	var out []search.Result
+	for _, r := range m.results {
+		if typeFilter(r.Type) == m.filterType {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // pageResults returns the slice of results for the current page.
 func (m searchModel) pageResults() []search.Result {
+	filtered := m.filteredResults()
 	start := m.page * resultsPerPage
-	if start >= len(m.results) {
+	if start >= len(filtered) {
 		return nil
 	}
 	end := start + resultsPerPage
-	if end > len(m.results) {
-		end = len(m.results)
+	if end > len(filtered) {
+		end = len(filtered)
 	}
-	return m.results[start:end]
+	return filtered[start:end]
 }
 
-// totalPages returns the number of pages based on the API's total result count.
+// totalPages returns the number of pages based on the filtered result count.
 func (m searchModel) totalPages() int {
-	if m.total == 0 {
+	n := len(m.filteredResults())
+	// When showing all types, use the API total if it's larger than loaded results
+	// (we may not have fetched everything yet).
+	if m.filterType == typeFilterAll && m.total > n {
+		n = m.total
+	}
+	if n == 0 {
 		return 1
 	}
-	return (m.total + resultsPerPage - 1) / resultsPerPage
+	return (n + resultsPerPage - 1) / resultsPerPage
 }
 
 // selectedResult returns the currently selected result, accounting for pagination.
@@ -146,6 +185,27 @@ func (m searchModel) selectedResult() *search.Result {
 		return &pageResults[m.cursor]
 	}
 	return nil
+}
+
+// computeTypeCounts calculates per-type counts from the loaded results,
+// falling back to API-provided counts when available.
+func (m searchModel) computeTypeCounts() (checkpoints, commits, sessions int) {
+	if m.counts != nil {
+		return m.counts.Checkpoints, m.counts.Commits, m.counts.Sessions
+	}
+	for _, r := range m.results {
+		switch typeFilter(r.Type) {
+		case typeFilterCheckpoints:
+			checkpoints++
+		case typeFilterCommits:
+			commits++
+		case typeFilterSessions:
+			sessions++
+		case typeFilterAll:
+			// not a valid result type; skip
+		}
+	}
+	return
 }
 
 func newSearchModel(results []search.Result, query string, total int, cfg search.Config, ss statusStyles) searchModel {
@@ -210,6 +270,7 @@ func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:cyclop 
 		m.searchErr = ""
 		m.results = msg.results
 		m.total = msg.total
+		m.counts = msg.counts
 		m.apiPage = 1
 		m.cursor = 0
 		m.page = 0
@@ -302,6 +363,38 @@ func (m searchModel) updateSearchMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m searchModel) updateBrowseMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Type tab keys (1/2/3)
+	switch msg.String() {
+	case "1":
+		m.filterType = typeFilterCheckpoints
+		m.cursor = 0
+		m.page = 0
+		m.browseVP.GotoTop()
+		m = m.refreshBrowseContent()
+		return m, nil
+	case "2":
+		m.filterType = typeFilterSessions
+		m.cursor = 0
+		m.page = 0
+		m.browseVP.GotoTop()
+		m = m.refreshBrowseContent()
+		return m, nil
+	case "3":
+		m.filterType = typeFilterCommits
+		m.cursor = 0
+		m.page = 0
+		m.browseVP.GotoTop()
+		m = m.refreshBrowseContent()
+		return m, nil
+	case "0":
+		m.filterType = typeFilterAll
+		m.cursor = 0
+		m.page = 0
+		m.browseVP.GotoTop()
+		m = m.refreshBrowseContent()
+		return m, nil
+	}
+
 	pageLen := len(m.pageResults())
 	switch {
 	case key.Matches(msg, keys.Quit), key.Matches(msg, keys.Back), msg.String() == "h":
@@ -322,8 +415,9 @@ func (m searchModel) updateBrowseMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m = m.refreshBrowseContent()
 		m.browseVP.GotoTop()
 	case key.Matches(msg, keys.End):
-		if len(m.results) > 0 {
-			lastLoaded := len(m.results) - 1
+		filtered := m.filteredResults()
+		if len(filtered) > 0 {
+			lastLoaded := len(filtered) - 1
 			m.page = min(lastLoaded/resultsPerPage, m.totalPages()-1)
 			if pageLen := len(m.pageResults()); pageLen > 0 {
 				m.cursor = pageLen - 1
@@ -338,7 +432,7 @@ func (m searchModel) updateBrowseMode(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.browseVP.GotoTop()
 			// Fetch next API page if we've scrolled past loaded results
 			start := m.page * resultsPerPage
-			if start >= len(m.results) && !m.fetchingMore {
+			if start >= len(m.filteredResults()) && !m.fetchingMore {
 				m.fetchingMore = true
 				m = m.refreshBrowseContent()
 				return m, fetchMoreResults(m.searchCfg, m.apiPage+1)
@@ -396,7 +490,7 @@ func performSearch(cfg search.Config) tea.Cmd {
 		if err != nil {
 			return searchResultsMsg{err: err}
 		}
-		return searchResultsMsg{results: resp.Results, total: resp.Total}
+		return searchResultsMsg{results: resp.Results, total: resp.Total, counts: resp.Counts}
 	}
 }
 
@@ -454,6 +548,29 @@ func (m searchModel) viewSearchMode() string {
 	return b.String()
 }
 
+// viewTypeTabs renders the type filter tabs with counts.
+func (m searchModel) viewTypeTabs() string {
+	cpCount, cmCount, ssCount := m.computeTypeCounts()
+	allCount := cpCount + cmCount + ssCount
+
+	renderTab := func(label string, filter typeFilter, count int, keyHint string) string {
+		text := fmt.Sprintf("[%s] %s %d", keyHint, label, count)
+		if m.filterType == filter {
+			return m.styles.render(m.styles.tabActive, text)
+		}
+		return m.styles.render(m.styles.tabInactive, text)
+	}
+
+	tabs := []string{
+		renderTab("All", typeFilterAll, allCount, "0"),
+		renderTab("Checkpoints", typeFilterCheckpoints, cpCount, "1"),
+		renderTab("Sessions", typeFilterSessions, ssCount, "2"),
+		renderTab("Commits", typeFilterCommits, cmCount, "3"),
+	}
+
+	return strings.Join(tabs, "  ")
+}
+
 // renderBrowseContent builds the scrollable content for browse mode (everything except the footer).
 func (m searchModel) renderBrowseContent() string {
 	var b strings.Builder
@@ -479,11 +596,20 @@ func (m searchModel) renderBrowseContent() string {
 		return b.String()
 	}
 
+	// Type tabs
+	b.WriteString(pad + m.viewTypeTabs())
+	b.WriteString("\n\n")
+
 	// Section: RESULTS
 	b.WriteString(pad + m.styles.render(m.styles.sectionTitle, "RESULTS"))
 	b.WriteString("\n\n")
 
 	// Table (current page only)
+	filtered := m.filteredResults()
+	if len(filtered) == 0 {
+		b.WriteString(pad + m.styles.render(m.styles.dim, "No results for this type."))
+		return b.String()
+	}
 	if m.fetchingMore && m.pageResults() == nil {
 		b.WriteString(pad + m.styles.render(m.styles.dim, "Loading more results...") + "\n")
 	} else {
@@ -513,12 +639,13 @@ func (m searchModel) viewTable() string {
 	var b strings.Builder
 
 	// Column headers
-	hdr := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s",
+	hdr := fmt.Sprintf("%-*s %-*s %-*s %-*s %-*s %-*s %-*s",
+		cols.typeCol, "Type",
 		cols.age, "Age",
 		cols.id, "ID",
 		cols.branch, "Branch",
 		cols.repo, "Repo",
-		cols.prompt, "Prompt",
+		cols.prompt, "Title",
 		cols.author, "Author",
 	)
 	b.WriteString(pad + m.styles.render(m.styles.dim, hdr) + "\n")
@@ -540,29 +667,63 @@ func (m searchModel) viewTable() string {
 	return b.String()
 }
 
-func (m searchModel) viewRow(r search.Result, cols columnLayout) string {
-	age := fmt.Sprintf("%-*s", cols.age, stringutil.TruncateRunes(formatSearchAge(r.Data.CreatedAt), cols.age, ""))
-	id := fmt.Sprintf("%-*s", cols.id, stringutil.TruncateRunes(r.Data.ID, cols.id-1, "…"))
-	branch := fmt.Sprintf("%-*s", cols.branch, stringutil.TruncateRunes(r.Data.Branch, cols.branch-1, "…"))
-	repo := fmt.Sprintf("%-*s", cols.repo, stringutil.TruncateRunes(
-		r.Data.Org+"/"+r.Data.Repo, cols.repo-1, "…",
-	))
-	prompt := fmt.Sprintf("%-*s", cols.prompt, stringutil.TruncateRunes(
-		stringutil.CollapseWhitespace(r.Data.Prompt), cols.prompt-1, "…",
-	))
-	authorName := derefStr(r.Data.AuthorUsername, r.Data.Author)
-	author := fmt.Sprintf("%-*s", cols.author, stringutil.TruncateRunes(authorName, cols.author-1, "…"))
-
-	return fmt.Sprintf("%s %s %s %s %s %s", age, id, branch, repo, prompt, author)
+// typeLabel returns a short type badge for display in the table.
+func typeLabel(resultType string) string {
+	switch resultType {
+	case search.TypeCheckpoint:
+		return "CP"
+	case search.TypeCommit:
+		return "CM"
+	case search.TypeSession:
+		return "SS"
+	default:
+		return strings.ToUpper(resultType[:min(2, len(resultType))])
+	}
 }
 
-// renderDetailContent builds the text content for a checkpoint detail (no border/card chrome).
+func (m searchModel) viewRow(r search.Result, cols columnLayout) string {
+	typeBadge := fmt.Sprintf("%-*s", cols.typeCol, typeLabel(r.Type))
+	age := fmt.Sprintf("%-*s", cols.age, stringutil.TruncateRunes(formatSearchAge(r.ResultCreatedAt()), cols.age, ""))
+	id := fmt.Sprintf("%-*s", cols.id, stringutil.TruncateRunes(formatResultID(r), cols.id-1, "…"))
+	branch := fmt.Sprintf("%-*s", cols.branch, stringutil.TruncateRunes(r.ResultBranch(), cols.branch-1, "…"))
+	repo := fmt.Sprintf("%-*s", cols.repo, stringutil.TruncateRunes(
+		r.ResultOrg()+"/"+r.ResultRepo(), cols.repo-1, "…",
+	))
+	title := fmt.Sprintf("%-*s", cols.prompt, stringutil.TruncateRunes(
+		stringutil.CollapseWhitespace(r.ResultTitle()), cols.prompt-1, "…",
+	))
+	author := fmt.Sprintf("%-*s", cols.author, stringutil.TruncateRunes(r.ResultAuthor(), cols.author-1, "…"))
+
+	return fmt.Sprintf("%s %s %s %s %s %s %s", typeBadge, age, id, branch, repo, title, author)
+}
+
+// formatResultID returns a display-friendly ID for a result.
+func formatResultID(r search.Result) string {
+	if r.Type == search.TypeCommit && r.Commit != nil && len(r.Commit.CommitSHA) > 7 {
+		return r.Commit.CommitSHA[:7]
+	}
+	return r.ResultID()
+}
+
+// renderDetailContent builds the text content for a result detail (no border/card chrome).
 func (m searchModel) renderDetailContent(r search.Result, contentWidth int, showSections bool) string {
+	switch r.Type {
+	case search.TypeCheckpoint:
+		return m.renderCheckpointDetail(r, contentWidth, showSections)
+	case search.TypeCommit:
+		return m.renderCommitDetail(r, contentWidth, showSections)
+	case search.TypeSession:
+		return m.renderSessionDetail(r, contentWidth, showSections)
+	default:
+		return m.renderCheckpointDetail(r, contentWidth, showSections)
+	}
+}
+
+func (m searchModel) renderCheckpointDetail(r search.Result, contentWidth int, showSections bool) string {
 	const labelWidth = 12
-	// Available width for field values: content width minus label minus space.
 	valueWidth := contentWidth - labelWidth - 1
 	if valueWidth < 20 {
-		valueWidth = 0 // disable wrapping on very narrow terminals
+		valueWidth = 0
 	}
 
 	var content strings.Builder
@@ -578,13 +739,12 @@ func (m searchModel) renderDetailContent(r search.Result, contentWidth int, show
 		content.WriteString(formatLabel(label) + " " + value + "\n")
 	}
 
-	// writeWrappedField word-wraps a long value, indenting continuation lines to align with the value column.
 	writeWrappedField := func(label, value string) {
 		if valueWidth == 0 || len(value) <= valueWidth {
 			writeField(label, value)
 			return
 		}
-		indent := strings.Repeat(" ", labelWidth+1) // align with value column
+		indent := strings.Repeat(" ", labelWidth+1)
 		wrapped := wrapText(value, valueWidth)
 		lines := strings.Split(wrapped, "\n")
 		content.WriteString(formatLabel(label) + " " + lines[0] + "\n")
@@ -601,10 +761,15 @@ func (m searchModel) renderDetailContent(r search.Result, contentWidth int, show
 		}
 	}
 
+	cp := r.Checkpoint
+	if cp == nil {
+		return content.String()
+	}
+
 	// ── OVERVIEW ──
 	writeSection("OVERVIEW")
-	writeField("ID", r.Data.ID)
-	writeWrappedField("Prompt", stringutil.CollapseWhitespace(r.Data.Prompt))
+	writeField("ID", cp.ID)
+	writeWrappedField("Prompt", stringutil.CollapseWhitespace(cp.Prompt))
 	matchType := r.Meta.MatchType
 	if r.Meta.Score > 0 {
 		matchType += " " + m.styles.render(m.styles.dim, fmt.Sprintf("(score: %.3f)", r.Meta.Score))
@@ -613,15 +778,15 @@ func (m searchModel) renderDetailContent(r search.Result, contentWidth int, show
 
 	// ── SOURCE ──
 	writeSection("SOURCE")
-	writeWrappedField("Commit", formatCommit(r.Data.CommitSHA, r.Data.CommitMessage))
-	writeField("Branch", r.Data.Branch)
-	writeField("Repo", r.Data.Org+"/"+r.Data.Repo)
-	authorStr := r.Data.Author
-	if r.Data.AuthorUsername != nil && *r.Data.AuthorUsername != "" {
-		authorStr = *r.Data.AuthorUsername + " " + m.styles.render(m.styles.dim, "("+r.Data.Author+")")
+	writeWrappedField("Commit", formatCommit(cp.CommitSHA, cp.CommitMessage))
+	writeField("Branch", cp.Branch)
+	writeField("Repo", cp.Org+"/"+cp.Repo)
+	authorStr := cp.Author
+	if cp.AuthorUsername != nil && *cp.AuthorUsername != "" {
+		authorStr = *cp.AuthorUsername + " " + m.styles.render(m.styles.dim, "("+cp.Author+")")
 	}
 	writeField("Author", authorStr)
-	createdStr := formatDetailCreatedAt(r.Data.CreatedAt, m.styles)
+	createdStr := formatDetailCreatedAt(cp.CreatedAt, m.styles)
 	writeField("Created", createdStr)
 
 	// ── SNIPPET ──
@@ -638,17 +803,181 @@ func (m searchModel) renderDetailContent(r search.Result, contentWidth int, show
 	}
 
 	// ── FILES ──
-	if len(r.Data.FilesTouched) > 0 {
+	if len(cp.FilesTouched) > 0 {
 		content.WriteString("\n")
 		if showSections {
 			content.WriteString(m.styles.render(m.styles.detailTitle, "FILES") + "\n")
 		} else {
 			content.WriteString(m.styles.render(m.styles.label, "Files:") + "\n")
 		}
-		for _, f := range r.Data.FilesTouched {
+		for _, f := range cp.FilesTouched {
 			content.WriteString("  " + f + "\n")
 		}
 	}
+
+	return strings.TrimRight(content.String(), "\n")
+}
+
+func (m searchModel) renderCommitDetail(r search.Result, contentWidth int, showSections bool) string {
+	const labelWidth = 12
+	valueWidth := contentWidth - labelWidth - 1
+	if valueWidth < 20 {
+		valueWidth = 0
+	}
+
+	var content strings.Builder
+
+	content.WriteString(m.styles.render(m.styles.detailTitle, "Commit Detail"))
+	content.WriteString("\n")
+
+	formatLabel := func(label string) string {
+		return m.styles.render(m.styles.label, fmt.Sprintf("%-*s", labelWidth, label+":"))
+	}
+
+	writeField := func(label, value string) {
+		content.WriteString(formatLabel(label) + " " + value + "\n")
+	}
+
+	writeWrappedField := func(label, value string) {
+		if valueWidth == 0 || len(value) <= valueWidth {
+			writeField(label, value)
+			return
+		}
+		indent := strings.Repeat(" ", labelWidth+1)
+		wrapped := wrapText(value, valueWidth)
+		lines := strings.Split(wrapped, "\n")
+		content.WriteString(formatLabel(label) + " " + lines[0] + "\n")
+		for _, line := range lines[1:] {
+			content.WriteString(indent + line + "\n")
+		}
+	}
+
+	writeSection := func(title string) {
+		if showSections {
+			content.WriteString("\n" + m.styles.render(m.styles.detailTitle, title) + "\n")
+		} else {
+			content.WriteString("\n")
+		}
+	}
+
+	cm := r.Commit
+	if cm == nil {
+		return content.String()
+	}
+
+	writeSection("OVERVIEW")
+	sha := cm.CommitSHA
+	if len(sha) > 7 {
+		sha = sha[:7]
+	}
+	writeField("SHA", sha)
+	writeWrappedField("Subject", cm.CommitSubject)
+	if cm.CommitMessage != cm.CommitSubject {
+		writeWrappedField("Message", stringutil.CollapseWhitespace(cm.CommitMessage))
+	}
+	matchType := r.Meta.MatchType
+	if r.Meta.Score > 0 {
+		matchType += " " + m.styles.render(m.styles.dim, fmt.Sprintf("(score: %.3f)", r.Meta.Score))
+	}
+	writeField("Match", matchType)
+
+	writeSection("SOURCE")
+	writeField("Branch", cm.Branch)
+	writeField("Repo", cm.Org+"/"+cm.Repo)
+	authorStr := cm.Author
+	if cm.AuthorUsername != nil && *cm.AuthorUsername != "" {
+		authorStr = *cm.AuthorUsername + " " + m.styles.render(m.styles.dim, "("+cm.Author+")")
+	}
+	writeField("Author", authorStr)
+	writeField("Created", formatDetailCreatedAt(cm.CreatedAt, m.styles))
+
+	writeSection("STATS")
+	writeField("Additions", fmt.Sprintf("+%d", cm.Additions))
+	writeField("Deletions", fmt.Sprintf("-%d", cm.Deletions))
+	writeField("Files", fmt.Sprintf("%d changed", cm.FilesChanged))
+
+	if cm.HTMLUrl != nil && *cm.HTMLUrl != "" {
+		writeField("URL", *cm.HTMLUrl)
+	}
+
+	return strings.TrimRight(content.String(), "\n")
+}
+
+func (m searchModel) renderSessionDetail(r search.Result, contentWidth int, showSections bool) string {
+	const labelWidth = 12
+	valueWidth := contentWidth - labelWidth - 1
+	if valueWidth < 20 {
+		valueWidth = 0
+	}
+
+	var content strings.Builder
+
+	content.WriteString(m.styles.render(m.styles.detailTitle, "Session Detail"))
+	content.WriteString("\n")
+
+	formatLabel := func(label string) string {
+		return m.styles.render(m.styles.label, fmt.Sprintf("%-*s", labelWidth, label+":"))
+	}
+
+	writeField := func(label, value string) {
+		content.WriteString(formatLabel(label) + " " + value + "\n")
+	}
+
+	writeWrappedField := func(label, value string) {
+		if valueWidth == 0 || len(value) <= valueWidth {
+			writeField(label, value)
+			return
+		}
+		indent := strings.Repeat(" ", labelWidth+1)
+		wrapped := wrapText(value, valueWidth)
+		lines := strings.Split(wrapped, "\n")
+		content.WriteString(formatLabel(label) + " " + lines[0] + "\n")
+		for _, line := range lines[1:] {
+			content.WriteString(indent + line + "\n")
+		}
+	}
+
+	writeSection := func(title string) {
+		if showSections {
+			content.WriteString("\n" + m.styles.render(m.styles.detailTitle, title) + "\n")
+		} else {
+			content.WriteString("\n")
+		}
+	}
+
+	ss := r.Session
+	if ss == nil {
+		return content.String()
+	}
+
+	writeSection("OVERVIEW")
+	writeField("Session ID", ss.SessionID)
+	writeWrappedField("Name", ss.DisplayName)
+	if ss.Prompt != nil && *ss.Prompt != "" {
+		writeWrappedField("Prompt", stringutil.CollapseWhitespace(*ss.Prompt))
+	}
+	if ss.Agent != nil && *ss.Agent != "" {
+		writeField("Agent", *ss.Agent)
+	}
+	if ss.Model != nil && *ss.Model != "" {
+		writeField("Model", *ss.Model)
+	}
+	writeField("Steps", strconv.Itoa(ss.StepCount))
+	matchType := r.Meta.MatchType
+	if r.Meta.Score > 0 {
+		matchType += " " + m.styles.render(m.styles.dim, fmt.Sprintf("(score: %.3f)", r.Meta.Score))
+	}
+	writeField("Match", matchType)
+
+	writeSection("SOURCE")
+	writeField("Repo", ss.Org+"/"+ss.Repo)
+	if ss.Branch != nil && *ss.Branch != "" {
+		writeField("Branch", *ss.Branch)
+	}
+	if ss.AuthorUsername != nil && *ss.AuthorUsername != "" {
+		writeField("Author", *ss.AuthorUsername)
+	}
+	writeField("Created", formatDetailCreatedAt(ss.CreatedAt, m.styles))
 
 	return strings.TrimRight(content.String(), "\n")
 }
@@ -735,11 +1064,13 @@ func (m searchModel) viewHelp() string {
 	if pages > 1 {
 		left += dot + m.styles.helpItem("n/p", "page")
 	}
-	left += dot + m.styles.helpItem(keys.Quit.Help().Key, keys.Quit.Help().Desc)
+	left += dot + m.styles.helpItem("0-3", "type") + dot +
+		m.styles.helpItem(keys.Quit.Help().Key, keys.Quit.Help().Desc)
 
-	right := fmt.Sprintf("%d results", m.total)
+	filtered := m.filteredResults()
+	right := fmt.Sprintf("%d results", len(filtered))
 	if pages > 1 {
-		right = fmt.Sprintf("page %d/%d · %d results", m.page+1, pages, m.total)
+		right = fmt.Sprintf("page %d/%d · %d results", m.page+1, pages, len(filtered))
 	}
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -805,25 +1136,27 @@ func wrapParagraph(b *strings.Builder, text string, width int) {
 
 // columnLayout holds computed column widths for the search results table.
 type columnLayout struct {
-	age    int
-	id     int
-	branch int
-	repo   int
-	prompt int
-	author int
+	typeCol int
+	age     int
+	id      int
+	branch  int
+	repo    int
+	prompt  int
+	author  int
 }
 
 // computeColumns calculates column widths from terminal width.
 func computeColumns(width int) columnLayout {
 	const (
+		typeWidth   = 5
 		ageWidth    = 10
 		idWidth     = 12
 		repoMin     = 10
 		authorWidth = 14
-		gaps        = 5 // spaces between columns
+		gaps        = 6 // spaces between columns (one more than before for type col)
 	)
 
-	remaining := width - ageWidth - idWidth - authorWidth - gaps
+	remaining := width - typeWidth - ageWidth - idWidth - authorWidth - gaps
 	if remaining < 20 {
 		remaining = 20
 	}
@@ -838,12 +1171,13 @@ func computeColumns(width int) columnLayout {
 	}
 
 	return columnLayout{
-		age:    ageWidth,
-		id:     idWidth,
-		branch: branchWidth,
-		repo:   repoWidth,
-		prompt: promptWidth,
-		author: authorWidth,
+		typeCol: typeWidth,
+		age:     ageWidth,
+		id:      idWidth,
+		branch:  branchWidth,
+		repo:    repoWidth,
+		prompt:  promptWidth,
+		author:  authorWidth,
 	}
 }
 
@@ -972,35 +1306,38 @@ func snippetMarkdownStyles(dark bool) ansi.StyleConfig {
 
 // renderSearchStatic writes a non-interactive table for accessible mode.
 func renderSearchStatic(w io.Writer, results []search.Result, query string, total int, styles statusStyles) {
-	fmt.Fprintf(w, "Found %d checkpoints matching %q\n\n", total, query)
+	fmt.Fprintf(w, "Found %d results matching %q\n\n", total, query)
 
 	cols := computeColumns(styles.width)
 
-	fmt.Fprintf(w, "%-*s %-*s %-*s %-*s %-*s %-*s\n",
+	fmt.Fprintf(w, "%-*s %-*s %-*s %-*s %-*s %-*s %-*s\n",
+		cols.typeCol, "TYPE",
 		cols.age, "AGE",
 		cols.id, "ID",
 		cols.branch, "BRANCH",
 		cols.repo, "REPO",
-		cols.prompt, "PROMPT",
+		cols.prompt, "TITLE",
 		cols.author, "AUTHOR",
 	)
 
 	for _, r := range results {
-		age := formatSearchAge(r.Data.CreatedAt)
-		id := stringutil.TruncateRunes(r.Data.ID, cols.id, "")
-		branch := stringutil.TruncateRunes(r.Data.Branch, cols.branch, "...")
-		repo := stringutil.TruncateRunes(r.Data.Org+"/"+r.Data.Repo, cols.repo, "...")
-		prompt := stringutil.TruncateRunes(
-			stringutil.CollapseWhitespace(r.Data.Prompt), cols.prompt, "...",
+		typeBadge := typeLabel(r.Type)
+		age := formatSearchAge(r.ResultCreatedAt())
+		id := stringutil.TruncateRunes(formatResultID(r), cols.id, "")
+		branch := stringutil.TruncateRunes(r.ResultBranch(), cols.branch, "...")
+		repo := stringutil.TruncateRunes(r.ResultOrg()+"/"+r.ResultRepo(), cols.repo, "...")
+		title := stringutil.TruncateRunes(
+			stringutil.CollapseWhitespace(r.ResultTitle()), cols.prompt, "...",
 		)
-		author := stringutil.TruncateRunes(derefStr(r.Data.AuthorUsername, r.Data.Author), cols.author, "...")
+		author := stringutil.TruncateRunes(r.ResultAuthor(), cols.author, "...")
 
-		fmt.Fprintf(w, "%-*s %-*s %-*s %-*s %-*s %-*s\n",
+		fmt.Fprintf(w, "%-*s %-*s %-*s %-*s %-*s %-*s %-*s\n",
+			cols.typeCol, typeBadge,
 			cols.age, age,
 			cols.id, id,
 			cols.branch, branch,
 			cols.repo, repo,
-			cols.prompt, prompt,
+			cols.prompt, title,
 			cols.author, author,
 		)
 	}

@@ -23,7 +23,7 @@ func testResults() []search.Result {
 	return []search.Result{
 		{
 			Type: "checkpoint",
-			Data: search.CheckpointResult{
+			Checkpoint: &search.CheckpointResult{
 				ID:             "a3b2c4d5e6f7",
 				Prompt:         "add auth middleware to protect API routes",
 				CommitSHA:      &sha1,
@@ -44,7 +44,7 @@ func testResults() []search.Result {
 		},
 		{
 			Type: "checkpoint",
-			Data: search.CheckpointResult{
+			Checkpoint: &search.CheckpointResult{
 				ID:            "d5e6f789ab01",
 				Prompt:        "fix auth token refresh",
 				CommitSHA:     &sha2,
@@ -64,10 +64,55 @@ func testResults() []search.Result {
 	}
 }
 
+func testMultiTypeResults() []search.Result {
+	results := testResults()
+	results = append(results,
+		search.Result{
+			Type: "commit",
+			Commit: &search.CommitResult{
+				ID:            "cm1",
+				CommitSHA:     "abc1234567890",
+				CommitMessage: "fix: auth token validation",
+				CommitSubject: "fix: auth token validation",
+				Branch:        "main",
+				Org:           "entirehq",
+				Repo:          "entire.io",
+				Author:        "carol",
+				CreatedAt:     "2026-03-22T09:00:00Z",
+				Additions:     15,
+				Deletions:     3,
+				FilesChanged:  2,
+			},
+			Meta: search.Meta{MatchType: "keyword", Score: 0.4},
+		},
+		search.Result{
+			Type: "session",
+			Session: &search.SessionResult{
+				SessionID:   "ss1",
+				DisplayName: "Debug auth flow",
+				Org:         "entirehq",
+				Repo:        "entire.io",
+				CreatedAt:   "2026-03-23T11:00:00Z",
+				StepCount:   8,
+			},
+			Meta: search.Meta{MatchType: "semantic", Score: 0.3},
+		},
+	)
+	return results
+}
+
 func testModel() searchModel {
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 20}
 	m := newSearchModel(testResults(), "auth", 2, cfg, ss)
+	return initTestViewport(m)
+}
+
+func testMultiTypeModel() searchModel {
+	ss := statusStyles{colorEnabled: false, width: 120}
+	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 20}
+	results := testMultiTypeResults()
+	m := newSearchModel(results, "auth", len(results), cfg, ss)
 	return initTestViewport(m)
 }
 
@@ -139,7 +184,7 @@ func TestSearchModel_TopBottomNavigation(t *testing.T) {
 
 	results := make([]search.Result, 30)
 	for i := range results {
-		results[i] = search.Result{Data: search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 
 	tests := []struct {
@@ -312,13 +357,18 @@ func TestSearchModel_View(t *testing.T) {
 	}
 
 	// Column headers
-	for _, col := range []string{"Age", "ID", "Branch", "Repo", "Prompt", "Author"} {
+	for _, col := range []string{"Type", "Age", "ID", "Branch", "Repo", "Title", "Author"} {
 		if !strings.Contains(view, col) {
 			t.Errorf("view missing column header %q", col)
 		}
 	}
 
-	// Table data
+	// Table data - type badge
+	if !strings.Contains(view, "CP") {
+		t.Error("view missing checkpoint type badge")
+	}
+
+	// Table data - ID
 	if !strings.Contains(view, "a3b2c4d5e6f") {
 		t.Error("view missing first result ID")
 	}
@@ -352,6 +402,157 @@ func TestSearchModel_View(t *testing.T) {
 	}
 }
 
+func TestSearchModel_ViewMultiTypes(t *testing.T) {
+	t.Parallel()
+	m := testMultiTypeModel()
+	view := m.View().Content
+
+	// Type badges
+	if !strings.Contains(view, "CP") {
+		t.Error("view missing CP type badge")
+	}
+	if !strings.Contains(view, "CM") {
+		t.Error("view missing CM type badge")
+	}
+	if !strings.Contains(view, "SS") {
+		t.Error("view missing SS type badge")
+	}
+
+	// Type tabs
+	if !strings.Contains(view, "Checkpoints") {
+		t.Error("view missing Checkpoints tab")
+	}
+	if !strings.Contains(view, "Sessions") {
+		t.Error("view missing Sessions tab")
+	}
+	if !strings.Contains(view, "Commits") {
+		t.Error("view missing Commits tab")
+	}
+}
+
+func TestSearchModel_TypeFilterKeys(t *testing.T) {
+	t.Parallel()
+	m := testMultiTypeModel()
+
+	// Press 1 → filter to checkpoints
+	m = updateModel(t, m, tea.KeyPressMsg{Code: '1', Text: "1"})
+	if m.filterType != typeFilterCheckpoints {
+		t.Errorf("after 1: filterType = %q, want %q", m.filterType, typeFilterCheckpoints)
+	}
+	if len(m.filteredResults()) != 2 {
+		t.Errorf("checkpoint filter: got %d results, want 2", len(m.filteredResults()))
+	}
+
+	// Press 2 → filter to sessions
+	m = updateModel(t, m, tea.KeyPressMsg{Code: '2', Text: "2"})
+	if m.filterType != typeFilterSessions {
+		t.Errorf("after 2: filterType = %q, want %q", m.filterType, typeFilterSessions)
+	}
+	if len(m.filteredResults()) != 1 {
+		t.Errorf("session filter: got %d results, want 1", len(m.filteredResults()))
+	}
+
+	// Press 3 → filter to commits
+	m = updateModel(t, m, tea.KeyPressMsg{Code: '3', Text: "3"})
+	if m.filterType != typeFilterCommits {
+		t.Errorf("after 3: filterType = %q, want %q", m.filterType, typeFilterCommits)
+	}
+	if len(m.filteredResults()) != 1 {
+		t.Errorf("commit filter: got %d results, want 1", len(m.filteredResults()))
+	}
+
+	// Press 0 → show all
+	m = updateModel(t, m, tea.KeyPressMsg{Code: '0', Text: "0"})
+	if m.filterType != typeFilterAll {
+		t.Errorf("after 0: filterType = %q, want %q", m.filterType, typeFilterAll)
+	}
+	if len(m.filteredResults()) != 4 {
+		t.Errorf("all filter: got %d results, want 4", len(m.filteredResults()))
+	}
+}
+
+func TestSearchModel_TypeFilterResetsCursorAndPage(t *testing.T) {
+	t.Parallel()
+	m := testMultiTypeModel()
+	m.cursor = 2
+	m.page = 1
+
+	m = updateModel(t, m, tea.KeyPressMsg{Code: '1', Text: "1"})
+	if m.cursor != 0 {
+		t.Errorf("cursor should reset to 0 on type change, got %d", m.cursor)
+	}
+	if m.page != 0 {
+		t.Errorf("page should reset to 0 on type change, got %d", m.page)
+	}
+}
+
+func TestSearchModel_CommitDetail(t *testing.T) {
+	t.Parallel()
+	m := testMultiTypeModel()
+
+	// Filter to commits and check detail
+	m.filterType = typeFilterCommits
+	m.cursor = 0
+	m = m.refreshBrowseContent()
+
+	r := m.selectedResult()
+	if r == nil {
+		t.Fatal("no selected result")
+	}
+	if r.Type != "commit" {
+		t.Fatalf("selected result type = %q, want commit", r.Type)
+	}
+
+	content := m.renderDetailContent(*r, 80, true)
+	if !strings.Contains(content, "Commit Detail") {
+		t.Error("missing Commit Detail title")
+	}
+	if !strings.Contains(content, "abc1234") {
+		t.Error("missing truncated SHA")
+	}
+	if !strings.Contains(content, "fix: auth token validation") {
+		t.Error("missing commit subject")
+	}
+	if !strings.Contains(content, "+15") {
+		t.Error("missing additions")
+	}
+	if !strings.Contains(content, "-3") {
+		t.Error("missing deletions")
+	}
+}
+
+func TestSearchModel_SessionDetail(t *testing.T) {
+	t.Parallel()
+	m := testMultiTypeModel()
+
+	// Filter to sessions and check detail
+	m.filterType = typeFilterSessions
+	m.cursor = 0
+	m = m.refreshBrowseContent()
+
+	r := m.selectedResult()
+	if r == nil {
+		t.Fatal("no selected result")
+	}
+	if r.Type != "session" {
+		t.Fatalf("selected result type = %q, want session", r.Type)
+	}
+
+	content := m.renderDetailContent(*r, 80, true)
+	if !strings.Contains(content, "Session Detail") {
+		t.Error("missing Session Detail title")
+	}
+	if !strings.Contains(content, "ss1") {
+		t.Error("missing session ID")
+	}
+	if !strings.Contains(content, "Debug auth flow") {
+		t.Error("missing display name")
+	}
+	if !strings.Contains(content, "8") {
+		t.Error("missing step count")
+	}
+}
+
 func TestSearchModel_BrowseFooterHelp(t *testing.T) {
 	t.Parallel()
 	m := testModel()
@@ -361,6 +562,7 @@ func TestSearchModel_BrowseFooterHelp(t *testing.T) {
 		"/ search",
 		"↑/↓, j/k scroll",
 		"home/end, g/G top/bottom",
+		"0-3 type",
 		"q quit",
 	}
 	lastIndex := -1
@@ -390,7 +592,7 @@ func TestSearchModel_BrowseFooterHelpIncludesPagingForMultiplePages(t *testing.T
 
 	results := make([]search.Result, 30)
 	for i := range results {
-		results[i] = search.Result{Data: search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 
 	ss := statusStyles{colorEnabled: false, width: 120}
@@ -402,6 +604,7 @@ func TestSearchModel_BrowseFooterHelpIncludesPagingForMultiplePages(t *testing.T
 		"↑/↓, j/k scroll",
 		"home/end, g/G top/bottom",
 		"n/p page",
+		"0-3 type",
 		"q quit",
 	}
 	lastIndex := -1
@@ -595,7 +798,7 @@ func TestRenderDetailContent_AuthorEmptyUsername(t *testing.T) {
 
 	// Empty string username should fall back to display name
 	empty := ""
-	r.Data.AuthorUsername = &empty
+	r.Checkpoint.AuthorUsername = &empty
 	content = m.renderDetailContent(r, 80, false)
 	if !strings.Contains(content, "bob") {
 		t.Error("author should show display name when username is empty string")
@@ -606,7 +809,7 @@ func TestRenderDetailContent_PromptWrapping(t *testing.T) {
 	t.Parallel()
 	m := testModel()
 	r := testResults()[0]
-	r.Data.Prompt = "line one\nline two\nline three"
+	r.Checkpoint.Prompt = "line one\nline two\nline three"
 
 	content := m.renderDetailContent(r, 80, false)
 	// CollapseWhitespace should merge the newlines into spaces
@@ -622,24 +825,28 @@ func TestRenderSearchStatic(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	styles := statusStyles{colorEnabled: false, width: 100}
-	renderSearchStatic(&buf, testResults(), "auth", 2, styles)
+	styles := statusStyles{colorEnabled: false, width: 120}
+	results := testMultiTypeResults()
+	renderSearchStatic(&buf, results, "auth", len(results), styles)
 	output := buf.String()
 
-	if !strings.Contains(output, `Found 2 checkpoints matching "auth"`) {
-		t.Error("static output missing header")
+	if !strings.Contains(output, `Found 4 results matching "auth"`) {
+		t.Errorf("static output missing header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "TYPE") {
+		t.Error("static output missing TYPE header")
 	}
 	if !strings.Contains(output, "REPO") {
-		t.Error("static output missing repo header")
+		t.Error("static output missing REPO header")
 	}
-	if !strings.Contains(output, "entire") {
-		t.Error("static output missing repo value")
+	if !strings.Contains(output, "CP") {
+		t.Error("static output missing CP badge")
 	}
-	if !strings.Contains(output, "a3b2c4d5e6") {
-		t.Error("static output missing first result ID")
+	if !strings.Contains(output, "CM") {
+		t.Error("static output missing CM badge")
 	}
-	if !strings.Contains(output, "d5e6f789ab") {
-		t.Error("static output missing second result ID")
+	if !strings.Contains(output, "SS") {
+		t.Error("static output missing SS badge")
 	}
 }
 
@@ -678,22 +885,30 @@ func TestSearchModel_TotalPages(t *testing.T) {
 	}
 
 	// 26 loaded results, total=26 → 2 pages
-	many := newSearchModel(make([]search.Result, 26), "q", 26, cfg, ss)
+	results := make([]search.Result, 26)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	many := newSearchModel(results, "q", 26, cfg, ss)
 	if got := many.totalPages(); got != 2 {
 		t.Errorf("totalPages() with total=26 = %d, want 2", got)
 	}
 }
 
-func TestSearchModel_TotalPagesUsesAPITotal(t *testing.T) {
+func TestSearchModel_TotalPagesUsesFilteredCount(t *testing.T) {
 	t.Parallel()
 
-	// Only 20 results loaded but API reports total=100
-	ss := statusStyles{colorEnabled: false, width: 100}
-	cfg := search.Config{}
-	m := newSearchModel(make([]search.Result, 20), "q", 100, cfg, ss)
+	m := testMultiTypeModel()
 
-	if got := m.totalPages(); got != 4 {
-		t.Errorf("totalPages() with 20 loaded but total=100 = %d, want 4", got)
+	// Unfiltered: 4 results → 1 page
+	if got := m.totalPages(); got != 1 {
+		t.Errorf("unfiltered totalPages = %d, want 1", got)
+	}
+
+	// Filter to checkpoints: 2 results → 1 page
+	m.filterType = typeFilterCheckpoints
+	if got := m.totalPages(); got != 1 {
+		t.Errorf("checkpoint-filtered totalPages = %d, want 1", got)
 	}
 }
 
@@ -702,7 +917,11 @@ func TestSearchModel_AppendResults(t *testing.T) {
 
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	m := newSearchModel(make([]search.Result, 25), "q", 50, cfg, ss)
+	results := make([]search.Result, 25)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	m := newSearchModel(results, "q", 50, cfg, ss)
 
 	if m.apiPage != 1 {
 		t.Fatalf("initial apiPage = %d, want 1", m.apiPage)
@@ -710,6 +929,9 @@ func TestSearchModel_AppendResults(t *testing.T) {
 
 	// Simulate receiving more results
 	newResults := make([]search.Result, 25)
+	for i := range newResults {
+		newResults[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("new-%02d", i)}}
+	}
 	m = updateModel(t, m, searchMoreResultsMsg{results: newResults})
 
 	if len(m.results) != 50 {
@@ -729,7 +951,11 @@ func TestSearchModel_FetchMoreOnNavigate(t *testing.T) {
 	// 25 loaded results, total=50 → 2 display pages but only 1 page loaded
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 25}
-	m := newSearchModel(make([]search.Result, 25), "q", 50, cfg, ss)
+	results := make([]search.Result, 25)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	m := newSearchModel(results, "q", 50, cfg, ss)
 
 	// Navigate to page 2 — should trigger fetch
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
@@ -757,7 +983,7 @@ func TestSearchModel_NoFetchWhenResultsLoaded(t *testing.T) {
 	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r", Limit: 25}
 	results := make([]search.Result, 50)
 	for i := range results {
-		results[i] = search.Result{Data: search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 	m := newSearchModel(results, "q", 50, cfg, ss)
 
@@ -806,8 +1032,8 @@ func TestSearchModel_SelectedResult(t *testing.T) {
 		t.Fatal("selectedResult() = nil, want first result")
 		return
 	}
-	if r.Data.ID != "a3b2c4d5e6f7" {
-		t.Errorf("selectedResult().Data.ID = %q, want %q", r.Data.ID, "a3b2c4d5e6f7")
+	if r.Checkpoint == nil || r.Checkpoint.ID != "a3b2c4d5e6f7" {
+		t.Errorf("selectedResult().Checkpoint.ID = %q, want %q", r.ResultID(), "a3b2c4d5e6f7")
 	}
 
 	// Move cursor to second result
@@ -817,8 +1043,8 @@ func TestSearchModel_SelectedResult(t *testing.T) {
 		t.Fatal("selectedResult() at cursor 1 = nil")
 		return
 	}
-	if r.Data.ID != "d5e6f789ab01" {
-		t.Errorf("selectedResult().Data.ID = %q, want %q", r.Data.ID, "d5e6f789ab01")
+	if r.Checkpoint == nil || r.Checkpoint.ID != "d5e6f789ab01" {
+		t.Errorf("selectedResult().Checkpoint.ID = %q, want %q", r.ResultID(), "d5e6f789ab01")
 	}
 
 	// Out-of-range cursor returns nil
@@ -836,7 +1062,7 @@ func TestSearchModel_PageNavigation(t *testing.T) {
 	cfg := search.Config{ServiceURL: "http://test", Owner: "o", Repo: "r"}
 	results := make([]search.Result, 30)
 	for i := range results {
-		results[i] = search.Result{Data: search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
 	}
 	m := newSearchModel(results, "q", 30, cfg, ss)
 
@@ -924,7 +1150,11 @@ func TestSearchModel_FetchMoreError(t *testing.T) {
 
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	m := newSearchModel(make([]search.Result, 25), "q", 50, cfg, ss)
+	results := make([]search.Result, 25)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	m := newSearchModel(results, "q", 50, cfg, ss)
 	m.fetchingMore = true
 
 	m = updateModel(t, m, searchMoreResultsMsg{err: errTestSearch})
@@ -945,7 +1175,11 @@ func TestSearchModel_FetchMoreEmpty_CapsTotal(t *testing.T) {
 
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	m := newSearchModel(make([]search.Result, 25), "q", 100, cfg, ss)
+	results := make([]search.Result, 25)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	m := newSearchModel(results, "q", 100, cfg, ss)
 
 	if m.totalPages() != 4 {
 		t.Fatalf("initial totalPages = %d, want 4", m.totalPages())
@@ -968,7 +1202,11 @@ func TestSearchModel_ViewFetchingMore(t *testing.T) {
 	// Model with 25 loaded results but on page 2 (no data) while fetching
 	ss := statusStyles{colorEnabled: false, width: 100}
 	cfg := search.Config{}
-	m := initTestViewport(newSearchModel(make([]search.Result, 25), "q", 50, cfg, ss))
+	results := make([]search.Result, 25)
+	for i := range results {
+		results[i] = search.Result{Type: "checkpoint", Checkpoint: &search.CheckpointResult{ID: fmt.Sprintf("id-%02d", i)}}
+	}
+	m := initTestViewport(newSearchModel(results, "q", 50, cfg, ss))
 	m.page = 1
 	m.fetchingMore = true
 	m = m.refreshBrowseContent()
@@ -1146,7 +1384,10 @@ func TestSearchModel_ApiPageInitialization(t *testing.T) {
 func TestComputeColumns(t *testing.T) {
 	t.Parallel()
 
-	cols := computeColumns(100)
+	cols := computeColumns(120)
+	if cols.typeCol != 5 {
+		t.Errorf("type width = %d, want 5", cols.typeCol)
+	}
 	if cols.age != 10 {
 		t.Errorf("age width = %d, want 10", cols.age)
 	}
@@ -1166,5 +1407,38 @@ func TestComputeColumns(t *testing.T) {
 	}
 	if cols.repo < 10 {
 		t.Errorf("repo width on narrow terminal = %d, want >= 10", cols.repo)
+	}
+}
+
+func TestSearchModel_ComputeTypeCounts(t *testing.T) {
+	t.Parallel()
+
+	m := testMultiTypeModel()
+	cp, cm, ss := m.computeTypeCounts()
+	if cp != 2 {
+		t.Errorf("checkpoints = %d, want 2", cp)
+	}
+	if cm != 1 {
+		t.Errorf("commits = %d, want 1", cm)
+	}
+	if ss != 1 {
+		t.Errorf("sessions = %d, want 1", ss)
+	}
+}
+
+func TestSearchModel_ComputeTypeCounts_UsesAPICounts(t *testing.T) {
+	t.Parallel()
+
+	m := testMultiTypeModel()
+	m.counts = &search.TypeCounts{Checkpoints: 10, Commits: 5, Sessions: 3}
+	cp, cm, ss := m.computeTypeCounts()
+	if cp != 10 {
+		t.Errorf("checkpoints = %d, want 10", cp)
+	}
+	if cm != 5 {
+		t.Errorf("commits = %d, want 5", cm)
+	}
+	if ss != 3 {
+		t.Errorf("sessions = %d, want 3", ss)
 	}
 }
