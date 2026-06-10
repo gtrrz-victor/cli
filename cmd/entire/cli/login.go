@@ -78,7 +78,7 @@ func newLoginCmd() *cobra.Command {
 				flow, err := client.StartBrowserAuth(ctx)
 				if err != nil {
 					// Explicit nil so the interface value is nil, not a typed nil.
-					return nil, err //nolint:wrapcheck // runLoginAuto wraps this as "start login: %w"
+					return nil, err //nolint:wrapcheck // runLoginAuto surfaces this verbatim in its fallback warning
 				}
 				return flow, nil
 			}
@@ -138,14 +138,19 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 // device-code flows and runs the chosen one. The browser flow is the
 // default — no code to type, no poll latency — but it needs a browser that
 // can reach this machine's 127.0.0.1, so headless terminals (CI, piped
-// stdin) and SSH sessions fall back to the device flow with a one-line
-// explanation; the same both-flows-with-fallback shape gh / gcloud /
-// aws sso ship. --device forces the device flow without commentary.
+// stdin), SSH sessions, and a loopback listener that fails to start all
+// fall back to the device flow with a one-line explanation; the same
+// both-flows-with-fallback shape gh / gcloud / aws sso ship. --device
+// forces the device flow without commentary.
 func runLoginAuto(ctx context.Context, outW, errW io.Writer, deviceClient deviceAuthClient, startBrowser func(context.Context) (browserAuthFlow, error), openURL browserOpenFunc, useDevice, canPrompt, sshSession bool) error {
 	if shouldUseBrowserLogin(useDevice, canPrompt, sshSession) {
 		flow, err := startBrowser(ctx)
 		if err != nil {
-			return fmt.Errorf("start login: %w", err)
+			// Binding the loopback listener can fail (sandboxing, firewall,
+			// exhausted ports); that shouldn't strand the user — warn and
+			// use the device flow instead.
+			fmt.Fprintf(errW, "Warning: could not start browser sign-in (%v); falling back to the device-code flow.\n", err)
+			return runLogin(ctx, outW, errW, deviceClient, openURL)
 		}
 		return runBrowserLogin(ctx, outW, errW, flow, deviceClient.BaseURL(), openURL, browserLoginTimeout)
 	}
