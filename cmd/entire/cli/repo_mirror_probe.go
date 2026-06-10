@@ -162,9 +162,18 @@ func explainSuspendedMirror(w io.Writer, mirrorID string, freshCreate bool, err 
 	return true, NewSilentError(fmt.Errorf("mirror %s is suspended", mirrorID))
 }
 
-// mintRepoToken mints the repo-scoped pull token for the clone probe.
-// Package var so tests can substitute a slow or failing auth path.
-var mintRepoToken = auth.RepoScopedToken
+// repoTokenSource is the slice of auth.RepoTokenSource the clone probe
+// uses; an interface so tests can substitute a fake.
+type repoTokenSource interface {
+	Token(ctx context.Context, repoSlug, action string) (string, error)
+	Invalidate(repoSlug, action string)
+}
+
+// newRepoTokenSource builds the clone probe's token source. Package var so
+// tests can substitute a slow or failing auth path.
+var newRepoTokenSource = func(ctx context.Context, clusterHost string) (repoTokenSource, error) {
+	return auth.NewRepoTokenSource(ctx, clusterHost)
+}
 
 // waitForMirrorClone blocks until the mirror at /gh/<owner>/<repo> on
 // clusterHost advertises a resolvable HEAD (the initial GitHub→EntireDB
@@ -174,14 +183,16 @@ var mintRepoToken = auth.RepoScopedToken
 //
 // Repo-scoped pull tokens are short-lived (minutes) while the default wait
 // is 30m, so a single token can't cover the whole wait. The loop re-mints
-// from the (long-lived) login token whenever a probe comes back 401,
-// rather than minting once up front. Re-mints are floored at
-// minReauthInterval so a flapping STS can't be amplified into a re-mint
-// every probeInterval ticks.
+// from the (long-lived) login token whenever a probe comes back 401, rather
+// than minting once up front. Cluster discovery and context selection run
+// once, when the source is built — a discovery hiccup mid-wait can't abort
+// a wait that already authorized. Re-mints are floored at minReauthInterval
+// so a flapping STS can't be amplified into a re-mint every probeInterval
+// ticks.
 //
-// The deadline is applied before the first mint: minting now spans cluster
-// discovery and a possible login refresh, so the authorization phase must
-// consume the user's wait budget, not run before it.
+// The deadline is applied before the source is built: authorization spans
+// cluster discovery and a possible login refresh, so it must consume the
+// user's wait budget, not run before it.
 func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, repo string, timeout time.Duration) error {
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -192,10 +203,11 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 	repoSlug := "/gh/" + owner + "/" + repo
 	checkURL := fmt.Sprintf("https://%s%s/info/refs?service=git-upload-pack", clusterHost, repoSlug)
 
-	mintToken := func() (string, error) {
-		return mintRepoToken(ctx, clusterHost, repoSlug, "pull")
+	src, err := newRepoTokenSource(ctx, clusterHost)
+	if err != nil {
+		return fmt.Errorf("authorize clone probe: %w", err)
 	}
-	token, err := mintToken()
+	token, err := src.Token(ctx, repoSlug, "pull")
 	if err != nil {
 		return fmt.Errorf("authorize clone probe: %w", err)
 	}
@@ -224,7 +236,10 @@ func waitForMirrorClone(ctx context.Context, out io.Writer, clusterHost, owner, 
 			if since := time.Since(lastMint); since < minReauthInterval {
 				break
 			}
-			newToken, mintErr := mintToken()
+			// Drop the cached token first: the cluster rejected it ahead of
+			// its recorded expiry, so a plain Token call could replay it.
+			src.Invalidate(repoSlug, "pull")
+			newToken, mintErr := src.Token(ctx, repoSlug, "pull")
 			if mintErr != nil {
 				if cloning {
 					fmt.Fprintln(out)

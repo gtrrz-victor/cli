@@ -98,13 +98,14 @@ func TestRepoScopedToken_InvalidTarget(t *testing.T) {
 	}
 }
 
-// captureTransport records the last request's parsed form body, URL, and
-// Authorization header, and returns a canned RFC 8693 token-exchange
-// success response.
+// captureTransport counts exchanges and records the last request's parsed
+// form body, URL, and Authorization header, returning a canned RFC 8693
+// token-exchange success response.
 type captureTransport struct {
-	form url.Values
-	url  string
-	auth string
+	calls int
+	form  url.Values
+	url   string
+	auth  string
 }
 
 func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -116,6 +117,7 @@ func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	if err != nil {
 		return nil, err
 	}
+	c.calls++
 	c.form = form
 	c.url = req.URL.String()
 	c.auth = req.Header.Get("Authorization")
@@ -197,5 +199,41 @@ func TestRepoScopedToken_DiscoveryErrorSurfaces(t *testing.T) {
 	_, err := RepoScopedToken(context.Background(), "x.entire.io", "/gh/o/r", "pull")
 	if err == nil || !strings.Contains(err.Error(), "not logged in to a login server trusted by cluster x") {
 		t.Fatalf("err = %v, want the discovery error verbatim", err)
+	}
+}
+
+// TestRepoTokenSource_ReMintSkipsDiscovery asserts cluster discovery runs
+// once, at construction — re-mints after Invalidate (the clone wait's
+// 401 path) only re-exchange, so a discovery hiccup mid-wait can't abort a
+// wait that already authorized.
+func TestRepoTokenSource_ReMintSkipsDiscovery(t *testing.T) {
+	seedRepoTokenContext(t, "https://us.auth.entire.io")
+	var discoveries int
+	inner := resolveContextForCluster
+	stubResolveContextForCluster(t,
+		func(ctx context.Context, configDir, cacheDir, host string, hc *http.Client, debugf clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+			discoveries++
+			return inner(ctx, configDir, cacheDir, host, hc, debugf)
+		})
+	capture := &captureTransport{}
+	t.Cleanup(SetRepoExchangeTransportForTest(capture))
+
+	src, err := NewRepoTokenSource(context.Background(), "aws-us-east-2.entire.io")
+	if err != nil {
+		t.Fatalf("NewRepoTokenSource: %v", err)
+	}
+	if _, err := src.Token(context.Background(), "/gh/octocat/hello", "pull"); err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	src.Invalidate("/gh/octocat/hello", "pull")
+	if _, err := src.Token(context.Background(), "/gh/octocat/hello", "pull"); err != nil {
+		t.Fatalf("Token after Invalidate: %v", err)
+	}
+
+	if discoveries != 1 {
+		t.Errorf("discovery ran %d times, want 1 (construction only)", discoveries)
+	}
+	if capture.calls != 2 {
+		t.Errorf("exchange ran %d times, want 2 (initial + re-mint)", capture.calls)
 	}
 }

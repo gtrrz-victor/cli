@@ -24,9 +24,9 @@ import (
 // actionable message instead of the raw OAuth error.
 var ErrRepoTargetUnknown = errors.New("cluster has no servable mirror at this audience")
 
-// repoExchangeTimeout bounds the HTTP calls behind one mint: the
-// /.well-known cluster discovery (disk-cached after the first call) and
-// the /oauth/token exchange.
+// repoExchangeTimeout bounds each HTTP call on the mint path: the
+// /.well-known cluster discovery at construction (disk-cached after the
+// first call) and each /oauth/token exchange.
 const repoExchangeTimeout = 30 * time.Second
 
 // resolveContextForCluster is the discovery seam, swapped in tests so they
@@ -46,32 +46,31 @@ func SetRepoExchangeTransportForTest(rt http.RoundTripper) func() {
 	return func() { repoExchangeTransportForTest = prev }
 }
 
-// RepoScopedToken exchanges a login JWT for a short-lived, repo-scoped
-// access token usable against a data-plane cluster's git endpoints
-// (clone / fetch / info-refs). The data plane's git gate rejects the raw
-// login bearer: it only accepts a token whose RFC 8693 audience is
+// RepoTokenSource mints short-lived, repo-scoped access tokens usable
+// against one data-plane cluster's git endpoints (clone / fetch /
+// info-refs). The data plane's git gate rejects the raw login bearer: it
+// only accepts a token whose RFC 8693 audience is
 // https://<clusterHost><repoSlug> and whose scope is "repo:<action>".
 //
-// The login context is resolved the way git-remote-entire resolves it: the
-// cluster's /.well-known/entire-cluster.json names the core(s) it trusts,
-// and the matching local context (active if eligible, else the sole
-// eligible one, else an explicit-choice error) supplies the subject token —
-// exchanged at that context's core, never at the active context's. The
-// exchange itself goes through repocreds, the same code path (and wire
-// form) git-remote-entire uses. An expired login JWT is transparently
-// re-minted from the stored refresh token.
-//
-//   - clusterHost is the data-plane cluster host (e.g. aws-us-east-2.entire.io).
-//   - repoSlug is the surface-prefixed repo path (e.g. /gh/octocat/hello or
-//     /et/<project>/<repo>), joined verbatim to https://<clusterHost> to
-//     form the audience.
-//   - action is "pull" for reads or "push" for writes.
-//
-// Each call performs a fresh exchange and does not cache — callers that
-// poll (e.g. the mirror clone wait) re-invoke on token expiry.
-func RepoScopedToken(ctx context.Context, clusterHost, repoSlug, action string) (string, error) {
+// The login context is resolved once, at construction, the way
+// git-remote-entire resolves it: the cluster's
+// /.well-known/entire-cluster.json names the core(s) it trusts, and the
+// matching local context (active if eligible, else the sole eligible one,
+// else an explicit-choice error) supplies the subject token — exchanged at
+// that context's core, never at the active context's. Token calls then only
+// exchange (through repocreds, the same code path and wire form
+// git-remote-entire uses), re-minting an expired login JWT from the stored
+// refresh token as needed — so a poller's re-mints don't depend on
+// discovery staying reachable.
+type RepoTokenSource struct {
+	creds *repocreds.Cache
+}
+
+// NewRepoTokenSource resolves clusterHost's trusted core and login context
+// and returns a source minting tokens for that cluster.
+func NewRepoTokenSource(ctx context.Context, clusterHost string) (*RepoTokenSource, error) {
 	if clusterHost == "" {
-		return "", errors.New("repo-scoped token exchange requires a target cluster host")
+		return nil, errors.New("repo-scoped token exchange requires a target cluster host")
 	}
 
 	// Bridge any pre-contexts.json login so the resolver can match it.
@@ -81,17 +80,24 @@ func RepoScopedToken(ctx context.Context, clusterHost, repoSlug, action string) 
 	httpClient := &http.Client{Timeout: repoExchangeTimeout, Transport: repoExchangeTransportForTest}
 	clusterCtx, err := resolveContextForCluster(ctx, contexts.DefaultConfigDir(), discovery.DefaultCacheDir(), clusterHost, httpClient, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	allowInsecure := insecureHTTPEnabled() || isLoopbackHTTP(clusterCtx.CoreURL)
 	loginProvider, err := NewRefreshingLoginProvider(clusterCtx, repoExchangeTransportForTest, allowInsecure)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	token, err := repocreds.New(clusterCtx.CoreURL, "https://"+clusterHost, loginProvider, httpClient).
-		Token(ctx, repoSlug, action)
+	return &RepoTokenSource{creds: repocreds.New(clusterCtx.CoreURL, "https://"+clusterHost, loginProvider, httpClient)}, nil
+}
+
+// Token returns a repo-scoped token for repoSlug (the surface-prefixed repo
+// path, e.g. /gh/octocat/hello, joined verbatim to the cluster URL to form
+// the audience) and action ("pull" or "push"). Tokens are cached per
+// (repoSlug, action) until near expiry.
+func (s *RepoTokenSource) Token(ctx context.Context, repoSlug, action string) (string, error) {
+	token, err := s.creds.Token(ctx, repoSlug, action)
 	if err != nil {
 		// invalid_target means the cluster has no servable mirror at this
 		// audience (commonly a suspended placement). Surface the sentinel for
@@ -104,4 +110,22 @@ func RepoScopedToken(ctx context.Context, clusterHost, repoSlug, action string) 
 		return "", fmt.Errorf("repo-scoped token exchange: %w", err)
 	}
 	return token, nil
+}
+
+// Invalidate drops the cached (repoSlug, action) token so the next Token
+// call re-exchanges — for when the data plane rejected it (401) ahead of
+// its recorded expiry.
+func (s *RepoTokenSource) Invalidate(repoSlug, action string) {
+	s.creds.Invalidate(repoSlug, action)
+}
+
+// RepoScopedToken is the one-shot form of RepoTokenSource: resolve, mint
+// once, discard. Callers that re-mint (e.g. a polling wait) should hold a
+// RepoTokenSource instead, so re-mints skip cluster discovery.
+func RepoScopedToken(ctx context.Context, clusterHost, repoSlug, action string) (string, error) {
+	src, err := NewRepoTokenSource(ctx, clusterHost)
+	if err != nil {
+		return "", err
+	}
+	return src.Token(ctx, repoSlug, action)
 }
