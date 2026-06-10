@@ -33,14 +33,6 @@ const repoExchangeTimeout = 30 * time.Second
 // don't reach the network. Mirrors clusterdiscovery.ResolveContextForCluster.
 var resolveContextForCluster resolveContextFunc = clusterdiscovery.ResolveContextForCluster
 
-// setResolveContextForClusterForTest overrides the cluster-discovery seam
-// and returns a cleanup func. Test-only.
-func setResolveContextForClusterForTest(fn resolveContextFunc) func() {
-	prev := resolveContextForCluster
-	resolveContextForCluster = fn
-	return func() { resolveContextForCluster = prev }
-}
-
 // repoExchangeTransportForTest, when non-nil, is the HTTP transport used by
 // RepoScopedToken's exchange (and login refresh), so the wire form can be
 // asserted without a live core. Production leaves it nil.

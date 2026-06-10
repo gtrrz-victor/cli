@@ -18,15 +18,29 @@ import (
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
 
+// sandboxRepoTokenStores redirects the token store and contexts.json (the
+// legacy-login migration's write target) to temp locations.
+func sandboxRepoTokenStores(t *testing.T) {
+	t.Helper()
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	t.Cleanup(tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json")))
+}
+
+// stubResolveContextForCluster swaps the discovery seam for fn.
+func stubResolveContextForCluster(t *testing.T, fn resolveContextFunc) {
+	t.Helper()
+	prev := resolveContextForCluster
+	resolveContextForCluster = fn
+	t.Cleanup(func() { resolveContextForCluster = prev })
+}
+
 // seedRepoTokenContext wires the two seams RepoScopedToken sits on: a
 // file-backed token store holding a still-valid login JWT for a context on
 // coreURL, and a discovery stub resolving any cluster to that context. The
 // exchange transport is left to each test. Returns the seeded login JWT.
 func seedRepoTokenContext(t *testing.T, coreURL string) string {
 	t.Helper()
-	// Sandbox the legacy-login migration's contexts.json writes.
-	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
-	t.Cleanup(tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json")))
+	sandboxRepoTokenStores(t)
 
 	svc := tokenstore.CoreKeyringService(coreURL)
 	jwt := makeJWT(t, fmt.Sprintf(`{"iss":%q,"handle":"alice","exp":%d}`, coreURL, time.Now().Add(2*time.Hour).Unix()))
@@ -35,10 +49,10 @@ func seedRepoTokenContext(t *testing.T, coreURL string) string {
 	}
 
 	c := &contexts.Context{Name: "alice@core", CoreURL: coreURL, Handle: "alice", KeychainService: svc}
-	t.Cleanup(setResolveContextForClusterForTest(
+	stubResolveContextForCluster(t,
 		func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
 			return c, nil
-		}))
+		})
 	return jwt
 }
 
@@ -173,12 +187,11 @@ func TestRepoScopedToken_WireForm(t *testing.T) {
 // failure (no eligible login, ambiguous contexts, unreachable cluster) is
 // returned verbatim — never papered over with a wrong-core exchange.
 func TestRepoScopedToken_DiscoveryErrorSurfaces(t *testing.T) {
-	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
-	t.Cleanup(tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json")))
-	t.Cleanup(setResolveContextForClusterForTest(
+	sandboxRepoTokenStores(t)
+	stubResolveContextForCluster(t,
 		func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
 			return nil, errors.New("not logged in to a login server trusted by cluster x; run `entire login`")
-		}))
+		})
 	t.Cleanup(SetRepoExchangeTransportForTest(failRoundTripper(t)))
 
 	_, err := RepoScopedToken(context.Background(), "x.entire.io", "/gh/o/r", "pull")
