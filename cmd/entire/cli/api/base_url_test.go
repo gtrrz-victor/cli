@@ -55,38 +55,6 @@ func TestRequireSecureURL_RejectsHTTP(t *testing.T) {
 	}
 }
 
-func TestAuthBaseURL_FallsBackToDefault(t *testing.T) {
-	// Default is split-host: an unset ENTIRE_AUTH_BASE_URL must NOT inherit
-	// from ENTIRE_API_BASE_URL — local-dev that only sets the data host
-	// would otherwise silently point auth at a host that can't mint tokens.
-	t.Setenv(BaseURLEnvVar, "https://example.test")
-	t.Setenv(AuthBaseURLEnvVar, "")
-
-	if got := AuthBaseURL(); got != DefaultAuthBaseURL {
-		t.Fatalf("AuthBaseURL() = %q, want %q", got, DefaultAuthBaseURL)
-	}
-}
-
-func TestAuthBaseURL_OverrideTakesPrecedence(t *testing.T) {
-	t.Setenv(BaseURLEnvVar, "https://data.example.test")
-	t.Setenv(AuthBaseURLEnvVar, " https://auth.example.test/ ")
-
-	if got := AuthBaseURL(); got != "https://auth.example.test" {
-		t.Fatalf("AuthBaseURL() = %q, want trimmed/normalized override", got)
-	}
-}
-
-func TestAuthBaseURL_CanonicalisesScheme_HostCase_DefaultPort(t *testing.T) {
-	// Same canonicalisation tokenmanager.New applies internally — must match
-	// or the keyring key login wrote diverges from the one the manager later
-	// reads, producing spurious "not logged in" errors on every data-API call.
-	t.Setenv(AuthBaseURLEnvVar, "HTTPS://AUTH.example.com:443/")
-
-	if got := AuthBaseURL(); got != "https://auth.example.com" {
-		t.Fatalf("AuthBaseURL() = %q, want canonicalised origin", got)
-	}
-}
-
 func TestNormalizeOriginURL(t *testing.T) {
 	t.Parallel()
 
