@@ -215,8 +215,7 @@ func parseProtocolVersion(raw string, warn io.Writer) int {
 //     entirely — the CI / workload-identity path. A non-URL aud is a hard
 //     error, never a silent fallback to context resolution.
 //   - otherwise: resolve the login context for this cluster from contexts.json
-//     (migrating any pre-contexts.json login first) and exchange its stored
-//     login JWT.
+//     and exchange its stored login JWT.
 func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string, skipTLS bool, httpClient *http.Client) (*repocreds.Cache, error) {
 	// Presence of ENTIRE_TOKEN is the signal: if it's set at all (LookupEnv,
 	// not Getenv, so we can tell set-empty from unset), we commit to the
@@ -232,11 +231,6 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 			return nil, fmt.Errorf("%s is set but blank", auth.EnvTokenVar)
 		}
 		return resolveEnvTokenCreds(ctx, envToken, parsedURL.Host, clusterBaseURL, userdirs.Cache(), httpClient)
-	}
-
-	// Bridge any pre-contexts.json login so the resolver can find it.
-	if _, err := auth.MigrateLegacyLoginContext(); err != nil {
-		debuglog.Printf("legacy login migration: %v", err)
 	}
 
 	// Resolve which login context authenticates this cluster: the cluster's

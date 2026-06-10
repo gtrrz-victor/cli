@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/entireio/auth-go/tokens"
-	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 	"github.com/entireio/cli/internal/entireclient/userdirs"
@@ -149,55 +148,6 @@ func pickContextName(f *contexts.File, coreURL, handle string) string {
 // sameIssuer compares two core URLs ignoring a trailing slash.
 func sameIssuer(a, b string) bool {
 	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
-}
-
-// MigrateLegacyLoginContext bridges users who logged in before the
-// contexts.json dual-write existed: if the legacy entire-cli/<authBaseURL>
-// keyring entry holds a usable JWT and no context yet covers its issuer,
-// it records an equivalent context (and keychain entry under the shared
-// scheme) so the git remote helper can authenticate without a re-login.
-//
-// Returns (true, nil) when it created a context. No-ops — returning
-// (false, nil) — when there's no legacy token, the token is opaque
-// (no derivable issuer), or a context for that issuer already exists.
-// Idempotent: safe to call on every helper invocation.
-func MigrateLegacyLoginContext() (migrated bool, err error) {
-	legacy, err := NewStore().GetToken(api.AuthBaseURL())
-	if err != nil {
-		return false, fmt.Errorf("read legacy login token: %w", err)
-	}
-	if legacy == "" {
-		return false, nil
-	}
-	claims, parseErr := tokens.ParseClaims(legacy)
-	if parseErr != nil || claims.Issuer == "" {
-		// Opaque/unsigned legacy token — can't derive a context from it.
-		return false, nil //nolint:nilerr // absence of a JWT issuer is not an error here
-	}
-	handle := claims.Handle
-	if handle == "" {
-		handle = claims.Subject
-	}
-	f, err := contexts.Load(userdirs.Config())
-	if err != nil {
-		return false, fmt.Errorf("load contexts: %w", err)
-	}
-	// Skip only when this exact identity is already represented. Keying on
-	// issuer alone would skip a legacy bob@core just because alice@core (e.g.
-	// from another CLI) already exists, leaving Bob without a context.
-	for _, c := range f.Contexts {
-		if sameIssuer(c.CoreURL, claims.Issuer) && c.Handle == handle {
-			return false, nil
-		}
-	}
-	// activate=false: migrating an old login (e.g. on first `git clone`) must
-	// not silently switch the user's active context. RecordLoginContext still
-	// sets current_context when none exists yet.
-	// No refresh token: the legacy entry is access-token-only.
-	if _, err := RecordLoginContext(legacy, "", false); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // LoginTokenForContext returns the login JWT stored for c, read from the
