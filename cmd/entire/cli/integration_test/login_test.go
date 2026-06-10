@@ -273,6 +273,12 @@ func startLoginProcess(t *testing.T, apiBaseURL string, extraEnv []string, args 
 		// production us.auth.entire.io default.
 		"ENTIRE_AUTH_BASE_URL="+apiBaseURL,
 		"ENTIRE_TEST_AUTH_STORE_FILE="+filepath.Join(env.RepoDir, ".entire-test-auth-store.json"),
+		// Blank the SSH_* vars inherited from os.Environ(): a developer
+		// running tests over SSH would otherwise flip the subprocess'
+		// isSSHSession() detection and route browser-flow tests to the
+		// device flow. extraEnv is appended after, so a test can still
+		// set them deliberately.
+		"SSH_CONNECTION=", "SSH_CLIENT=", "SSH_TTY=",
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 

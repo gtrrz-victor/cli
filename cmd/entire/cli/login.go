@@ -25,6 +25,12 @@ const maxPollInterval = 30 * time.Second
 const maxExpiresIn = 15 * time.Minute
 const maxTransientErrors = 5
 
+// browserLoginTimeout bounds how long the browser flow waits for the
+// loopback redirect. The device flow is bounded by the AS's expires_in
+// (capped at maxExpiresIn); without a bound here a closed browser tab
+// would hang `entire login` forever.
+const browserLoginTimeout = 5 * time.Minute
+
 // browserOpenFunc is the signature for opening a URL in the user's browser.
 type browserOpenFunc func(ctx context.Context, url string) error
 
@@ -68,25 +74,19 @@ func newLoginCmd() *cobra.Command {
 				return err
 			}
 			client := auth.NewClient(nil, insecureHTTPAuth)
-			outW, errW := cmd.OutOrStdout(), cmd.ErrOrStderr()
-
-			// Default to the browser (loopback authorization-code) flow:
-			// no code to type, no poll latency. It needs a local browser and
-			// a reachable 127.0.0.1, so when there's no interactive terminal
-			// (CI, piped, SSH without a tty) fall back to the device flow —
-			// the same both-flows-with-fallback shape gh / gcloud / aws sso
-			// ship. --device forces the device flow explicitly.
-			if shouldUseBrowserLogin(useDevice, interactive.CanPromptInteractively()) {
-				flow, err := client.StartBrowserAuth(cmd.Context())
-				if err != nil {
-					return fmt.Errorf("start login: %w", err)
-				}
-				return runBrowserLogin(cmd.Context(), outW, errW, flow, client.BaseURL(), openBrowser)
+			// Closure adapts the concrete *auth.BrowserAuthFlow result to the
+			// browserAuthFlow interface (func types are invariant, so the
+			// method value alone won't do). On error the flow is a typed nil,
+			// which is fine — runLoginAuto checks err before touching it.
+			startBrowser := func(ctx context.Context) (browserAuthFlow, error) {
+				return client.StartBrowserAuth(ctx)
 			}
-			if !useDevice {
-				fmt.Fprintln(errW, "No interactive terminal detected; using device-code flow.")
-			}
-			return runLogin(cmd.Context(), outW, errW, client, openBrowser)
+			return runLoginAuto(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				client, startBrowser, openBrowser, loginFlowFacts{
+					useDevice:  useDevice,
+					canPrompt:  interactive.CanPromptInteractively(),
+					sshSession: isSSHSession(),
+				})
 		},
 	}
 	addInsecureHTTPAuthFlag(cmd, &insecureHTTPAuth)
@@ -94,7 +94,7 @@ func newLoginCmd() *cobra.Command {
 	return cmd
 }
 
-func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient, openURL browserOpenFunc) error {
+func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient, openURL browserOpenFunc, canPrompt bool) error {
 	start, err := client.StartDeviceAuth(ctx)
 	if err != nil {
 		return fmt.Errorf("start login: %w", err)
@@ -104,7 +104,7 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 
 	approvalURL := chooseApprovalURL(start)
 
-	if interactive.CanPromptInteractively() {
+	if canPrompt {
 		// chooseApprovalURL prefers the code-embedded verification_uri_complete,
 		// so opening the URL is usually all the user needs to do. The device
 		// code is printed above regardless, so it's still available to confirm
@@ -136,21 +136,72 @@ func runLogin(ctx context.Context, outW, errW io.Writer, client deviceAuthClient
 	return persistLogin(outW, errW, client.BaseURL(), token, refreshToken)
 }
 
+// loginFlowFacts carries the environment facts that pick between the
+// browser and device-code flows. Detection happens once at the command
+// entry point; the decision logic below only consumes these values.
+type loginFlowFacts struct {
+	useDevice  bool // --device flag
+	canPrompt  bool // interactive terminal present
+	sshSession bool // running inside an SSH session
+}
+
+// runLoginAuto picks between the browser (loopback authorization-code) and
+// device-code flows and runs the chosen one. The browser flow is the
+// default — no code to type, no poll latency — but it needs a browser that
+// can reach this machine's 127.0.0.1, so headless terminals (CI, piped
+// stdin), SSH sessions, and a loopback listener that fails to start all
+// fall back to the device flow with a one-line explanation; the same
+// both-flows-with-fallback shape gh / gcloud / aws sso ship. --device
+// forces the device flow without commentary.
+func runLoginAuto(ctx context.Context, outW, errW io.Writer, deviceClient deviceAuthClient, startBrowser func(context.Context) (browserAuthFlow, error), openURL browserOpenFunc, facts loginFlowFacts) error {
+	if shouldUseBrowserLogin(facts) {
+		flow, err := startBrowser(ctx)
+		if err != nil {
+			// Binding the loopback listener can fail (sandboxing, firewall,
+			// exhausted ports); that shouldn't strand the user — warn and
+			// use the device flow instead.
+			fmt.Fprintf(errW, "Warning: could not start browser sign-in (%v); falling back to the device-code flow.\n", err)
+			return runLogin(ctx, outW, errW, deviceClient, openURL, facts.canPrompt)
+		}
+		return runBrowserLogin(ctx, outW, errW, flow, deviceClient.BaseURL(), openURL, browserLoginTimeout)
+	}
+	switch {
+	case facts.useDevice:
+		// Explicitly requested; no explanation needed.
+	case !facts.canPrompt:
+		fmt.Fprintln(errW, "No interactive terminal detected; using device-code flow.")
+	case facts.sshSession:
+		fmt.Fprintln(errW, "SSH session detected; using device-code flow (a browser opened here couldn't reach this machine).")
+	}
+	return runLogin(ctx, outW, errW, deviceClient, openURL, facts.canPrompt)
+}
+
 // shouldUseBrowserLogin reports whether `entire login` should use the
 // loopback authorization-code (browser) flow. The browser flow is the
 // default but needs a local browser + reachable 127.0.0.1, so it's only
-// chosen when --device wasn't passed and an interactive terminal is
-// present; otherwise the caller falls back to the device flow.
-func shouldUseBrowserLogin(useDevice, canPrompt bool) bool {
-	return !useDevice && canPrompt
+// chosen when --device wasn't passed, an interactive terminal is present,
+// and we're not inside an SSH session (where the loopback listener binds
+// on the remote host, out of the user's browser's reach); otherwise the
+// caller falls back to the device flow.
+func shouldUseBrowserLogin(f loginFlowFacts) bool {
+	return !f.useDevice && f.canPrompt && !f.sshSession
+}
+
+// isSSHSession reports whether this process is running inside an SSH
+// session: sshd sets SSH_CONNECTION/SSH_CLIENT for every session and
+// SSH_TTY for interactive ones.
+func isSSHSession() bool {
+	return os.Getenv("SSH_CONNECTION") != "" ||
+		os.Getenv("SSH_CLIENT") != "" ||
+		os.Getenv("SSH_TTY") != ""
 }
 
 // runBrowserLogin runs the loopback authorization-code flow on an
 // already-started flow: open the authorization URL in the user's browser,
-// wait for the redirect back to the local listener, then exchange the code
-// for tokens. Shares the token validation + persistence tail with runLogin
-// via persistLogin.
-func runBrowserLogin(ctx context.Context, outW, errW io.Writer, flow browserAuthFlow, baseURL string, openURL browserOpenFunc) error {
+// wait up to waitTimeout for the redirect back to the local listener, then
+// exchange the code for tokens. Shares the token validation + persistence
+// tail with runLogin via persistLogin.
+func runBrowserLogin(ctx context.Context, outW, errW io.Writer, flow browserAuthFlow, baseURL string, openURL browserOpenFunc, waitTimeout time.Duration) error {
 	// Wait tears the listener down on return, but Close is idempotent and
 	// covers the error paths before Wait runs.
 	defer func() { _ = flow.Close() }()
@@ -181,8 +232,16 @@ func runBrowserLogin(ctx context.Context, outW, errW io.Writer, flow browserAuth
 
 	fmt.Fprint(outW, "Waiting for sign-in... ")
 
-	code, err := flow.Wait(ctx)
+	// The clock starts here, after the Enter prompt, so time spent reading
+	// the prompt isn't counted against the sign-in itself.
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+
+	code, err := flow.Wait(waitCtx)
 	if err != nil {
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("timed out waiting for sign-in after %v; run `entire login` again, or use `entire login --device`", waitTimeout)
+		}
 		return fmt.Errorf("complete login: %w", err)
 	}
 
