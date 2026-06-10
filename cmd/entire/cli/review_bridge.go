@@ -12,7 +12,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/codex"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
-	"github.com/entireio/cli/cmd/entire/cli/agent/pi"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
@@ -43,8 +42,6 @@ func launchableReviewerFor(agentName string) reviewtypes.AgentReviewer {
 		return codex.NewReviewer()
 	case string(agent.AgentNameGemini):
 		return geminicli.NewReviewer()
-	case string(agent.AgentNamePi):
-		return pi.NewReviewer()
 	default:
 		return nil
 	}
