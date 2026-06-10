@@ -136,10 +136,15 @@ func TestReviewCmd_ListModels(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"claude-code", "opus", "sonnet", "codex", "gpt-5-codex", "gemini", "gemini-2.5-pro"} {
+	// claude-code advertises real aliases; codex/gemini have no enumeration
+	// command, so they list no models and point at Default/--model instead.
+	for _, want := range []string{"claude-code", "opus", "sonnet", "codex", "gemini", "no advertised models"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--models output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "gpt-5-codex") {
+		t.Errorf("--models should not invent example codex models:\n%s", out)
 	}
 }
 
@@ -155,11 +160,11 @@ func TestReviewCmd_ListModelsFilteredByAgent(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "gpt-5-codex") {
-		t.Errorf("expected codex models, got:\n%s", out)
+	if !strings.Contains(out, "codex") || !strings.Contains(out, "no advertised models") {
+		t.Errorf("expected codex section with no-advertised-models note, got:\n%s", out)
 	}
-	if strings.Contains(out, "gemini-2.5-pro") {
-		t.Errorf("--agent codex should not list gemini models:\n%s", out)
+	if strings.Contains(out, "gemini") {
+		t.Errorf("--agent codex should not list gemini:\n%s", out)
 	}
 }
 
