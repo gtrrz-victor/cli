@@ -265,9 +265,11 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 	}
 
 	// Interactive path: the guided wizard already lists the agents, so don't
-	// duplicate the catalog here.
+	// duplicate the catalog here. Pass the raw --profile value (empty when not
+	// given) so the guided setup runs the "what kind of review?" type picker
+	// instead of being silently defaulted to the general profile.
 	if interactive.IsTerminalWriter(out) && interactive.CanPromptInteractively() {
-		name, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, profileName, false)
+		name, profile, setupErr := RunReviewGuidedSetup(ctx, out, installed, deps.ReviewerFor, strings.TrimSpace(profileOverride), false)
 		if setupErr != nil {
 			return handlePickerError(cmd, silentErr, setupErr)
 		}
