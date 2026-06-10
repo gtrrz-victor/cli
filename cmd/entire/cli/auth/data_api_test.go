@@ -80,9 +80,6 @@ func TestResolveDataAPIToken_ExchangesForDataHostOrigin(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
-	// v2 provider so the exchange POSTs to the core's /oauth/token STS path.
-	SetProviderForTest(t, Provider{ClientID: "entire-cli", TokenPath: "/oauth/token", STSPath: "/oauth/token"})
-
 	const dataOrigin = "https://data.example"
 	const wantAudience = "https://data.example"
 

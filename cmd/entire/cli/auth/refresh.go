@@ -111,10 +111,6 @@ func (s contextTokenStore) DeleteTokens(string) error {
 // manager — pinned to AuthBaseURL — has when the active context lives on a
 // different core).
 //
-// STSPath is set unconditionally even for the login-only provider: Refresh()
-// never reaches the exchange path, so an unused STSPath is harmless, and a
-// single config keeps the two providers from drifting.
-//
 // transport carries the caller's TLS configuration; allowInsecureHTTP permits
 // an http:// core/resource for loopback/dev.
 func newContextTokenManager(c *contexts.Context, transport http.RoundTripper, allowInsecureHTTP bool) (*tokenmanager.Manager, error) {
@@ -126,13 +122,13 @@ func newContextTokenManager(c *contexts.Context, transport http.RoundTripper, al
 	}
 	mgr, err := tokenmanager.New(tokenmanager.Config{
 		Issuer:            strings.TrimRight(c.CoreURL, "/"),
-		ClientID:          CurrentProvider().ClientID,
-		STSPath:           CurrentProvider().STSPath,
-		RefreshPath:       CurrentProvider().TokenPath,
+		ClientID:          oauthClientID,
+		STSPath:           oauthSTSPath,
+		RefreshPath:       oauthTokenPath,
 		Store:             contextTokenStore{service: c.KeychainService, handle: c.Handle},
 		Transport:         transport,
 		AllowInsecureHTTP: allowInsecureHTTP,
-		UserAgent:         CurrentProvider().ClientID,
+		UserAgent:         oauthClientID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init token manager for context %q: %w", c.Name, err)
