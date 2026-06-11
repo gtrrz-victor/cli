@@ -1311,10 +1311,8 @@ func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *gi
 		sb.WriteString("\n")
 		sb.WriteString(styles.sectionRule(label, styles.width))
 		sb.WriteString("\n")
-		// External agents' native transcripts need the agent binary to
-		// convert them to a displayable format (same as the committed path).
-		// Compact only the transcript that will be rendered: full mode shows
-		// the full transcript, otherwise verbose shows the scoped slice.
+		// External-agent transcripts are stored in native format; compact
+		// the one being rendered so it displays.
 		if full && len(fullTranscript) > 0 {
 			fullTranscript = maybeCompactExternalTranscript(ctx, fullTranscript, agentType)
 		} else if verbose && len(scopedTranscript) > 0 {
@@ -1664,11 +1662,9 @@ func formatCheckpointOutput(ctx context.Context, summary *checkpoint.CheckpointS
 		sb.WriteString("\n")
 		sb.WriteString(styles.sectionRule(label, styles.width))
 		sb.WriteString("\n")
-		// External agents' native transcripts need the agent binary to convert
-		// them to a displayable format. Scoping already happened on the native
-		// transcript above (CheckpointTranscriptStart indexes the stored
-		// format, and compaction changes line counts), so compact only the
-		// bytes that will be displayed.
+		// Compact only the transcript being rendered, and only after scoping:
+		// CheckpointTranscriptStart indexes the stored format, and compaction
+		// changes line counts.
 		displayFull := content.Transcript
 		displayScoped := scopedTranscript
 		if full && len(displayFull) > 0 {
