@@ -74,7 +74,7 @@ func ResolveDataAPIToken(ctx context.Context, dataBaseURL string) (string, error
 
 	selected, err := resolveContextForAPI(dctx, userdirs.Config(), userdirs.Cache(), host, httpClient, nil)
 	if errors.Is(err, clusterdiscovery.ErrDiscoveryUnavailable) {
-		return "", fmt.Errorf("%s does not advertise its trusted login servers (/.well-known/entire-api.json unreachable); cannot authenticate: %w", host, err)
+		return "", fmt.Errorf("%s does not advertise its trusted login servers (/.well-known/entire-api.json missing or unreachable); cannot authenticate: %w", host, err)
 	}
 	if err != nil {
 		return "", err
