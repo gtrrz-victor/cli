@@ -241,6 +241,59 @@ func TestRender_WrappedLabel(t *testing.T) {
 	}
 }
 
+// An & inside a label or quoted edge label is content; only the structural
+// multi-edge shorthand (`A --> B & C`) forces fallback.
+func TestRender_AmpersandInLabel(t *testing.T) {
+	t.Parallel()
+
+	out, ok := Render("flowchart LR\n  A[R&D team] -->|Q&A pass| B[Ship]")
+	if !ok {
+		t.Fatalf("expected & inside labels to render, got fallback")
+	}
+	if !strings.Contains(out, "R&D team") || !strings.Contains(out, "Q&A pass") {
+		t.Errorf("expected & labels preserved, got:\n%s", out)
+	}
+}
+
+// Mermaid comments occupy whole lines; %% inside a label is content.
+func TestRender_PercentHandling(t *testing.T) {
+	t.Parallel()
+
+	src := "flowchart LR\n" +
+		"  %% this whole line is a comment\n" +
+		"  A[\"50%% done\"] --> B[Finish]\n"
+	out, ok := Render(src)
+	if !ok {
+		t.Fatalf("expected %%%% in label to render, got fallback")
+	}
+	if !strings.Contains(out, "50%% done") {
+		t.Errorf("expected label with %%%% preserved, got:\n%s", out)
+	}
+	if strings.Contains(out, "comment") {
+		t.Errorf("expected comment line dropped, got:\n%s", out)
+	}
+}
+
+// Double-width runes (CJK) must not skew sibling alignment: the rendered
+// rows contain no shadow placeholders, and sibling boxes still share rows.
+func TestRender_WideRunes(t *testing.T) {
+	t.Parallel()
+
+	src := "flowchart LR\n" +
+		"  A[日本語のラベル] -->|はい| B[完了]\n" +
+		"  A -->|no| C[Retry]\n"
+	out, ok := Render(src)
+	if !ok {
+		t.Fatalf("expected CJK labels to render")
+	}
+	if strings.ContainsRune(out, '\x00') {
+		t.Errorf("expected no shadow placeholders in output:\n%s", out)
+	}
+	if lineOf(out, "完了") != lineOf(out, "Retry") {
+		t.Errorf("expected sibling boxes on the same row despite wide runes:\n%s", out)
+	}
+}
+
 // not-renderable cases must return ok=false so the caller can fall back to
 // the raw mermaid source. We never render a misleading partial diagram.
 func TestRender_FallsBack(t *testing.T) {
