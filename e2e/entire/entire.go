@@ -65,7 +65,7 @@ func CleanForce(t *testing.T, dir string) string {
 	return run(t, dir, "clean", "--force")
 }
 
-// RewindList runs `entire rewind --list` and parses the JSON output.
+// RewindList runs `entire checkpoint rewind --list` and parses the JSON output.
 func RewindList(t *testing.T, dir string) []RewindPoint {
 	t.Helper()
 	out := runStdout(t, dir, "checkpoint", "rewind", "--list")
@@ -117,7 +117,7 @@ func runStdout(t *testing.T, dir string, args ...string) string {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("entire %s failed: %v\n%s%s", strings.Join(args, " "), err, out, stderr.String())
+		t.Fatalf("entire %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, out, stderr.String())
 	}
 	return strings.TrimSpace(string(out))
 }
