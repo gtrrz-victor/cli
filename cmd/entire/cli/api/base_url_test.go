@@ -159,7 +159,9 @@ func TestResolveURL(t *testing.T) {
 // empty — errors with the --server replacement hint; unset passes.
 func TestRejectRemovedAuthEnv(t *testing.T) {
 	t.Run("unset passes", func(t *testing.T) {
-		if os.Getenv(AuthBaseURLEnvVar) != "" {
+		// LookupEnv, not Getenv: the gate rejects a present-but-empty var
+		// too, so an empty export in the parent shell must also skip.
+		if _, ok := os.LookupEnv(AuthBaseURLEnvVar); ok {
 			t.Skipf("%s set in test environment", AuthBaseURLEnvVar)
 		}
 		if err := RejectRemovedAuthEnv(); err != nil {
