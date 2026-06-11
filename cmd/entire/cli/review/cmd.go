@@ -86,9 +86,9 @@ func NewCommand(deps Deps) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use: "inspect",
-		// `scout` and `review` are kept as aliases for back-compat while inspect
-		// matures.
-		Aliases: []string{"scout", "review"},
+		// `review` shipped on main as the hidden labs command, so keep it as an
+		// alias. `scout` only existed on this branch, so it is not aliased.
+		Aliases: []string{"review"},
 		// Hidden from `entire help` while the feature is still maturing —
 		// users who know about it can still run `entire inspect` / `entire
 		// inspect --help` and the command works normally.
