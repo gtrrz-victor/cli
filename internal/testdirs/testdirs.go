@@ -52,7 +52,8 @@ func Dir(surface string) (string, bool) {
 	}
 	d, err := os.MkdirTemp("", "entire-test-"+surface+"-")
 	if err != nil {
-		return "", false
+		// Never fall back to home-relative defaults under `go test`.
+		return os.TempDir(), true
 	}
 	dirs[surface] = d
 	return d, true
