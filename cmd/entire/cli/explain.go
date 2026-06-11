@@ -1313,10 +1313,11 @@ func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *gi
 		sb.WriteString("\n")
 		// External agents' native transcripts need the agent binary to
 		// convert them to a displayable format (same as the committed path).
-		if len(fullTranscript) > 0 {
+		// Compact only the transcript that will be rendered: full mode shows
+		// the full transcript, otherwise verbose shows the scoped slice.
+		if full && len(fullTranscript) > 0 {
 			fullTranscript = maybeCompactExternalTranscript(ctx, fullTranscript, agentType)
-		}
-		if len(scopedTranscript) > 0 {
+		} else if verbose && len(scopedTranscript) > 0 {
 			scopedTranscript = maybeCompactExternalTranscript(ctx, scopedTranscript, agentType)
 		}
 	}
@@ -1672,8 +1673,7 @@ func formatCheckpointOutput(ctx context.Context, summary *checkpoint.CheckpointS
 		displayScoped := scopedTranscript
 		if full && len(displayFull) > 0 {
 			displayFull = maybeCompactExternalTranscript(ctx, displayFull, meta.Agent)
-		}
-		if verbose && len(displayScoped) > 0 {
+		} else if verbose && len(displayScoped) > 0 {
 			displayScoped = maybeCompactExternalTranscript(ctx, displayScoped, meta.Agent)
 		}
 		appendTranscriptSection(&sb, verbose, full, displayFull, displayScoped, content.Prompts, meta.Agent)
