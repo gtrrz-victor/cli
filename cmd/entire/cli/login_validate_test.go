@@ -34,10 +34,10 @@ func TestValidateReceivedToken_OpaqueTokenAccepted(t *testing.T) {
 func TestValidateReceivedToken_DotBearingOpaqueTokenAccepted(t *testing.T) {
 	t.Parallel()
 
-	// 3-segment opaque token whose segments aren't valid base64url. Previously
-	// rejected because ParseClaims falls through ErrMalformedJWT and surfaces
-	// a generic decode error; should be accepted now as just-another-opaque-
-	// token so an AS issuing dot-bearing non-JWT bearers can still log in.
+	// 3-segment opaque token whose segments aren't valid base64url: treated
+	// as just-another-opaque-token here. (It still can't complete a login —
+	// RecordLoginContext needs iss/handle claims — but the rejection must
+	// come from there with a claims error, not from this trust check.)
 	if err := validateReceivedToken("aaa.bbb.ccc", "https://example.test", time.Now()); err != nil {
 		t.Fatalf("validateReceivedToken(3-seg opaque) = %v, want nil", err)
 	}

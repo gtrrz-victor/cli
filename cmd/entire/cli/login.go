@@ -139,10 +139,9 @@ func parseLoginServer(raw string) (string, error) {
 	return api.NormalizeOriginURL(raw), nil
 }
 
-// requireSecureLoginServer enforces TLS for the chosen login server.
-// Unlike requireSecureBaseURL it checks only the server being dialled —
-// login never touches the data API. --insecure-http-auth opts in to
-// http:// (and enables it process-wide for the token save path).
+// requireSecureLoginServer enforces TLS for the chosen login server — the
+// only host login dials. --insecure-http-auth opts in to http:// (and
+// enables it process-wide for the token save path).
 func requireSecureLoginServer(server string, insecureHTTPAuth bool) error {
 	if insecureHTTPAuth {
 		auth.EnableInsecureHTTP()
@@ -339,20 +338,20 @@ func persistLogin(outW, errW io.Writer, baseURL, token, refreshToken string) err
 // a token from a different issuer than the one we asked, or one whose
 // claims are already-expired).
 //
-// Opaque (non-JWT) tokens are permitted — the AS may not issue JWTs at
-// all. Only when we can parse the token as a JWT do we cross-check the
-// claims. Unsigned (alg:none) JWTs are always rejected via
-// tokens.ErrUnsignedJWT; every other parse failure (3-segment-but-not-
-// base64, payload-not-JSON, header-not-JSON, etc.) is treated as opaque
-// and accepted, so a server issuing dot-bearing non-JWT bearer tokens
-// can still log in.
+// Opaque (non-JWT) tokens pass this check unjudged — only unsigned
+// (alg:none) JWTs are rejected here, via tokens.ErrUnsignedJWT. They
+// still cannot complete a login: RecordLoginContext is the sole
+// persistence path and requires iss/handle claims to key the context,
+// so a claims-free token fails there with a parse error. Entire-core
+// always issues claim-bearing JWTs; legacy opaque-token servers are no
+// longer supported.
 func validateReceivedToken(rawToken, issuerURL string, now time.Time) error {
 	claims, err := tokens.ParseClaims(rawToken)
 	if errors.Is(err, tokens.ErrUnsignedJWT) {
 		return err //nolint:wrapcheck // sentinel surfaces verbatim for caller's errors.Is
 	}
 	if err != nil {
-		return nil //nolint:nilerr // any parse failure other than alg:none means the token isn't a JWT — opaque tokens are valid
+		return nil //nolint:nilerr // any parse failure other than alg:none means the token isn't a JWT — not this check's concern (RecordLoginContext gates on claims)
 	}
 
 	// iss check: the token must claim to come from the issuer we sent

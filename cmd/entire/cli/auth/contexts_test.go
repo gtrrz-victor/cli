@@ -12,6 +12,10 @@ import (
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 )
 
+// testRefreshToken is the refresh-token fixture shared by the tests that
+// seed a refreshable login.
+const testRefreshToken = "entr_refresh"
+
 // makeJWT builds a three-segment JWT-shaped string with a non-"none" alg
 // (so ParseClaims accepts it) and the given payload. The signature segment
 // is arbitrary — claims are parsed unverified.
@@ -153,14 +157,14 @@ func TestRemoveCurrentContext(t *testing.T) {
 
 	exp := time.Now().Add(time.Hour).Unix()
 	token := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
-	if _, err := RecordLoginContext(token, "entr_refresh", true); err != nil {
+	if _, err := RecordLoginContext(token, testRefreshToken, true); err != nil {
 		t.Fatalf("RecordLoginContext: %v", err)
 	}
 	if _, current, err := Contexts(); err != nil || current == "" {
 		t.Fatalf("precondition: expected a current context (current=%q, err=%v)", current, err)
 	}
 	svc := tokenstore.CoreKeyringService("https://core.example.com")
-	if r, _ := tokenstore.Get(tokenstore.RefreshService(svc), "alice"); r != "entr_refresh" { //nolint:errcheck // read-back; only the value matters
+	if r, _ := tokenstore.Get(tokenstore.RefreshService(svc), "alice"); r != testRefreshToken { //nolint:errcheck // read-back; only the value matters
 		t.Fatalf("precondition: expected refresh slot seeded, got %q", r)
 	}
 
@@ -374,5 +378,42 @@ func TestRecordLoginContext_RejectsTokenWithoutIssuer(t *testing.T) {
 	token := makeJWT(t, `{"handle":"alice"}`)
 	if _, err := RecordLoginContext(token, "", true); err == nil {
 		t.Fatal("expected error for token without iss claim, got nil")
+	}
+}
+
+// TestRemoveContext_KeychainDeleteFailureAbortsLogout pins the logout
+// success contract: when the keyring delete fails, the context entry must
+// survive and the error must surface — never "Logged out." over a live
+// refresh token.
+func TestRemoveContext_KeychainDeleteFailureAbortsLogout(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("ENTIRE_CONFIG_DIR", cfgDir)
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	seedRestore := tokenstore.UseFileBackendForTesting(path)
+
+	exp := time.Now().Add(time.Hour).Unix()
+	token := makeJWT(t, fmt.Sprintf(`{"iss":"https://core.example.com","handle":"alice","exp":%d}`, exp))
+	name, err := RecordLoginContext(token, testRefreshToken, true)
+	if err != nil {
+		t.Fatalf("RecordLoginContext: %v", err)
+	}
+	seedRestore()
+
+	svc := tokenstore.CoreKeyringService("https://core.example.com")
+	failRefreshDelete := func(service, _ string) bool { return service == tokenstore.RefreshService(svc) }
+	t.Cleanup(tokenstore.UseFailingDeleteBackendForTesting(path, failRefreshDelete))
+
+	if err := RemoveContext(name); err == nil {
+		t.Fatal("RemoveContext: want error when the refresh-slot delete fails")
+	}
+	f, err := contexts.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("reload contexts: %v", err)
+	}
+	if f.Find(name) == nil {
+		t.Fatal("context entry was removed despite the failed credential delete")
+	}
+	if r, _ := tokenstore.Get(tokenstore.RefreshService(svc), "alice"); r != testRefreshToken { //nolint:errcheck // read-back
+		t.Fatalf("refresh slot = %q, want it untouched after the aborted logout", r)
 	}
 }

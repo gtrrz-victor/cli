@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/entireio/cli/internal/entireclient/contexts"
@@ -8,64 +9,72 @@ import (
 	"github.com/entireio/cli/internal/entireclient/userdirs"
 )
 
-// RemoveCurrentContext deletes the active context from contexts.json and
-// its keyring token, clearing current_context. It is a no-op (returns nil)
+// RemoveCurrentContext deletes the active context's keyring tokens and its
+// contexts.json entry, clearing current_context. It is a no-op (returns nil)
 // when there is no current context. Used by logout.
 func RemoveCurrentContext() error {
-	// Read-modify-write in a single locked Modify so the context we delete
-	// is exactly the one we capture the keychain slot from (separate Load +
-	// Modify would race a concurrent `auth use`).
-	var svc, handle string
-	if err := contexts.Modify(userdirs.Config(), func(f *contexts.File) (bool, error) {
-		current := f.Find(f.CurrentContext)
-		if current == nil {
-			return false, nil
-		}
-		svc, handle = current.KeychainService, current.Handle
-		// Delete clears current_context because we're deleting the active
-		// one — logged out means logged out, no switch to another identity.
-		f.Delete(current.Name)
-		return true, nil
-	}); err != nil {
+	f, err := contexts.Load(userdirs.Config())
+	if err != nil {
 		return fmt.Errorf("remove current context: %w", err)
 	}
-	deleteContextKeychain(svc, handle)
-	return nil
+	current := f.Find(f.CurrentContext)
+	if current == nil {
+		return nil
+	}
+	return RemoveContext(current.Name)
 }
 
-// RemoveContext deletes the named context from contexts.json and its keyring
-// tokens. A missing context is a no-op. Used by `logout --all-contexts` to
-// drain every saved login. File.Delete clears current_context when name was
+// RemoveContext deletes the named context's keyring tokens, then its
+// contexts.json entry. A missing context is a no-op. Used by logout and
+// `logout --all-contexts`. File.Delete clears current_context when name was
 // the active one, so removing the current context this way also logs it out.
+//
+// Credential deletion comes first and is part of the success contract:
+// removing the entry and then failing the keyring delete would report
+// "Logged out." while the long-lived refresh token survives on the machine,
+// mintable by any keyring-capable process. The inverse partial failure
+// (slots gone, entry left) is benign — the context reads as not logged in
+// and a retried logout no-ops the deletes.
 func RemoveContext(name string) error {
-	var svc, handle string
+	f, err := contexts.Load(userdirs.Config())
+	if err != nil {
+		return fmt.Errorf("remove context %q: %w", name, err)
+	}
+	c := f.Find(name)
+	if c == nil {
+		return nil
+	}
+	if err := deleteContextKeychain(c.KeychainService, c.Handle); err != nil {
+		return fmt.Errorf("remove credentials for %q: %w", name, err)
+	}
 	if err := contexts.Modify(userdirs.Config(), func(f *contexts.File) (bool, error) {
-		c := f.Find(name)
-		if c == nil {
+		if f.Find(name) == nil {
 			return false, nil
 		}
-		svc, handle = c.KeychainService, c.Handle
 		f.Delete(name)
 		return true, nil
 	}); err != nil {
 		return fmt.Errorf("remove context %q: %w", name, err)
 	}
-	deleteContextKeychain(svc, handle)
 	return nil
 }
 
-// deleteContextKeychain best-effort removes a context's keyring slots,
-// sequenced off the context just removed from contexts.json. A missing entry
-// is fine — the contexts.json removal is what makes us "logged out". Both the
-// access slot and its paired refresh slot must go: leaving the long-lived
-// refresh token behind would let any later keyring-capable process mint fresh
-// access tokens after logout.
-func deleteContextKeychain(svc, handle string) {
+// deleteContextKeychain removes a context's keyring slots. A missing entry
+// is fine; any other failure surfaces so logout doesn't claim success over
+// surviving credentials. The refresh slot goes first — it's the long-lived
+// credential, and if the second delete then fails, the leftover access
+// token at least expires on its own.
+func deleteContextKeychain(svc, handle string) error {
 	if svc == "" || handle == "" {
-		return
+		return nil
 	}
-	_ = tokenstore.Delete(svc, handle)                            //nolint:errcheck // best-effort; contexts.json removal is the source of truth for logout
-	_ = tokenstore.Delete(tokenstore.RefreshService(svc), handle) //nolint:errcheck // best-effort; absent refresh slot is fine
+	if err := tokenstore.Delete(tokenstore.RefreshService(svc), handle); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
+		return fmt.Errorf("delete refresh token: %w", err)
+	}
+	if err := tokenstore.Delete(svc, handle); err != nil && !errors.Is(err, tokenstore.ErrNotFound) {
+		return fmt.Errorf("delete access token: %w", err)
+	}
+	return nil
 }
 
 // SetCurrentContext makes name the active context. Returns an error when
