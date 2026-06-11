@@ -124,17 +124,20 @@ func parseLoginServer(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
 	}
+	// Error messages echo u.Redacted(), not raw: the URL may carry
+	// userinfo (that's one of the rejection cases), and stderr often ends
+	// up in CI logs where a password must not appear.
 	switch {
 	case u.Scheme != schemeHTTPS && u.Scheme != schemeHTTP:
-		return "", fmt.Errorf("scheme must be http or https, got %q", raw)
+		return "", fmt.Errorf("scheme must be http or https, got %q", u.Redacted())
 	case u.Host == "":
-		return "", fmt.Errorf("missing host in %q", raw)
+		return "", fmt.Errorf("missing host in %q", u.Redacted())
 	case u.User != nil:
-		return "", fmt.Errorf("userinfo not allowed in %q", raw)
+		return "", fmt.Errorf("userinfo not allowed in %q", u.Redacted())
 	case u.Path != "" && u.Path != "/":
-		return "", fmt.Errorf("path not allowed in %q (use the bare origin)", raw)
+		return "", fmt.Errorf("path not allowed in %q (use the bare origin)", u.Redacted())
 	case u.RawQuery != "" || u.Fragment != "":
-		return "", fmt.Errorf("query/fragment not allowed in %q", raw)
+		return "", fmt.Errorf("query/fragment not allowed in %q", u.Redacted())
 	}
 	return api.NormalizeOriginURL(raw), nil
 }
