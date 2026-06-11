@@ -124,17 +124,20 @@ func parseLoginServer(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
 	}
+	// Error messages echo u.Redacted(), not raw: the URL may carry
+	// userinfo (that's one of the rejection cases), and stderr often ends
+	// up in CI logs where a password must not appear.
 	switch {
 	case u.Scheme != schemeHTTPS && u.Scheme != schemeHTTP:
-		return "", fmt.Errorf("scheme must be http or https, got %q", raw)
+		return "", fmt.Errorf("scheme must be http or https, got %q", u.Redacted())
 	case u.Host == "":
-		return "", fmt.Errorf("missing host in %q", raw)
+		return "", fmt.Errorf("missing host in %q", u.Redacted())
 	case u.User != nil:
-		return "", fmt.Errorf("userinfo not allowed in %q", raw)
+		return "", fmt.Errorf("userinfo not allowed in %q", u.Redacted())
 	case u.Path != "" && u.Path != "/":
-		return "", fmt.Errorf("path not allowed in %q (use the bare origin)", raw)
+		return "", fmt.Errorf("path not allowed in %q (use the bare origin)", u.Redacted())
 	case u.RawQuery != "" || u.Fragment != "":
-		return "", fmt.Errorf("query/fragment not allowed in %q", raw)
+		return "", fmt.Errorf("query/fragment not allowed in %q", u.Redacted())
 	}
 	return api.NormalizeOriginURL(raw), nil
 }
@@ -321,21 +324,31 @@ func persistLogin(outW, errW io.Writer, baseURL, token, refreshToken string) err
 		return fmt.Errorf("reject login token: %w", err)
 	}
 
-	store := auth.NewStore()
-
-	// Login deliberately uses the legacy SaveToken (string, string)
-	// surface — we only have an access-token string at this point;
-	// neither flow's client returns a TokenSet here.
-	if err := store.SaveToken(baseURL, token); err != nil {
-		return fmt.Errorf("save auth token: %w", err)
+	// Every legacy-keyring read in the CLI keys by api.AuthBaseURL(),
+	// which is always the default origin now that ENTIRE_AUTH_BASE_URL is
+	// retired. A legacy entry saved under any other --server origin would
+	// be unreadable forever (and undeletable by logout, which deletes the
+	// default key) — so only write it when this login targeted that origin.
+	legacyReadable := baseURL == api.AuthBaseURL()
+	if legacyReadable {
+		// Login deliberately uses the legacy SaveToken (string, string)
+		// surface — we only have an access-token string at this point;
+		// neither flow's client returns a TokenSet here.
+		if err := auth.NewStore().SaveToken(baseURL, token); err != nil {
+			return fmt.Errorf("save auth token: %w", err)
+		}
 	}
 
 	// Dual-write the shared contexts.json credential model so the git
 	// remote helper (and entiredb's CLIs) can authenticate against any
-	// entitled cluster from this login. Best-effort: the legacy entry
-	// above remains the control-plane source of truth, so a failure here
-	// must not fail the login — warn and continue.
+	// entitled cluster from this login. Best-effort only when the legacy
+	// entry above exists as the control-plane source of truth; for a
+	// non-default --server the context is the sole record of the login,
+	// so failing to write it means the login failed.
 	if _, err := auth.RecordLoginContext(token, refreshToken, true); err != nil {
+		if !legacyReadable {
+			return fmt.Errorf("record login context: %w", err)
+		}
 		fmt.Fprintf(errW, "Warning: logged in, but could not record a shareable context (clone via entire:// may need a re-login): %v\n", err)
 	}
 
