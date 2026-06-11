@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestDir_StablePerSurfaceAndNeverUnderHome(t *testing.T) {
+func TestDir_StablePerSurfaceAndNeverRealConfigOrCache(t *testing.T) {
 	t.Parallel()
 
 	cfg1, ok := Dir("config")
@@ -27,13 +27,13 @@ func TestDir_StablePerSurfaceAndNeverUnderHome(t *testing.T) {
 		t.Fatalf("surfaces must not share a directory: %q", cache)
 	}
 
-	// The invariant is "never the real config/cache locations" — not "never
-	// under $HOME": os.MkdirTemp respects TMPDIR, which may itself live under
-	// the home directory on some setups.
+	// The invariant is "never the real app locations" — not "never under
+	// $HOME" or even "never under ~/.cache": os.MkdirTemp respects TMPDIR,
+	// which is commonly set to places like $HOME/.cache/tmp.
 	if home, err := os.UserHomeDir(); err == nil {
 		for _, realDir := range []string{
-			filepath.Join(home, ".config"),
-			filepath.Join(home, ".cache"),
+			filepath.Join(home, ".config", "entire"),
+			filepath.Join(home, ".cache", "entire"),
 		} {
 			for _, d := range []string{cfg1, cache} {
 				if d == realDir || strings.HasPrefix(d, realDir+string(os.PathSeparator)) {
