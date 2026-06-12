@@ -312,7 +312,7 @@ func newAttributionResolver(ctx context.Context, fetchOnMiss bool) (*attribution
 		return nil, fmt.Errorf("not a git repository: %w", err)
 	}
 
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	store.SetBlobFetcher(FetchBlobsByHash)
 
 	return &attributionResolver{
