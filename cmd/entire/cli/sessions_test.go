@@ -1115,6 +1115,56 @@ func TestTokensCmd_JSONOutputReportsLimitations(t *testing.T) {
 	}
 }
 
+func TestTokensCmd_JSONOutputReportsAPICallOnlyUsage(t *testing.T) {
+	setupStopTestRepo(t)
+
+	ctx := context.Background()
+	state := makeSessionState("test-tokens-api-only", session.PhaseActive)
+	state.AgentType = testAgentClaude
+	state.TokenUsage = &agent.TokenUsage{
+		APICallCount: 25,
+	}
+
+	if err := strategy.SaveSessionState(ctx, state); err != nil {
+		t.Fatalf("SaveSessionState() error = %v", err)
+	}
+
+	cmd := newTokensCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"test-tokens-api-only", "--json"})
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	var result sessionTokensReport
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("expected valid JSON, got parse error: %v\noutput: %s", err, stdout.String())
+	}
+	if result.Tokens == nil {
+		t.Fatalf("expected API-call-only token usage to be reported")
+	}
+	if result.Tokens.Total != 0 || result.Tokens.APICalls != 25 {
+		t.Fatalf("unexpected token usage: %+v", result.Tokens)
+	}
+	if reportHasSessionRecommendation(result, "no-token-data") {
+		t.Fatalf("expected API-call-only usage to avoid no-token-data recommendation, got %+v", result.Recommendations)
+	}
+	if !reportHasSessionRecommendation(result, "api-call-amplification") {
+		t.Fatalf("expected api-call-amplification recommendation, got %+v", result.Recommendations)
+	}
+}
+
+func reportHasSessionRecommendation(report sessionTokensReport, id string) bool {
+	for _, rec := range report.Recommendations {
+		if rec.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSessionsCmd_TokensSubcommand(t *testing.T) {
 	setupStopTestRepo(t)
 
@@ -1300,7 +1350,7 @@ func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("beefbeefcafe")
-	if err := checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "checkpoint-token-session",
 		Strategy:     strategy.StrategyNameManualCommit,
@@ -1362,7 +1412,7 @@ func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {
 func TestCheckpointTokensCmd_TextOutputWithMultipleSessionsUsesAggregateScope(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	cpID := id.MustCheckpointID("feedfeedcafe")
 
 	if err := store.WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
@@ -1440,7 +1490,7 @@ func TestCheckpointTokensCmd_JSONOutput(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()
 	cpID := id.MustCheckpointID("cafe00001234")
-	if err := checkpoint.NewGitStore(repo).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(ctx, checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,
 		SessionID:    "checkpoint-token-json",
 		Strategy:     strategy.StrategyNameManualCommit,

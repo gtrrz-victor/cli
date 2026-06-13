@@ -203,8 +203,11 @@ func buildSessionTokensReport(state *strategy.SessionState, status string) sessi
 }
 
 func buildSessionTokensUsage(usage *agent.TokenUsage) *sessionTokensUsage {
+	if usage == nil {
+		return nil
+	}
 	total := totalTokens(usage)
-	if total == 0 {
+	if total == 0 && usage.APICallCount == 0 {
 		return nil
 	}
 	return &sessionTokensUsage{

@@ -8,7 +8,7 @@ import (
 )
 
 // newCheckpointGroupCmd builds the `entire checkpoint` parent command and
-// registers list/explain/search as children, plus the deprecated rewind.
+// registers list/explain/tokens/search as children, plus the deprecated rewind.
 func newCheckpointGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "checkpoint",
