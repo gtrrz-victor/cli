@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1282,6 +1283,17 @@ func TestTokensCmd_CurrentAndSessionIDAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestTokenCommandError_SuppressesCancellation(t *testing.T) {
+	err := tokenCommandError(fmt.Errorf("wrapped: %w", context.Canceled))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled in error chain, got: %v", err)
+	}
+	var silentErr *SilentError
+	if !errors.As(err, &silentErr) {
+		t.Fatalf("expected SilentError, got: %T %v", err, err)
+	}
+}
+
 // --- checkpoint tokens tests ---
 
 func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {
@@ -1466,6 +1478,44 @@ func TestCheckpointTokensCmd_JSONOutput(t *testing.T) {
 	}
 	if result.Tokens == nil || result.Tokens.Total != 150 {
 		t.Fatalf("expected token total 150, got: %+v", result.Tokens)
+	}
+}
+
+func TestCheckpointTokensReport_UsesRootSummaryWhenSessionMetadataIncomplete(t *testing.T) {
+	cpID := id.MustCheckpointID("abc123abc123")
+	report := buildCheckpointTokensReport(
+		cpID,
+		&checkpoint.CheckpointSummary{
+			CheckpointID: cpID,
+			Sessions: []checkpoint.SessionFilePaths{
+				{Metadata: "0/metadata.json"},
+				{Metadata: "1/metadata.json"},
+			},
+			TokenUsage: &agent.TokenUsage{
+				InputTokens:  1000,
+				OutputTokens: 500,
+				APICallCount: 7,
+			},
+		},
+		[]*checkpoint.CommittedMetadata{
+			{
+				SessionID: "readable-session",
+				TokenUsage: &agent.TokenUsage{
+					InputTokens: 100,
+				},
+			},
+		},
+		1,
+	)
+
+	if report.Tokens == nil {
+		t.Fatalf("expected token data, got nil")
+	}
+	if report.Tokens.Total != 1500 {
+		t.Fatalf("expected root summary total 1500, got %+v", report.Tokens)
+	}
+	if len(report.Limitations) == 0 || !strings.Contains(report.Limitations[0], "1 checkpoint session metadata file could not be read") {
+		t.Fatalf("expected incomplete metadata limitation, got %+v", report.Limitations)
 	}
 }
 

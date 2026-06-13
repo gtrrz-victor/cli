@@ -75,8 +75,9 @@ func newTokensCmd() *cobra.Command {
 		Long: `Show token usage and optimization recommendations for a session.
 
 When no session ID is provided, Entire reports on the most recently active
-session for the current worktree. The report is local and deterministic: it uses
-token and context data Entire already captured for the session.`,
+session, preferring the current worktree and falling back to the newest session
+if no state matches this worktree. The report uses token and context data Entire
+already captured for the session.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if currentFlag && len(args) > 0 {
@@ -92,7 +93,7 @@ token and context data Entire already captured for the session.`,
 	}
 
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "Output as JSON")
-	cmd.Flags().BoolVar(&currentFlag, "current", false, "Use the current worktree's most recent session")
+	cmd.Flags().BoolVar(&currentFlag, "current", false, "Prefer the current worktree's most recent session")
 	return cmd
 }
 
@@ -107,7 +108,7 @@ func runSessionTokens(ctx context.Context, cmd *cobra.Command, sessionID string,
 
 	state, err := strategy.LoadSessionState(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to load session: %w", err)
+		return tokenCommandError(fmt.Errorf("failed to load session: %w", err))
 	}
 	if state == nil {
 		cmd.SilenceUsage = true
@@ -121,6 +122,20 @@ func runSessionTokens(ctx context.Context, cmd *cobra.Command, sessionID string,
 	}
 	writeSessionTokensText(cmd.OutOrStdout(), report)
 	return nil
+}
+
+func tokenCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var silent *SilentError
+	if errors.As(err, &silent) {
+		return err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return NewSilentError(err)
+	}
+	return err
 }
 
 func buildSessionTokensReport(state *strategy.SessionState, status string) sessionTokensReport {

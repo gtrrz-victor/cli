@@ -38,8 +38,11 @@ func newCheckpointTokensCmd() *cobra.Command {
 		Short: "Show token usage and optimization recommendations for a checkpoint",
 		Long: `Show token usage and optimization recommendations for a checkpoint.
 
-The report reads committed checkpoint metadata and is local and deterministic.
-Checkpoint IDs may be abbreviated as long as the prefix is unambiguous.`,
+The report reads committed checkpoint metadata using the same checkpoint
+resolution path as 'entire checkpoint explain'. Checkpoint IDs may be abbreviated
+as long as the prefix is unambiguous; positional targets may also resolve from a
+commit ref with an Entire-Checkpoint trailer, and missing metadata may be fetched
+from the checkpoint remote.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCheckpointTokens(cmd.Context(), cmd, args[0], jsonFlag)
@@ -56,12 +59,12 @@ func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPr
 		defer lookup.Close()
 	}
 	if err != nil {
-		return err
+		return tokenCommandError(err)
 	}
 
 	summary, err := lookup.store.ReadCommitted(ctx, cpID)
 	if err != nil {
-		return fmt.Errorf("failed to read checkpoint: %w", err)
+		return tokenCommandError(fmt.Errorf("failed to read checkpoint: %w", err))
 	}
 	if summary == nil || len(summary.Sessions) == 0 {
 		cmd.SilenceUsage = true
@@ -69,16 +72,12 @@ func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPr
 		return NewSilentError(fmt.Errorf("%w: %s", checkpoint.ErrCheckpointNotFound, checkpointIDPrefix))
 	}
 
-	metas := make([]*checkpoint.CommittedMetadata, 0, len(summary.Sessions))
-	for i := range len(summary.Sessions) {
-		meta, err := lookup.store.ReadSessionMetadata(ctx, cpID, i)
-		if err != nil {
-			return fmt.Errorf("failed to read checkpoint session %d metadata: %w", i, err)
-		}
-		metas = append(metas, meta)
+	metas, metadataWarnings, err := readCheckpointTokenSessionMetadata(ctx, lookup.store, cpID, len(summary.Sessions))
+	if err != nil {
+		return tokenCommandError(err)
 	}
 
-	report := buildCheckpointTokensReport(cpID, summary, metas)
+	report := buildCheckpointTokensReport(cpID, summary, metas, metadataWarnings)
 	if jsonOutput {
 		return writeCheckpointTokensJSON(cmd.OutOrStdout(), report)
 	}
@@ -86,7 +85,24 @@ func runCheckpointTokens(ctx context.Context, cmd *cobra.Command, checkpointIDPr
 	return nil
 }
 
-func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.CheckpointSummary, metas []*checkpoint.CommittedMetadata) checkpointTokensReport {
+func readCheckpointTokenSessionMetadata(ctx context.Context, store *checkpoint.GitStore, cpID id.CheckpointID, sessionCount int) ([]*checkpoint.CommittedMetadata, int, error) {
+	metas := make([]*checkpoint.CommittedMetadata, 0, sessionCount)
+	var warnings int
+	for i := range sessionCount {
+		meta, err := store.ReadSessionMetadata(ctx, cpID, i)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, warnings, ctxErr //nolint:wrapcheck // Propagating context cancellation.
+			}
+			warnings++
+			continue
+		}
+		metas = append(metas, meta)
+	}
+	return metas, warnings, nil
+}
+
+func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.CheckpointSummary, metas []*checkpoint.CommittedMetadata, metadataWarnings int) checkpointTokensReport {
 	report := checkpointTokensReport{
 		CheckpointID: cpID.String(),
 		Source:       "committed_checkpoint",
@@ -118,7 +134,9 @@ func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.Check
 	}
 
 	usage := aggregateCheckpointTokenUsage(metas)
-	if usage == nil && summary != nil {
+	if metadataWarnings > 0 && summary != nil && summary.TokenUsage != nil {
+		usage = summary.TokenUsage
+	} else if usage == nil && summary != nil {
 		usage = summary.TokenUsage
 	}
 	if tokens := buildSessionTokensUsage(usage); tokens != nil {
@@ -140,6 +158,13 @@ func buildCheckpointTokensReport(cpID id.CheckpointID, summary *checkpoint.Check
 			Message:  "Token usage is unavailable for this checkpoint; the agent may not expose token data yet, or this checkpoint predates token tracking.",
 			Signals:  []string{"missing_token_usage"},
 		})
+	}
+	if metadataWarnings > 0 {
+		report.Limitations = append(report.Limitations, fmt.Sprintf(
+			"%d checkpoint session metadata file%s could not be read; used root token summary or readable session metadata where available.",
+			metadataWarnings,
+			tokenPluralSuffix(metadataWarnings),
+		))
 	}
 
 	var turnCount int
@@ -274,6 +299,13 @@ func tokenUsageSubagents(usage *agent.TokenUsage) *agent.TokenUsage {
 		return nil
 	}
 	return usage.SubagentTokens
+}
+
+func tokenPluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func writeCheckpointTokensJSON(w io.Writer, report checkpointTokensReport) error {
