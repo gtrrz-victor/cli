@@ -413,8 +413,8 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 
 const reviewHooksInstalledStatus = "hooks installed"
 
-// runReviewListAgents lists the worker agents valid for `--agent` in the
-// resolved profile (with hook-install status and the master marked). With no
+// runReviewListAgents lists the inspector agents valid for `--agent` in the
+// resolved profile (with hook-install status). With no
 // usable profile it falls back to the available review-agent catalog.
 func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverride string, deps Deps) error {
 	out := cmd.OutOrStdout()
@@ -435,11 +435,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 				if _, ok := installedSet[reviewAgentName(worker, cfg)]; !ok {
 					status = "hooks NOT installed — run `entire configure --agent " + reviewAgentName(worker, cfg) + "`"
 				}
-				marker := ""
-				if worker == profile.Master {
-					marker = "  [master]"
-				}
-				fmt.Fprintf(out, "  %s — %s%s\n", reviewWorkerLabel(worker, cfg), status, marker)
+				fmt.Fprintf(out, "  %s — %s\n", reviewWorkerLabel(worker, cfg), status)
 			}
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "See all available agents and profiles with `entire inspect --configure`.")
@@ -515,8 +511,12 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 				marker = " (default)"
 			}
 			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedProfileAgentNames(p), ", "))
-			if strings.TrimSpace(p.Master) != "" {
-				line += "  master=" + p.Master
+			if judges, _ := profileJudges(p); len(judges) > 0 {
+				judgeNames := make([]string, len(judges))
+				for i, j := range judges {
+					judgeNames[i] = j.agent
+				}
+				line += "  judges=" + strings.Join(judgeNames, ",")
 			}
 			fmt.Fprintln(out, line)
 		}

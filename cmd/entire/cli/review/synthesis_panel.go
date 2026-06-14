@@ -60,7 +60,10 @@ func (p PanelSynthesisProvider) Synthesize(ctx context.Context, prompt string) (
 	}
 
 	// Pick the chair; fall back to the first successful judge if the configured
-	// chair failed or is out of range.
+	// chair failed or is out of range. The chair participates as a full panel
+	// judge (it produced its own verdict above) and then runs a second time to
+	// merge the panel — these are deliberately distinct calls: an independent
+	// verdict, then a reconciliation over all verdicts.
 	chair := p.ChairIdx
 	if chair < 0 || chair >= len(p.Judges) || errs[chair] != nil || strings.TrimSpace(verdicts[chair]) == "" {
 		chair = ok[0]

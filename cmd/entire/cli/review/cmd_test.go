@@ -94,7 +94,7 @@ func TestReviewCmd_ListAgents(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"claude-code", "codex", "[master]", "--agent"} {
+	for _, want := range []string{"claude-code", "codex", "--agent"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--agents output missing %q:\n%s", want, out)
 		}
