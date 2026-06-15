@@ -26,15 +26,15 @@ import (
 //
 //	...
 //
-//	Synthesize a unified verdict with these sections:
-//	  - Common findings (issues all agents flagged)
-//	  - Unique findings (issues only one agent caught)
-//	  - Disagreements (areas where agents reached different conclusions)
-//	  - Priority order (top 5 issues to address first)
-//
-//	Be concise; aim for ~300 words.
+//	<instructions to write a tight verdict: lead with a one-line decision,
+//	then only the sections that have real content (Common/Unique findings,
+//	Disagreements, Priority order), proportional to the size of the change>
 //
 //	<perRunPrompt, if any — appended as user's per-run instructions>
+//
+// The instructions deliberately do not mandate a fixed multi-section template:
+// forcing every header produced padded "none" filler on small/clean changes,
+// so sections are opt-in and the judge is told to stay proportional.
 //
 // Agents with no usable narrative (empty AssistantText) are filtered out
 // upstream by usableAgentRuns, so the header count and the body are both
@@ -76,17 +76,13 @@ Rules:
   - Discard unsupported or speculative claims unless they are clearly labeled as needing verification.
   - Identify contradictions between workers and decide which claim is better supported.
   - Merge duplicate findings.
-  - Call out important uncertainty instead of pretending certainty.
 
-Produce one canonical final report with these sections:
-  - Executive verdict
-  - Common findings / high-confidence findings, prioritized
-  - Unique findings worth keeping
-  - Needs verification / uncertain findings
-  - Disagreements or rejected false positives
-  - Priority order / recommended next actions
+Write a tight final report:
+  - Open with a one-line verdict (approve / approve with nits / request changes) and a one-sentence rationale.
+  - Then list only the findings that matter, highest priority first, each as a single bullet with an evidence pointer.
+  - Include a section only when it has real content; omit empty sections instead of writing "none". Use these as needed, in this order: Common findings, Unique findings, Disagreements (or rejected false positives), Priority order / next actions.
 
-Be concise but specific; include evidence pointers where available.`)
+Be brief and proportional to the change: a small or clean change should get a verdict and a few bullets, nothing more. Do not pad, restate the diff, or invent findings to fill a template.`)
 
 	if perRunPrompt != "" {
 		b.WriteString("\n\nPer-run user instructions:\n")

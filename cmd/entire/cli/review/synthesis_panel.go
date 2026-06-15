@@ -97,10 +97,11 @@ func composeChairPrompt(verdicts, labels []string, ok []int) string {
 	var b strings.Builder
 	b.WriteString("You are the presiding judge on a panel reviewing a code change. " +
 		"Several judges independently evaluated the inspectors' reports and produced the verdicts below. " +
-		"Write a single final verdict that reconciles them: state the decision, " +
-		"explicitly call out where the judges AGREED and where they DISAGREED, and " +
-		"resolve disagreements on the merits (note which judge is right and why). " +
-		"Do not simply concatenate the verdicts.\n\n")
+		"Write a single, concise final verdict that reconciles them:\n" +
+		"  - Open with the decision and a one-sentence rationale.\n" +
+		"  - Note only the substantive points of agreement and disagreement; resolve each disagreement on the merits (which judge is right and why).\n" +
+		"  - Merge duplicates and drop unsupported claims. Do not concatenate the verdicts or repeat findings verbatim.\n" +
+		"  - Keep it proportional to the change; do not pad.\n\n")
 	for _, i := range ok {
 		label := fmt.Sprintf("judge %d", i+1)
 		if i < len(labels) && strings.TrimSpace(labels[i]) != "" {
