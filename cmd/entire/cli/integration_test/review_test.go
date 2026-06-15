@@ -139,7 +139,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"usage":{"i
 		t.Fatalf("write fake claude: %v", err)
 	}
 
-	cmd := execx.NonInteractive(context.Background(), getTestBinary(), "review")
+	// Bare `entire review` requires an explicit profile in non-interactive mode,
+	// so name the configured profile.
+	cmd := execx.NonInteractive(context.Background(), getTestBinary(), "review", "general")
 	cmd.Dir = env.RepoDir
 	cmd.Env = envWithOverrides(env.cliEnv(),
 		"PATH="+fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -250,7 +252,9 @@ func TestReview_MissingSkillAtSpawn_ErrorsCleanly(t *testing.T) {
 		},
 	})
 
-	output, exitErr := env.RunCLIWithError("review")
+	// Bare `entire review` requires an explicit profile in non-interactive mode,
+	// so name the configured profile to reach the skill-verification guard.
+	output, exitErr := env.RunCLIWithError("review", "general")
 	if exitErr == nil {
 		t.Fatalf("expected non-zero exit; output:\n%s", output)
 	}
