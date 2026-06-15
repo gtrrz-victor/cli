@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entireio/auth-go/sts"
+	"github.com/entireio/auth-go/tokens"
+	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trail"
 )
@@ -17,6 +20,37 @@ const (
 	trailListTestAuthorAlice = "alice"
 	trailListTestAuthorBob   = "bob"
 )
+
+func TestRunTrailListAll_PrintsLoginHintWhenNotLoggedIn(t *testing.T) {
+	// No t.Parallel: SetManagerForTest mutates package-level auth state.
+	store := newAuthMemStore()
+	mgr := newResolveTestManager(t, store, func(context.Context, sts.ExchangeRequest) (*tokens.TokenSet, error) {
+		t.Fatal("exchange should not run when no core token is stored")
+		return nil, errors.New("unreachable")
+	})
+	t.Cleanup(auth.SetManagerForTest(t, mgr))
+	t.Cleanup(auth.SetResolveContextForAPIForTest(t, auth.DiscoveryUnavailableForTest))
+
+	var out, errOut bytes.Buffer
+	err := runTrailListAll(t.Context(), &out, &errOut, defaultTrailListOptions(false))
+	if err == nil {
+		t.Fatal("expected error when not logged in")
+	}
+	if !errors.Is(err, auth.ErrNotLoggedIn) {
+		t.Errorf("error chain missing ErrNotLoggedIn: %v", err)
+	}
+	var silent *SilentError
+	if !errors.As(err, &silent) {
+		t.Errorf("error = %v, want SilentError wrap", err)
+	}
+	if strings.Contains(out.String(), "No trails found") {
+		t.Errorf("stdout = %q, must not render logged-out state as an empty trail list", out.String())
+	}
+	wantHint := "Not logged in. Run 'entire login' to authenticate."
+	if got := errOut.String(); !strings.Contains(got, wantHint) {
+		t.Errorf("errOut = %q, want hint %q", got, wantHint)
+	}
+}
 
 func TestTrailsBasePath(t *testing.T) {
 	t.Parallel()
