@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/entireio/cli/cmd/entire/cli/agent"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 )
@@ -15,16 +14,6 @@ const (
 	tModelOpus   = "opus"
 	tModelSonnet = "sonnet"
 )
-
-func TestModelInList(t *testing.T) {
-	models := []agent.ModelInfo{{ID: "opus"}, {ID: "sonnet"}}
-	if !modelInList("opus", models) {
-		t.Error("expected opus to be in list")
-	}
-	if modelInList("gpt-5", models) {
-		t.Error("gpt-5 should not be in list")
-	}
-}
 
 func configureTestDeps(adapter ...string) Deps {
 	set := map[string]struct{}{}
@@ -42,6 +31,7 @@ func configureTestDeps(adapter ...string) Deps {
 }
 
 func TestBuildConfiguredProfile_FromFlags(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code", "codex")
 	profile, err := buildConfiguredProfile(
 		context.Background(),
@@ -75,6 +65,7 @@ func TestBuildConfiguredProfile_FromFlags(t *testing.T) {
 }
 
 func TestBuildConfiguredProfile_FromSlots_AllowsDuplicateAgents(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code", "codex")
 	profile, err := buildConfiguredProfile(
 		context.Background(),
@@ -105,7 +96,9 @@ func TestBuildConfiguredProfile_FromSlots_AllowsDuplicateAgents(t *testing.T) {
 }
 
 func TestProfileMasterIdentity(t *testing.T) {
+	t.Parallel()
 	t.Run("standalone master wins and need not be a worker", func(t *testing.T) {
+		t.Parallel()
 		profile := settings.ReviewProfileConfig{
 			Agents:      map[string]settings.ReviewConfig{tAgentCodex: {Agent: tAgentCodex}},
 			MasterAgent: tAgentClaude,
@@ -117,6 +110,7 @@ func TestProfileMasterIdentity(t *testing.T) {
 		}
 	})
 	t.Run("legacy worker master resolves from Agents", func(t *testing.T) {
+		t.Parallel()
 		profile := settings.ReviewProfileConfig{
 			Agents: map[string]settings.ReviewConfig{tAgentClaude: {Agent: tAgentClaude, Model: tModelSonnet}},
 			Master: tAgentClaude,
@@ -127,6 +121,7 @@ func TestProfileMasterIdentity(t *testing.T) {
 		}
 	})
 	t.Run("no master", func(t *testing.T) {
+		t.Parallel()
 		profile := settings.ReviewProfileConfig{
 			Agents: map[string]settings.ReviewConfig{tAgentCodex: {Agent: tAgentCodex}},
 		}
@@ -137,6 +132,7 @@ func TestProfileMasterIdentity(t *testing.T) {
 }
 
 func TestBuildConfiguredProfile_JudgePanel(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code", "codex")
 	profile, err := buildConfiguredProfile(
 		context.Background(),
@@ -169,6 +165,7 @@ func TestBuildConfiguredProfile_JudgePanel(t *testing.T) {
 }
 
 func TestBuildConfiguredProfile_RejectsNonAdapterAgent(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code")
 	_, err := buildConfiguredProfile(
 		context.Background(),
@@ -183,6 +180,7 @@ func TestBuildConfiguredProfile_RejectsNonAdapterAgent(t *testing.T) {
 }
 
 func TestBuildConfiguredProfile_PreservesExistingTaskAndMasterModel(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code", "codex")
 	s := &settings.EntireSettings{
 		ReviewProfiles: map[string]settings.ReviewProfileConfig{
@@ -216,6 +214,7 @@ func TestBuildConfiguredProfile_PreservesExistingTaskAndMasterModel(t *testing.T
 }
 
 func TestBuildConfiguredProfile_InvalidModelSpec(t *testing.T) {
+	t.Parallel()
 	deps := configureTestDeps("claude-code")
 	_, err := buildConfiguredProfile(
 		context.Background(),

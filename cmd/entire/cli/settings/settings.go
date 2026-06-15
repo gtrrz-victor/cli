@@ -296,7 +296,8 @@ type ReviewProfileConfig struct {
 
 // IsZero reports whether the profile is effectively unset.
 func (c ReviewProfileConfig) IsZero() bool {
-	return c.Task == "" && len(c.Agents) == 0 && c.Master == "" && c.MasterModel == ""
+	return c.Task == "" && len(c.Agents) == 0 && len(c.Judges) == 0 &&
+		c.Chair == "" && c.Master == "" && c.MasterAgent == "" && c.MasterModel == ""
 }
 
 // ReviewConfig holds one worker's configuration within a review profile.

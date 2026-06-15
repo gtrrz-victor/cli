@@ -34,9 +34,9 @@ const reviewTokenMaxDepth = 16
 // without parallel-test footguns from a shared mutable variable.
 type agentTypeLookup func(agenttypes.AgentType) (agent.Agent, error)
 
-// LocalReviewManifest records one local `entire review` invocation. It lets
-// `entire review --fix <session-id>` use a single session id as the lookup
-// handle while still loading sibling agent outputs from the same review run.
+// LocalReviewManifest records one local `entire review` invocation. It groups
+// the sibling inspector outputs from a single review run so `entire review
+// --findings` can render them together.
 type LocalReviewManifest struct {
 	Version         int              `json:"version"`
 	WorktreePath    string           `json:"worktree_path"`
@@ -537,35 +537,6 @@ func writeLocalReviewManifest(ctx context.Context, manifest LocalReviewManifest)
 		return fmt.Errorf("write review manifest: %w", err)
 	}
 	return nil
-}
-
-func resolveLocalReviewManifestBySessionID(ctx context.Context, worktreeRoot, sessionID string) (LocalReviewManifest, ManifestSource, error) {
-	manifests, err := loadLocalReviewManifests(ctx, worktreeRoot)
-	if err != nil {
-		return LocalReviewManifest{}, ManifestSource{}, err
-	}
-
-	var (
-		matches       []LocalReviewManifest
-		sourceMatches []ManifestSource
-	)
-	for _, manifest := range manifests {
-		for _, source := range manifest.Sources {
-			if source.SessionID == sessionID || strings.HasPrefix(source.SessionID, sessionID) {
-				matches = append(matches, manifest)
-				sourceMatches = append(sourceMatches, source)
-				break
-			}
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return LocalReviewManifest{}, ManifestSource{}, fmt.Errorf("review session %q not found", sessionID)
-	case 1:
-		return matches[0], sourceMatches[0], nil
-	default:
-		return LocalReviewManifest{}, ManifestSource{}, fmt.Errorf("review session prefix %q is ambiguous", sessionID)
-	}
 }
 
 func loadLocalReviewManifests(ctx context.Context, worktreeRoot string) ([]LocalReviewManifest, error) {

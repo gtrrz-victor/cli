@@ -94,10 +94,10 @@ func NewCommand(deps Deps) *cobra.Command {
 		// users who know about it can still run `entire inspect` / `entire
 		// inspect --help` and the command works normally.
 		Hidden: true,
-		Short:  "Run a multi-agent crew against the current branch",
-		Long: `Run a multi-agent crew against the current branch: several inspector
+		Short:  "Run a multi-agent review against the current branch",
+		Long: `Run a multi-agent review against the current branch: several inspector
 agents inspect the change in parallel, then a panel of judges renders the final
-verdict (a chair merges the panel when there is more than one judge). Crews are
+verdict (a chair merges the panel when there is more than one judge). Reviews are
 saved as named profiles in Entire settings and clone-local preferences. On first
 run, guided setup writes a profile and asks before starting agents.
 
@@ -108,7 +108,7 @@ The session is recorded as part of the next checkpoint, so the metadata is
 permanently attached to the commit it covers.
 
 Flags:
-  --configure    set up a crew profile (shows available agents + profiles).
+  --configure    set up a review profile (shows available agents + profiles).
                  With --set-* flags it writes the profile non-interactively;
                  otherwise it opens the wizard (interactive) without starting agents.
   --set-agents   with --configure: comma-separated inspector agents for the profile
@@ -217,6 +217,10 @@ use 'entire attach --review <id>'.`,
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
+	// The listing modes and the action modes each select a distinct command
+	// behavior; combining them silently runs one and drops the rest, so reject
+	// the combination up front with a clear cobra error.
+	cmd.MarkFlagsMutuallyExclusive("configure", "edit", "findings", "list", "agents", "models")
 	return cmd
 }
 
@@ -288,7 +292,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if err := saveReviewProfile(ctx, name, profile, true); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Crew profile %q saved. Run `entire inspect`, or `entire inspect %s`, to start.\n", name, name)
+		fmt.Fprintf(out, "Review profile %q saved. Run `entire inspect`, or `entire inspect %s`, to start.\n", name, name)
 		return nil
 	}
 
@@ -355,8 +359,8 @@ func runReviewListModels(ctx context.Context, cmd *cobra.Command, agentFilter st
 	return nil
 }
 
-// runReviewListProfiles prints the configured inspect profiles with their workers
-// and master, marking the default. Needs settings but no review run.
+// runReviewListProfiles prints the configured inspect profiles with their
+// inspectors and judges, marking the default. Needs settings but no review run.
 func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) error {
 	out := cmd.OutOrStdout()
 	s, err := settings.Load(ctx)
@@ -933,7 +937,7 @@ func runSingleAgentPath(
 	// 4. Re-run guard: check if HEAD's checkpoint already has a review.
 	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
 		fmt.Fprintln(out, "prompt cancelled")
-		return guardErr
+		return silentErr(guardErr)
 	} else if !proceed {
 		fmt.Fprintln(out, "Review cancelled.")
 		return nil
@@ -1044,8 +1048,9 @@ func detectScope(ctx context.Context, worktreeRoot, baseOverride string, out io.
 }
 
 // runMultiAgentPath handles the profile-native fan-out flow. Every configured
-// worker in the selected profile runs concurrently against the same canonical
-// task, then the profile's master agent produces the final report.
+// inspector in the selected profile runs concurrently against the same
+// canonical task, then the panel of judges (merged by the chair when there is
+// more than one) produces the final report.
 func runMultiAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
@@ -1071,7 +1076,7 @@ func runMultiAgentPath(
 
 	if proceed, guardErr := confirmReReviewOrProceed(ctx, out, deps); guardErr != nil {
 		fmt.Fprintln(out, "prompt cancelled")
-		return guardErr
+		return deps.NewSilentError(guardErr)
 	} else if !proceed {
 		fmt.Fprintln(out, "Review cancelled.")
 		return nil
@@ -1312,9 +1317,9 @@ func writePostReviewManifest(
 
 // warnManifestNotWritten prints a user-visible note explaining that the
 // review skills ran but findings were not persisted, so `entire review
-// --findings` and `entire review --fix` will not see this run. The reason
-// string is appended verbatim and should describe the underlying cause in
-// terms the user can act on (or at least diagnose with debug logs).
+// --findings` will not see this run. The reason string is appended verbatim
+// and should describe the underlying cause in terms the user can act on (or at
+// least diagnose with debug logs).
 func warnManifestNotWritten(out io.Writer, reason string) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Note: review skills ran but findings were not persisted.")

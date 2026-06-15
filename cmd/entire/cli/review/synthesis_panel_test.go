@@ -22,6 +22,7 @@ func (s *stubJudge) Synthesize(_ context.Context, prompt string) (string, error)
 }
 
 func TestPanel_SingleJudgePassesThrough(t *testing.T) {
+	t.Parallel()
 	j := &stubJudge{out: "verdict A"}
 	p := PanelSynthesisProvider{Judges: []SynthesisProvider{j}, Labels: []string{"a"}}
 	got, err := p.Synthesize(context.Background(), "PROMPT")
@@ -34,6 +35,7 @@ func TestPanel_SingleJudgePassesThrough(t *testing.T) {
 }
 
 func TestPanel_MultiJudgeChairMerges(t *testing.T) {
+	t.Parallel()
 	j1 := &stubJudge{out: "ship it"}
 	j2 := &stubJudge{out: "block: race in cache.go"}
 	chair := &stubJudge{out: "FINAL: block — j2 found a real race"}
@@ -63,6 +65,7 @@ func TestPanel_MultiJudgeChairMerges(t *testing.T) {
 }
 
 func TestPanel_DroppedFailuresCollapseToSingle(t *testing.T) {
+	t.Parallel()
 	good := &stubJudge{out: "only verdict"}
 	bad := &stubJudge{err: errors.New("boom")}
 	p := PanelSynthesisProvider{
@@ -80,6 +83,7 @@ func TestPanel_DroppedFailuresCollapseToSingle(t *testing.T) {
 }
 
 func TestPanel_AllFailErrors(t *testing.T) {
+	t.Parallel()
 	p := PanelSynthesisProvider{
 		Judges: []SynthesisProvider{
 			&stubJudge{err: errors.New("e1")},

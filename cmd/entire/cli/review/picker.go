@@ -149,13 +149,8 @@ func RunReviewGuidedSetup(
 	return profileName, profile, nil
 }
 
-// RunReviewConfigPicker presents a huh multi-select for each installed agent
-// that has curated review skills, and saves the selection to
-// clone-local review preferences. Previously-saved skills are pre-checked via
-// huh.Option.Selected(true), mirroring how `entire enable` preserves prior
-// selections in its own agent picker.
-//
-// getInstalled is injected to avoid an import cycle with the cli package.
+// launchableInstalledAgentNames returns the installed agents that have a
+// review-runner adapter, in the order they can be offered to the user.
 func launchableInstalledAgentNames(installed []types.AgentName, reviewerFor func(string) reviewtypes.AgentReviewer) []string {
 	names := make([]string, 0, len(installed))
 	for _, name := range installed {
@@ -222,7 +217,7 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	taskForm := newAccessibleForm(huh.NewGroup(
 		huh.NewText().
 			Title("Describe the review task").
-			Description("What should the crew look for? This becomes the shared task for every inspector.").
+			Description("What should the inspectors look for? This becomes the shared task for every inspector.").
 			Value(&task),
 	))
 	if err := taskForm.RunWithContext(ctx); err != nil {
@@ -305,7 +300,7 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 			seed = append(seed, crewSlot{agent: name})
 		}
 	}
-	slots, err := pickSlotList(ctx, "Review crew", "Select a slot to edit or remove it; + Add slot to add one.", launchable, seed)
+	slots, err := pickSlotList(ctx, "Review inspectors", "Select a slot to edit or remove it; + Add slot to add one.", launchable, seed)
 	if err != nil {
 		return settings.ReviewProfileConfig{}, err
 	}
@@ -350,7 +345,7 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 
 		switch {
 		case picked == actAdd:
-			slot, err := promptCrewSlot(ctx, candidates)
+			slot, err := promptCrewSlot(ctx, candidates, crewSlot{})
 			if err != nil {
 				return nil, err
 			}
@@ -371,7 +366,7 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 			}
 			switch action {
 			case "edit":
-				slot, err := promptCrewSlot(ctx, candidates)
+				slot, err := promptCrewSlot(ctx, candidates, slots[idx])
 				if err != nil {
 					return nil, err
 				}
@@ -383,13 +378,14 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 	}
 }
 
-// promptCrewSlot prompts for one slot: an agent then a model.
-func promptCrewSlot(ctx context.Context, launchable []string) (crewSlot, error) {
-	agentName, err := promptCrewAgent(ctx, launchable)
+// promptCrewSlot prompts for one slot: an agent then a model. seed pre-selects
+// the current agent/model when editing an existing slot (zero value when adding).
+func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (crewSlot, error) {
+	agentName, err := promptCrewAgent(ctx, launchable, seed.agent)
 	if err != nil {
 		return crewSlot{}, err
 	}
-	model, err := promptCrewModel(ctx, agentName)
+	model, err := promptCrewModel(ctx, agentName, seed.model)
 	if err != nil {
 		return crewSlot{}, err
 	}
@@ -446,7 +442,7 @@ func slotLabel(s crewSlot) string {
 
 // promptCrewAgent picks the agent for a new slot. Auto-selects when only one
 // launchable agent exists.
-func promptCrewAgent(ctx context.Context, launchable []string) (string, error) {
+func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string) (string, error) {
 	if len(launchable) == 1 {
 		return launchable[0], nil
 	}
@@ -455,6 +451,14 @@ func promptCrewAgent(ctx context.Context, launchable []string) (string, error) {
 		options = append(options, huh.NewOption(labelForSimpleAgent(name), name))
 	}
 	picked := launchable[0]
+	if seedAgent != "" {
+		for _, name := range launchable {
+			if name == seedAgent {
+				picked = seedAgent
+				break
+			}
+		}
+	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Add a slot — which agent?").
@@ -463,27 +467,39 @@ func promptCrewAgent(ctx context.Context, launchable []string) (string, error) {
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review crew agent: %w", err)
+		return "", fmt.Errorf("review inspector agent: %w", err)
 	}
 	return picked, nil
 }
 
 // promptCrewModel picks a model for a slot: Default, an advertised model, or a
 // Custom… free-text value. Returns "" for the agent's own default.
-func promptCrewModel(ctx context.Context, agentName string) (string, error) {
+func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, error) {
 	models := listAgentModelOptions(ctx, agentName)
 	options := make([]huh.Option[string], 0, len(models)+2)
 	options = append(options, huh.NewOption("Default (agent's own default model)", reviewModelDefaultSentinel))
+	seedAdvertised := false
 	for _, m := range models {
 		label := m.ID
 		if m.Note != "" {
 			label = m.ID + "  — " + m.Note
 		}
 		options = append(options, huh.NewOption(label, m.ID))
+		if m.ID == seedModel {
+			seedAdvertised = true
+		}
+	}
+	// Preserve a previously-set custom model so editing a slot doesn't silently
+	// drop it: surface it as a selectable option.
+	if seedModel != "" && !seedAdvertised {
+		options = append(options, huh.NewOption(seedModel+"  — current", seedModel))
 	}
 	options = append(options, huh.NewOption("Custom… (type any value)", reviewModelCustomSentinel))
 
 	picked := reviewModelDefaultSentinel
+	if seedModel != "" {
+		picked = seedModel
+	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Model for " + labelForSimpleAgent(agentName)).
@@ -493,7 +509,7 @@ func promptCrewModel(ctx context.Context, agentName string) (string, error) {
 			Value(&picked),
 	))
 	if err := form.RunWithContext(ctx); err != nil {
-		return "", fmt.Errorf("review crew model: %w", err)
+		return "", fmt.Errorf("review inspector model: %w", err)
 	}
 	switch picked {
 	case reviewModelDefaultSentinel:
@@ -546,15 +562,6 @@ func listAgentModelOptions(ctx context.Context, agentName string) []agent.ModelI
 		return nil
 	}
 	return models
-}
-
-func modelInList(id string, models []agent.ModelInfo) bool {
-	for _, m := range models {
-		if m.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // promptForJudges picks the panel of judges (each its own agent + model) that
@@ -643,10 +650,6 @@ func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {
 		fmt.Fprintln(out, "Not started. Run `entire inspect` when ready.")
 	}
 	return runNow, nil
-}
-
-func RunReviewConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName) (map[string]settings.ReviewConfig, error) {
-	return RunReviewProfileConfigPicker(ctx, out, getInstalled, DefaultProfileName)
 }
 
 func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstalled func(context.Context) []types.AgentName, profileName string) (map[string]settings.ReviewConfig, error) {
@@ -809,7 +812,7 @@ func RunReviewProfileConfigPicker(ctx context.Context, out io.Writer, getInstall
 	if err := saveReviewProfileConfig(ctx, profileName, merged, masterAgent); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(out, "Saved crew profile %q to local review preferences. Edit later with `entire inspect --edit --profile %s`.\n", profileName, profileName)
+	fmt.Fprintf(out, "Saved review profile %q to local review preferences. Edit later with `entire inspect --edit --profile %s`.\n", profileName, profileName)
 	return merged, nil
 }
 
@@ -1033,38 +1036,6 @@ func PromptForAgent(ctx context.Context, eligible []AgentChoice) (string, error)
 		return "", fmt.Errorf("agent picker: %w", err)
 	}
 	return picked, nil
-}
-
-// SelectReviewAgent picks an agent from the configured review map.
-//
-// If override is non-empty, returns the config for that agent or an error
-// listing the configured alternatives. Otherwise returns the alphabetically
-// first configured agent — deterministic but user-overridable via --agent.
-func SelectReviewAgent(review map[string]settings.ReviewConfig, override string) (string, settings.ReviewConfig, error) {
-	if len(review) == 0 {
-		return "", settings.ReviewConfig{}, errors.New("no review config found")
-	}
-	var names []string
-	for name, cfg := range review {
-		if !cfg.IsZero() {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return "", settings.ReviewConfig{}, errors.New("no review config found")
-	}
-	sort.Strings(names)
-	if override != "" {
-		if cfg, ok := review[override]; ok && !cfg.IsZero() {
-			return override, cfg, nil
-		}
-		return "", settings.ReviewConfig{}, fmt.Errorf(
-			"agent %q is not configured for review; configured agents: %s",
-			override, strings.Join(names, ", "),
-		)
-	}
-	pick := names[0]
-	return pick, review[pick], nil
 }
 
 // VerifyConfiguredSkillsInstalled is the spawn-time backstop for the
