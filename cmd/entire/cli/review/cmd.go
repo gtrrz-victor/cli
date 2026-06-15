@@ -101,12 +101,6 @@ verdict (a chair merges the panel when there is more than one judge). Reviews ar
 saved as named profiles in Entire settings and clone-local preferences. On first
 run, guided setup writes a profile and asks before starting agents.
 
-Labs entry: inspect is experimental. We are actively refining it based on user
-feedback.
-
-The session is recorded as part of the next checkpoint, so the metadata is
-permanently attached to the commit it covers.
-
 Flags:
   --configure    set up a review profile (shows available agents + profiles).
                  With --set-* flags it writes the profile non-interactively;
