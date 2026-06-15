@@ -96,14 +96,15 @@ func defaultTrailListOptions(insecureHTTP bool) trailListOptions {
 // runTrailShow shows the trail for the current branch, or falls through to list.
 func runTrailShow(ctx context.Context, w, errW io.Writer, insecureHTTP bool) error {
 	listOpts := defaultTrailListOptions(insecureHTTP)
-	if err := validateTrailListOptions(listOpts); err != nil {
+	listStatusFilters, err := validateTrailListOptions(listOpts)
+	if err != nil {
 		return err
 	}
 
 	return runAuthenticatedDataAPI(ctx, errW, insecureHTTP, func(ctx context.Context, client *api.Client) error {
 		branch, err := GetCurrentBranch(ctx)
 		if err != nil {
-			return runTrailListAllWithClient(ctx, w, client, listOpts)
+			return runTrailListAllWithClient(ctx, w, client, listOpts, listStatusFilters)
 		}
 
 		forge, owner, repo, err := resolveTrailRemote(ctx)
@@ -116,7 +117,7 @@ func runTrailShow(ctx context.Context, w, errW io.Writer, insecureHTTP bool) err
 			return err
 		}
 		if found == nil {
-			return runTrailListAllWithClient(ctx, w, client, listOpts)
+			return runTrailListAllWithClient(ctx, w, client, listOpts, listStatusFilters)
 		}
 
 		printTrailDetails(w, found.ToMetadata())
@@ -172,32 +173,31 @@ func newTrailListCmd() *cobra.Command {
 }
 
 func runTrailListAll(ctx context.Context, w, errW io.Writer, opts trailListOptions) error {
-	if err := validateTrailListOptions(opts); err != nil {
-		return err
-	}
-	return runAuthenticatedDataAPI(ctx, errW, opts.InsecureHTTP, func(ctx context.Context, client *api.Client) error {
-		return runTrailListAllWithClient(ctx, w, client, opts)
-	})
-}
-
-func validateTrailListOptions(opts trailListOptions) error {
-	if opts.Limit <= 0 {
-		return errors.New("limit must be greater than 0")
-	}
-	_, err := parseTrailStatusFilter(opts.Status)
-	return err
-}
-
-func runTrailListAllWithClient(ctx context.Context, w io.Writer, client *api.Client, opts trailListOptions) error {
-	if err := validateTrailListOptions(opts); err != nil {
-		return err
-	}
-
-	statusFilters, err := parseTrailStatusFilter(opts.Status)
+	statusFilters, err := validateTrailListOptions(opts)
 	if err != nil {
 		return err
 	}
+	return runAuthenticatedDataAPI(ctx, errW, opts.InsecureHTTP, func(ctx context.Context, client *api.Client) error {
+		return runTrailListAllWithClient(ctx, w, client, opts, statusFilters)
+	})
+}
 
+func validateTrailListOptions(opts trailListOptions) ([]trail.Status, error) {
+	if opts.Limit <= 0 {
+		return nil, errors.New("limit must be greater than 0")
+	}
+	return parseTrailStatusFilter(opts.Status)
+}
+
+func runTrailListAllValidatedWithClient(ctx context.Context, w io.Writer, client *api.Client, opts trailListOptions) error {
+	statusFilters, err := validateTrailListOptions(opts)
+	if err != nil {
+		return err
+	}
+	return runTrailListAllWithClient(ctx, w, client, opts, statusFilters)
+}
+
+func runTrailListAllWithClient(ctx context.Context, w io.Writer, client *api.Client, opts trailListOptions, statusFilters []trail.Status) error {
 	authorFilter := opts.Author
 	currentUserLogin := ""
 	if authorFilter == trailListAuthorMe {

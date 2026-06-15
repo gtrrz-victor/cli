@@ -88,7 +88,7 @@ func TestRunTrailListAllWithClient_ValidatesOptionsBeforeRepoLookup(t *testing.T
 	opts.Limit = 0
 
 	var out bytes.Buffer
-	err := runTrailListAllWithClient(t.Context(), &out, nil, opts)
+	err := runTrailListAllValidatedWithClient(t.Context(), &out, nil, opts)
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
