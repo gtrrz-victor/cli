@@ -25,8 +25,8 @@ const (
 )
 
 func TestRunTrailListAll_PrintsLoginHintWhenNotLoggedIn(t *testing.T) {
-	// No t.Parallel: SetResolveContextForAPIForTest mutates package-level
-	// auth state.
+	// No t.Parallel: SetResolveContextForAPIForTest and
+	// tokenstore.UseFileBackendForTesting mutate package-level state.
 	//
 	// Discovery selects a context whose keyring slot holds nothing, so the
 	// per-context provider reports ErrNotLoggedIn.
