@@ -382,17 +382,17 @@ const trailsEnabledProbeTimeout = 3 * time.Second
 // this repo on the API. It resolves the origin remote to a supported forge and
 // probes the trails endpoint; a successful response means trails are
 // provisioned/enabled. Best-effort and bounded by a single short timeout that
-// covers both client construction (which may do /.well-known discovery and a
-// token exchange) and the probe — an unresolved remote, missing auth, or any
-// API/transport error reports false, so we never advertise trails we can't
-// confirm are enabled.
+// covers every step — git remote resolution (a subprocess), client
+// construction (which may do /.well-known discovery and a token exchange), and
+// the probe. An unresolved remote, missing auth, or any API/transport error
+// reports false, so we never advertise trails we can't confirm are enabled.
 func trailsEnabledForRepo(ctx context.Context) bool {
-	forge, owner, repo, err := resolveTrailRemote(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, trailsEnabledProbeTimeout)
+	defer cancel()
+	forge, owner, repo, err := resolveTrailRemote(probeCtx)
 	if err != nil {
 		return false
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, trailsEnabledProbeTimeout)
-	defer cancel()
 	client, err := NewAuthenticatedAPIClient(probeCtx, false)
 	if err != nil {
 		return false // not authenticated → trails aren't enabled for us
