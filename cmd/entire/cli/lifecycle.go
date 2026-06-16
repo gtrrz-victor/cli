@@ -415,11 +415,19 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 	// Decide once per session, recorded on the session state itself (not a
 	// separate marker file). Winning the check-and-set means this turn owns the
 	// decision; the trails-enabled probe (a network call) then runs at most once
-	// per session. Marking "decided" even when trails are disabled stops later
-	// turns from re-probing, since enablement is stable for the session.
+	// per session. This is intentionally synchronous so the hint can reach the
+	// first model call; trailsEnabledForRepo bounds the whole decision path to a
+	// short timeout. Marking "decided" before probing means transient probe
+	// failures fail closed (no hint for this session) rather than retrying/spamming.
 	won := false
 	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
 		if state.ContextInjectionDecided {
+			return strategy.ErrMutationSkip
+		}
+		// Review/investigate sessions are task-specific and don't need the branch
+		// trail pointer; skip without marking decided so normal sessions keep the
+		// usual first-turn behavior.
+		if state.Kind != "" {
 			return strategy.ErrMutationSkip
 		}
 		state.ContextInjectionDecided = true

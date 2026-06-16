@@ -228,8 +228,10 @@ type State struct {
 	// ContextInjectionDecided records that the once-per-session model-context
 	// injection (e.g. the `entire trail` pointer) has been handled for this
 	// session, so the dispatcher neither re-probes the API nor re-injects on
-	// later turns. Set on the first turn regardless of whether anything was
-	// injected, since trail enablement is stable for the session.
+	// later turns. Set on the first normal turn regardless of whether anything
+	// was injected: trail enablement is stable for the session, and transient
+	// probe failures fail closed (miss the hint) rather than retrying/spamming.
+	// Review/investigate sessions leave this false because they skip injection.
 	ContextInjectionDecided bool `json:"context_injection_decided,omitempty"`
 
 	// AgentType identifies the agent that created this session (e.g., "Claude Code", "Gemini CLI", "Cursor")
