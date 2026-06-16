@@ -427,34 +427,42 @@ func matchReviewSessionState(
 }
 
 func reviewRunModelMatches(want, got string) bool {
-	want = strings.ToLower(strings.TrimSpace(want))
-	got = strings.ToLower(strings.TrimSpace(got))
+	want = normalizeReviewModelID(want)
+	got = normalizeReviewModelID(got)
 	if want == "" || got == "" {
 		return true
 	}
 	if want == got {
 		return true
 	}
-	wantCompact := compactReviewModelID(want)
-	gotCompact := compactReviewModelID(got)
-	if wantCompact == "" || gotCompact == "" {
-		return true
-	}
-	return strings.Contains(gotCompact, wantCompact) || strings.Contains(wantCompact, gotCompact)
+	// Boundary-aware containment: a less-specific id matches a more-specific one
+	// only when it aligns on "-"-delimited component boundaries. Padding both
+	// ends with "-" makes the substring test respect those boundaries, so a
+	// configured alias ("sonnet") or family ("claude-sonnet") still matches the
+	// resolved session model ("claude-sonnet-4-5"), while "gpt-4" does NOT match
+	// "gpt-4o-mini" (the partial "4"/"4o" component no longer counts).
+	wantPadded := "-" + want + "-"
+	gotPadded := "-" + got + "-"
+	return strings.Contains(gotPadded, wantPadded) || strings.Contains(wantPadded, gotPadded)
 }
 
-// compactReviewModelID normalizes a model string for fuzzy comparison between a
-// configured profile model (e.g. "anthropic/claude-sonnet:high") and the model
-// recorded on a session (e.g. "claude-sonnet-4-5"). It drops the provider
-// prefix (before the last "/") so the prefix does not skew matching, drops the
-// trailing thinking-level suffix (after ":"), and keeps only alphanumerics.
+// normalizeReviewModelID canonicalizes a model string for boundary-aware
+// comparison between a configured profile model (e.g.
+// "anthropic/claude-sonnet:high") and the model recorded on a session (e.g.
+// "claude-sonnet-4-5"). It drops the provider prefix (before the last "/"),
+// drops the trailing thinking-level suffix (after ":"), lowercases, and
+// collapses every run of non-alphanumeric characters into a single "-" so
+// component boundaries are preserved ("claude_sonnet" and "claude-sonnet"
+// normalize alike). reviewRunModelMatches then matches only on whole
+// components, so "gpt-4" cannot match "gpt-4o-mini".
 //
 // Session model names do not carry the thinking-level suffix, so two workers
 // that share a model but differ only by thinking level ("...:high" vs
 // "...:low") normalize to the same id. Disambiguating those is left to the
 // start-time + used-session fallback in matchReviewSessionState, which still
 // links each worker to a distinct session.
-func compactReviewModelID(s string) string {
+func normalizeReviewModelID(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
 	if slash := strings.LastIndexByte(s, '/'); slash >= 0 && slash < len(s)-1 {
 		s = s[slash+1:]
 	}
@@ -462,12 +470,19 @@ func compactReviewModelID(s string) string {
 		s = s[:colon]
 	}
 	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
+	lastDash := false
+	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
 		}
 	}
-	return b.String()
+	return strings.Trim(b.String(), "-")
 }
 
 func agentTypeForReviewAgent(agentName string) agenttypes.AgentType {

@@ -746,3 +746,34 @@ func (manifestTokenTestAgent) CalculateTokenUsage(content []byte, _ int) (*agent
 		OutputTokens:    50,
 	}, nil
 }
+
+func TestReviewRunModelMatches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		want string
+		got  string
+		ok   bool
+	}{
+		{"exact", "gpt-4", "gpt-4", true},
+		{"empty want matches anything", "", "claude-sonnet-4-5", true},
+		{"empty got matches anything", "sonnet", "", true},
+		{"alias matches resolved", "sonnet", "claude-sonnet-4-20250514", true},
+		{"family matches resolved", "claude-sonnet", "claude-sonnet-4-5", true},
+		{"provider prefix and thinking suffix stripped", "anthropic/claude-sonnet:high", "claude-sonnet-4-5", true},
+		{"separator-insensitive", "claude_sonnet", "claude-sonnet-4-5", true},
+		{"same family more specific", "gpt-4", "gpt-4-turbo", true},
+		// The bug this guards against: partial component must not match.
+		{"gpt-4 must NOT match gpt-4o-mini", "gpt-4", "gpt-4o-mini", false},
+		{"different families do not match", "gpt-4o-mini", "claude-sonnet-4-5", false},
+		{"opus does not match sonnet", "opus", "claude-sonnet-4-5", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := reviewRunModelMatches(c.want, c.got); got != c.ok {
+				t.Errorf("reviewRunModelMatches(%q, %q) = %v, want %v", c.want, c.got, got, c.ok)
+			}
+		})
+	}
+}
