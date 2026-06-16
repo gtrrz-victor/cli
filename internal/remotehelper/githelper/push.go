@@ -173,16 +173,25 @@ func handlePush(ctx context.Context, t Transport, firstLine string, opts *Option
 		return fmt.Errorf("writing push terminator: %w", err)
 	}
 
-	if err := <-feedErr; err != nil {
-		if waitErr := sp.Wait(); waitErr != nil {
-			return errors.Join(err, fmt.Errorf("send-pack exited after feeder error: %w", waitErr))
-		}
-		return err
+	// Wait for send-pack first: its exit code is the authoritative
+	// signal for push success. If send-pack exited 0, it parsed a
+	// valid receive-pack report-status — the protocol completed.
+	// Any feeder error after that point is cleanup noise: io.Copy
+	// reading from resp can race with the server-side close of the
+	// underlying TCP socket (httptest.Server.Close in parallel CI
+	// tests, idle-conn reaping in long-running daemons) and surface
+	// "use of closed network connection" *after* send-pack has
+	// already drained everything it needed. Failing the push on
+	// that turned successful pushes into fatal errors.
+	spErr := sp.Wait()
+	feedRes := <-feedErr
+	if spErr == nil {
+		return nil
 	}
-	if err := sp.Wait(); err != nil {
-		return fmt.Errorf("send-pack exited with error: %w", err)
+	if feedRes != nil {
+		return errors.Join(feedRes, fmt.Errorf("send-pack exited after feeder error: %w", spErr))
 	}
-	return nil
+	return fmt.Errorf("send-pack exited with error: %w", spErr)
 }
 
 // readPushBatch collects the "push <src>:<dst>" lines that follow the
