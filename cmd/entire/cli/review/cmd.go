@@ -61,6 +61,13 @@ type Deps struct {
 	// per-agent reviewer packages import review (for ComposeReviewPrompt /
 	// AppendReviewEnv), so review/cmd.go cannot import them back.
 	ReviewerFor func(agentName string) reviewtypes.AgentReviewer
+
+	// PostReviewToTrail posts the final review verdict to the current branch's
+	// trail as a finding (the "trail" output destination). Injected from the cli
+	// package because the data API + auth live there. It prints its own success
+	// line to out. nil when trail delivery is unavailable (e.g. tests), in which
+	// case the run falls back to local output with a notice.
+	PostReviewToTrail func(ctx context.Context, out io.Writer, profileName, verdict string) error
 }
 
 // NewCommand returns the `entire review` cobra command wired with the
@@ -80,6 +87,7 @@ func NewCommand(deps Deps) *cobra.Command {
 	var listProfiles bool
 	var setAgents []string
 	var setJudge string
+	var setOutput string
 	var setTask string
 	var setModels []string
 	var setSlots []string
@@ -106,6 +114,7 @@ Flags:
                  otherwise it opens the wizard (interactive) without starting agents.
   --set-agents   with --configure: comma-separated inspector agents for the profile
   --set-judge    with --configure: the consolidating judge as agent[=model]
+  --set-output   with --configure: where the verdict goes — local (default) or trail
   --set-task     with --configure: the profile's canonical task text
   --set-model    with --configure: per-inspector model as agent=model (repeatable)
   --set-slot     with --configure: an inspector slot as agent[=model] (repeatable;
@@ -176,6 +185,7 @@ use 'entire attach --review <id>'.`,
 				return runReviewConfigure(ctx, cmd, profileName, reviewConfigureOptions{
 					Agents: setAgents,
 					Judge:  setJudge,
+					Output: setOutput,
 					Task:   setTask,
 					Models: setModels,
 					Slots:  setSlots,
@@ -194,6 +204,7 @@ use 'entire attach --review <id>'.`,
 	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
 	cmd.Flags().StringSliceVar(&setAgents, "set-agents", nil, "with --configure: inspector agents for the profile (comma-separated)")
 	cmd.Flags().StringVar(&setJudge, "set-judge", "", "with --configure: the consolidating judge as agent[=model]")
+	cmd.Flags().StringVar(&setOutput, "set-output", "", "with --configure: where the verdict is delivered (local or trail)")
 	cmd.Flags().StringVar(&setTask, "set-task", "", "with --configure: the profile's canonical task text")
 	cmd.Flags().StringArrayVar(&setModels, "set-model", nil, "with --configure: per-inspector model as agent=model (repeatable)")
 	cmd.Flags().StringArrayVar(&setSlots, "set-slot", nil, "with --configure: an inspector slot as agent[=model] (repeatable; same agent/model may repeat)")
@@ -218,13 +229,14 @@ use 'entire attach --review <id>'.`,
 type reviewConfigureOptions struct {
 	Agents []string // inspector agent names (--set-agents)
 	Judge  string   // consolidating judge as "agent[=model]" (--set-judge)
+	Output string   // output destination: local|trail (--set-output)
 	Task   string   // profile task text (--set-task)
 	Models []string // per-inspector "agent=model" entries (--set-model)
 	Slots  []string // inspector slots as "agent[=model]" entries (--set-slot)
 }
 
 func (o reviewConfigureOptions) scripted() bool {
-	return len(o.Agents) > 0 || o.Judge != "" || o.Task != "" || len(o.Models) > 0 || len(o.Slots) > 0
+	return len(o.Agents) > 0 || o.Judge != "" || o.Output != "" || o.Task != "" || len(o.Models) > 0 || len(o.Slots) > 0
 }
 
 func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride string, opts reviewConfigureOptions, deps Deps) error {
@@ -391,6 +403,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 		if j, ok := profileJudge(p); ok {
 			fmt.Fprintf(out, "    judge:      %s\n", judgeLabel(j))
 		}
+		fmt.Fprintf(out, "    output:     %s\n", profileOutput(p))
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Run one with `entire inspect <name>`.")
@@ -499,6 +512,9 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedProfileAgentNames(p), ", "))
 			if j, ok := profileJudge(p); ok {
 				line += "  judge=" + j.agent
+			}
+			if profileOutput(p) == ReviewOutputTrail {
+				line += "  output=trail"
 			}
 			fmt.Fprintln(out, line)
 		}
@@ -612,6 +628,19 @@ func buildConfiguredProfile(ctx context.Context, profileName string, opts review
 		}
 	case inspectorCount <= 1:
 		profile.Judge = nil
+	}
+
+	if opts.Output != "" {
+		out, outErr := normalizeReviewOutput(opts.Output)
+		if outErr != nil {
+			return settings.ReviewProfileConfig{}, outErr
+		}
+		// Store only the non-default destination so local profiles stay clean.
+		if out == ReviewOutputTrail {
+			profile.Output = ReviewOutputTrail
+		} else {
+			profile.Output = ""
+		}
 	}
 	return profile, nil
 }
@@ -743,6 +772,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 	}
 	profile.Task = profileTask(profileName, profile)
 	profile.Agents = nonZeroAgentConfigs(profile.Agents)
+	outputMode := profileOutput(profile)
 
 	if agentOverride != "" {
 		workerName, cfg, selectErr := selectProfileWorker(profile, agentOverride)
@@ -755,7 +785,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		if modelOverride != "" {
 			cfg.Model = modelOverride
 		}
-		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, workerName, baseOverride, perRunPrompt, profile.Task, outputMode, cfg, installed, deps, out)
 	}
 
 	if missing := missingInstalledProfileAgents(profile.Agents, installed); len(missing) > 0 {
@@ -774,7 +804,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		return silentErr(err)
 	case 1:
 		cfg := profile.Agents[eligible[0].Name]
-		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, cfg, installed, deps, out)
+		return runSingleAgentPath(ctx, cmd, profileName, eligible[0].Name, baseOverride, perRunPrompt, profile.Task, outputMode, cfg, installed, deps, out)
 	default:
 		launchableEligible := computeLaunchableEligibleForProfile(profile, installed, deps.ReviewerFor)
 		if len(launchableEligible) != len(eligible) {
@@ -795,7 +825,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
 			return silentErr(err)
 		}
-		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, judge, baseOverride, perRunPrompt, deps, out)
+		return runMultiAgentPath(ctx, cmd, profileName, profile, launchableEligible, judge, outputMode, baseOverride, perRunPrompt, deps, out)
 	}
 }
 
@@ -862,7 +892,7 @@ func confirmReReviewOrProceed(ctx context.Context, out io.Writer, deps Deps) (bo
 func runSingleAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
-	profileName, workerName, baseOverride, perRunPrompt, task string,
+	profileName, workerName, baseOverride, perRunPrompt, task, outputMode string,
 	cfg settings.ReviewConfig,
 	installed []types.AgentName,
 	deps Deps,
@@ -969,6 +999,7 @@ func runSingleAgentPath(
 
 	summary, waitErr := Run(runCtx, reviewer, runCfg, sinks)
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, "")
+	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, "")
 	if waitErr != nil && runCtx.Err() == nil && ctx.Err() == nil {
 		// Non-cancellation error: surface to caller.
 		return fmt.Errorf("review run: %w", waitErr)
@@ -1015,8 +1046,8 @@ func detectScope(ctx context.Context, worktreeRoot, baseOverride string, out io.
 
 // runMultiAgentPath handles the profile-native fan-out flow. Every configured
 // inspector in the selected profile runs concurrently against the same
-// canonical task, then the panel of judges (merged by the chair when there is
-// more than one) produces the final report.
+// canonical task, then the single judge consolidates their reports into the
+// final verdict.
 func runMultiAgentPath(
 	ctx context.Context,
 	cmd *cobra.Command,
@@ -1024,6 +1055,7 @@ func runMultiAgentPath(
 	profile settings.ReviewProfileConfig,
 	launchableEligible []AgentChoice,
 	judge judgeSpec,
+	outputMode string,
 	baseOverride string,
 	perRunPrompt string,
 	deps Deps,
@@ -1132,6 +1164,7 @@ func runMultiAgentPath(
 		EnrichAgentRun: reviewAgentRunTokenEnricher(worktreeRoot, headSHA),
 	}, sinks)
 	writePostReviewManifest(ctx, out, worktreeRoot, headSHA, summary, aggregateOutput)
+	maybePostReviewToTrail(ctx, out, deps, outputMode, profileName, summary, aggregateOutput)
 	if waitErr != nil && runCtx.Err() == nil && ctx.Err() == nil {
 		return fmt.Errorf("review run: %w", waitErr)
 	}
@@ -1220,6 +1253,56 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 		})
 	}
 	return sinks
+}
+
+// maybePostReviewToTrail delivers the final review output to the branch's trail
+// when the profile selects the "trail" destination. It never fails the run:
+// the review already happened, so a posting error (or a missing hook) is
+// surfaced as a notice and the local output stands.
+func maybePostReviewToTrail(
+	ctx context.Context,
+	out io.Writer,
+	deps Deps,
+	outputMode, profileName string,
+	summary reviewtypes.RunSummary,
+	aggregateOutput string,
+) {
+	if outputMode != ReviewOutputTrail || summary.Cancelled {
+		return
+	}
+	verdict := strings.TrimSpace(aggregateOutput)
+	if verdict == "" {
+		verdict = combinedReviewNarratives(summary)
+	}
+	if verdict == "" {
+		fmt.Fprintln(out, "Nothing to post to the trail (no review output produced).")
+		return
+	}
+	if deps.PostReviewToTrail == nil {
+		fmt.Fprintln(out, "Trail output is not available here; keeping the review local.")
+		return
+	}
+	if err := deps.PostReviewToTrail(ctx, out, profileName, verdict); err != nil {
+		fmt.Fprintf(out, "Could not post the review to the trail: %v\n", err)
+	}
+}
+
+// combinedReviewNarratives joins the inspectors' narratives into one document,
+// used as the trail-posting body for single-inspector runs (which have no
+// synthesized verdict) and as a fallback when synthesis produced nothing.
+func combinedReviewNarratives(summary reviewtypes.RunSummary) string {
+	var b strings.Builder
+	for _, run := range usableAgentRuns(summary) {
+		narrative := joinAssistantText(run.Buffer)
+		if narrative == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s", run.Name, narrative)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func writePostReviewManifest(

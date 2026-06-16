@@ -278,6 +278,11 @@ type ReviewProfileConfig struct {
 	// and a multi-inspector profile with no judge set falls back to an
 	// auto-selected inspector that can write a verdict.
 	Judge *ReviewConfig `json:"judge,omitempty"`
+	// Output selects where the final review verdict is delivered: "local"
+	// (printed and saved to the local review manifest — the default) or
+	// "trail" (additionally posted to the branch's trail as a finding via
+	// the data API). Empty means local.
+	Output string `json:"output,omitempty"`
 }
 
 // IsZero reports whether the profile is effectively unset.

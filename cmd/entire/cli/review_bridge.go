@@ -8,10 +8,17 @@ package cli
 //   review → claudecode/codex/geminicli → review
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/codex"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
+	"github.com/entireio/cli/cmd/entire/cli/api"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
@@ -26,7 +33,42 @@ func buildReviewDeps() cliReview.Deps {
 		HeadHasReviewCheckpoint: headHasReviewCheckpoint,
 		ReviewCheckpointContext: reviewCheckpointContext,
 		ReviewerFor:             launchableReviewerFor,
+		PostReviewToTrail:       postReviewToTrail,
 	}
+}
+
+// postReviewToTrail posts the final review verdict to the current branch's
+// trail as a finding, implementing the review subpackage's "trail" output
+// destination. It lives in the cli package because the data API client and
+// auth flow do.
+func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict string) error {
+	verdict = strings.TrimSpace(verdict)
+	if verdict == "" {
+		return errors.New("no review output to post")
+	}
+	body := verdict
+	if p := strings.TrimSpace(profileName); p != "" {
+		body = fmt.Sprintf("Review verdict (profile: %s)\n\n%s", p, verdict)
+	}
+	return runAuthenticatedDataAPI(ctx, out, false, func(ctx context.Context, client *api.Client) error {
+		target, err := resolveTrailReviewTarget(ctx, client, "")
+		if err != nil {
+			return err
+		}
+		input := api.TrailReviewCommentInput{
+			ClientID: generateTrailReviewClientID(),
+			Body:     stringPtr(body),
+		}
+		if _, err := createTrailReviewFinding(ctx, client, target.Trail.ID, input); err != nil {
+			return err
+		}
+		if target.Trail.Number > 0 {
+			fmt.Fprintf(out, "Posted the review verdict to trail #%d as a finding.\n", target.Trail.Number)
+		} else {
+			fmt.Fprintln(out, "Posted the review verdict to the trail as a finding.")
+		}
+		return nil
+	})
 }
 
 // launchableReviewerFor returns the AgentReviewer for agents with a review-runner

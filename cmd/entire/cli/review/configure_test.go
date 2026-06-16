@@ -189,6 +189,77 @@ func TestBuildConfiguredProfile_PreservesExistingTask(t *testing.T) {
 	}
 }
 
+func TestProfileOutput(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"", ReviewOutputLocal},
+		{"local", ReviewOutputLocal},
+		{"LOCAL", ReviewOutputLocal},
+		{"trail", ReviewOutputTrail},
+		{" Trail ", ReviewOutputTrail},
+		{"bogus", ReviewOutputLocal},
+	}
+	for _, c := range cases {
+		if got := profileOutput(settings.ReviewProfileConfig{Output: c.raw}); got != c.want {
+			t.Errorf("profileOutput(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+func TestBuildConfiguredProfile_OutputTrail(t *testing.T) {
+	t.Parallel()
+	deps := configureTestDeps("claude-code", "codex")
+	profile, err := buildConfiguredProfile(
+		context.Background(),
+		"general",
+		reviewConfigureOptions{Agents: []string{tAgentClaude}, Output: "trail"},
+		&settings.EntireSettings{},
+		deps,
+	)
+	if err != nil {
+		t.Fatalf("buildConfiguredProfile: %v", err)
+	}
+	if profile.Output != ReviewOutputTrail {
+		t.Errorf("output = %q, want trail", profile.Output)
+	}
+}
+
+func TestBuildConfiguredProfile_OutputLocalStoredEmpty(t *testing.T) {
+	t.Parallel()
+	deps := configureTestDeps("claude-code")
+	profile, err := buildConfiguredProfile(
+		context.Background(),
+		"general",
+		reviewConfigureOptions{Agents: []string{tAgentClaude}, Output: "local"},
+		&settings.EntireSettings{},
+		deps,
+	)
+	if err != nil {
+		t.Fatalf("buildConfiguredProfile: %v", err)
+	}
+	if profile.Output != "" {
+		t.Errorf("output = %q, want empty (default local stored as omitted)", profile.Output)
+	}
+}
+
+func TestBuildConfiguredProfile_InvalidOutput(t *testing.T) {
+	t.Parallel()
+	deps := configureTestDeps("claude-code")
+	_, err := buildConfiguredProfile(
+		context.Background(),
+		"general",
+		reviewConfigureOptions{Agents: []string{tAgentClaude}, Output: "slack"},
+		&settings.EntireSettings{},
+		deps,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --set-output value")
+	}
+}
+
 func TestBuildConfiguredProfile_InvalidModelSpec(t *testing.T) {
 	t.Parallel()
 	deps := configureTestDeps("claude-code")

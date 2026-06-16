@@ -141,6 +141,16 @@ func RunReviewGuidedSetup(
 		}
 		profile.Judge = judge
 	}
+	output, err := promptForOutputMode(ctx, existing.Output)
+	if err != nil {
+		return "", settings.ReviewProfileConfig{}, err
+	}
+	// Store only the non-default destination so local profiles stay clean.
+	if output == ReviewOutputTrail {
+		profile.Output = ReviewOutputTrail
+	} else {
+		profile.Output = ""
+	}
 	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
 	fmt.Fprintln(out)
 	return profileName, profile, nil
@@ -665,6 +675,30 @@ func promptForJudge(ctx context.Context, launchable []string, existing settings.
 		return nil, err
 	}
 	return &settings.ReviewConfig{Agent: agentName, Model: model}, nil
+}
+
+// promptForOutputMode asks where the final verdict should be delivered: kept
+// local, or also posted to the branch's trail as a finding. current pre-selects
+// the profile's existing choice.
+func promptForOutputMode(ctx context.Context, current string) (string, error) {
+	picked := ReviewOutputLocal
+	if strings.EqualFold(strings.TrimSpace(current), ReviewOutputTrail) {
+		picked = ReviewOutputTrail
+	}
+	form := newAccessibleForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Where should the verdict go?").
+			Description("Local keeps it on your machine; Trail also posts it as a finding on this branch's trail.").
+			Options(
+				huh.NewOption("Local — print it and save to local findings", ReviewOutputLocal),
+				huh.NewOption("Trail — also post it to the trail (entire trail finding)", ReviewOutputTrail),
+			).
+			Value(&picked),
+	))
+	if err := form.RunWithContext(ctx); err != nil {
+		return "", fmt.Errorf("output destination picker: %w", err)
+	}
+	return picked, nil
 }
 
 func ConfirmRunReviewNow(ctx context.Context, out io.Writer) (bool, error) {

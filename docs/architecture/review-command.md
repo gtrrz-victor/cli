@@ -16,7 +16,7 @@ entire inspect security                 # Run a named profile
 entire inspect --profile accessibility  # Same, flag form
 entire inspect --list                   # List configured profiles (inspectors + judge), marking the default
 entire inspect --configure                    # Interactive: guided wizard. Non-interactive: list agents + profiles
-entire inspect --configure --profile general --set-agents claude-code,codex --set-judge claude-code
+entire inspect --configure --profile general --set-agents claude-code,codex --set-judge claude-code --set-output trail
                                                # Configure a profile non-interactively (no TUI)
 entire inspect --configure --profile sec --set-slot claude-code=opus --set-slot codex --set-judge claude-code=opus
 entire inspect --configure --profile general --set-model codex=gpt-5-codex --set-task "..."
@@ -42,12 +42,14 @@ When no profiles are configured, interactive `entire inspect` runs a guided
 setup: choose a review focus (or `Custom…` to write the task), build the
 inspector crew (a single-screen add/edit/remove slot list seeded with all
 launchable agents — the same agent may appear more than once on different or
-identical models), then choose the judge that consolidates their reports. It
-saves the profile and asks before starting agents.
+identical models), then choose the judge that consolidates their reports, and
+finally where the verdict should go (local or the branch's trail). It saves the
+profile and asks before starting agents.
 
 `entire inspect --configure` is the configuration entry point:
-- With `--set-agents` / `--set-slot` / `--set-judge` / `--set-task` /
-  `--set-model agent=model`, it writes the profile non-interactively (no TUI).
+- With `--set-agents` / `--set-slot` / `--set-judge` / `--set-output` /
+  `--set-task` / `--set-model agent=model`, it writes the profile
+  non-interactively (no TUI).
   `--set-*` writes preserve profile-level fields the flags don't touch (custom
   `task`, etc.).
 - With no `--set-*` flags in an interactive terminal, it opens the guided
@@ -104,6 +106,11 @@ Profiles are configured in clone-local preferences (or settings) under
   inspectors. It is optional: a one-inspector profile needs none, and a
   multi-inspector profile with no judge set auto-selects a text-gen-capable
   inspector (preferring claude-code, then codex, then gemini).
+- `output` selects where the verdict is delivered: `local` (printed and saved
+  to the local review manifest — the default; omitted from settings) or `trail`
+  (additionally posted to the branch's trail as a finding via the data API).
+  Resolved by `profileOutput`; the trail post is wired through the injected
+  `Deps.PostReviewToTrail` hook (`review_bridge.go` → `createTrailReviewFinding`).
 
 `entire inspect --models` lists the models each agent advertises via the
 optional `agent.ModelLister` capability (`cmd/entire/cli/agent/model_lister.go`).

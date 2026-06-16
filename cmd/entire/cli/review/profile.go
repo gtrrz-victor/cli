@@ -15,6 +15,36 @@ import (
 
 const DefaultProfileName = "general"
 
+// Review output destinations. ReviewOutputLocal prints the verdict and writes
+// the local review manifest; ReviewOutputTrail additionally posts the verdict
+// to the branch's trail as a finding (`entire trail finding`).
+const (
+	ReviewOutputLocal = "local"
+	ReviewOutputTrail = "trail"
+)
+
+// profileOutput resolves the configured output destination, defaulting to
+// local. Unknown values fall back to local.
+func profileOutput(profile settings.ReviewProfileConfig) string {
+	if strings.EqualFold(strings.TrimSpace(profile.Output), ReviewOutputTrail) {
+		return ReviewOutputTrail
+	}
+	return ReviewOutputLocal
+}
+
+// normalizeReviewOutput validates a user-supplied output value, returning the
+// canonical form. Empty is allowed (means local).
+func normalizeReviewOutput(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", ReviewOutputLocal:
+		return ReviewOutputLocal, nil
+	case ReviewOutputTrail:
+		return ReviewOutputTrail, nil
+	default:
+		return "", fmt.Errorf("invalid output %q; valid values are %s, %s", raw, ReviewOutputLocal, ReviewOutputTrail)
+	}
+}
+
 const (
 	defaultGeneralTask       = "Review this change for correctness, regressions, API design, missing tests, maintainability, and user-facing behavior changes. Report only actionable findings with concrete evidence."
 	defaultSecurityTask      = "Review this change for security vulnerabilities: authentication and authorization bugs, injection risks, secrets exposure, unsafe dependency or deserialization behavior, privilege-boundary mistakes, insecure defaults, and data leakage. Report only actionable findings with concrete evidence."
