@@ -365,6 +365,85 @@ func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 
 // handleLifecycleTurnStart handles turn start: captures pre-prompt state,
 // ensures strategy setup, initializes session.
+// entireTrailContextInjection is the one-time, model-facing documentation Entire
+// injects to teach the agent the `entire trail` command. Kept terse: it costs
+// context-window tokens on the first turn of every session, and states no
+// transient fact (whether a trail exists can change at any time).
+func entireTrailContextInjection() string {
+	return "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it."
+}
+
+// trailsEnabledProbeTimeout bounds the once-per-session network probe that
+// checks whether trails are enabled for the repo, so a slow API can't stall the
+// agent's first turn.
+const trailsEnabledProbeTimeout = 3 * time.Second
+
+// trailsEnabledForRepo reports whether Entire trails are literally enabled for
+// this repo on the API. It resolves the origin remote to a supported forge and
+// probes the trails endpoint; a successful response means trails are
+// provisioned/enabled. Best-effort and bounded by a short timeout — an
+// unresolved remote, missing auth, or any API/transport error reports false, so
+// we never advertise trails we can't confirm are enabled.
+func trailsEnabledForRepo(ctx context.Context) bool {
+	forge, owner, repo, err := resolveTrailRemote(ctx)
+	if err != nil {
+		return false
+	}
+	client, err := NewAuthenticatedAPIClient(ctx, false)
+	if err != nil {
+		return false // not authenticated → trails aren't enabled for us
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, trailsEnabledProbeTimeout)
+	defer cancel()
+	enabled, err := client.TrailsEnabled(probeCtx, forge, owner, repo)
+	return err == nil && enabled
+}
+
+// emitContextInjection writes ag's native context-injection payload to stdout
+// when ag injects at event.Type, trails are enabled for the repo on the API,
+// and this session has not been injected yet. Best-effort: an injection failure
+// never fails the hook.
+func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Event) {
+	injector, ok := agent.AsContextInjector(ag)
+	if !ok || injector.InjectionEvent() != event.Type || event.SessionID == "" {
+		return
+	}
+	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
+
+	// Claim first so the trails-enabled probe (a network call) runs at most once
+	// per session: the turn that wins the claim probes; later turns return here.
+	// Trails enablement is a stable per-repo setting, so consuming the claim when
+	// trails are disabled correctly suppresses injection for the whole session.
+	claimed, err := strategy.ClaimContextInjection(ctx, event.SessionID)
+	if err != nil {
+		logging.Warn(logCtx, "failed to claim context injection marker",
+			slog.String("error", err.Error()))
+		return
+	}
+	if !claimed {
+		return // already injected (or attempted) for this session
+	}
+
+	// Only advertise trails when they're literally enabled for this repo on the API.
+	if !trailsEnabledForRepo(ctx) {
+		return
+	}
+
+	payload, err := injector.RenderContextInjection(agent.ContextInjection{Text: entireTrailContextInjection()})
+	if err != nil {
+		logging.Warn(logCtx, "failed to render context injection",
+			slog.String("error", err.Error()))
+		return
+	}
+	if len(payload) == 0 {
+		return
+	}
+	if _, err := os.Stdout.Write(payload); err != nil {
+		logging.Warn(logCtx, "failed to write context injection",
+			slog.String("error", err.Error()))
+	}
+}
+
 func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.Event) error {
 	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
 	logging.Info(logCtx, "turn-start",
@@ -482,6 +561,10 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 			slog.String("error", mutErr.Error()))
 	}
 	initSpan.End()
+
+	// Inject Entire's model-facing context (once per session) for agents whose
+	// transport supports it at TurnStart (e.g. Pi). Extension reads stdout.
+	emitContextInjection(ctx, ag, event)
 
 	return nil
 }

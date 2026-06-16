@@ -1,0 +1,24 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+)
+
+// TrailsEnabled reports whether the trails feature is enabled for the repo on
+// the API. It probes the trails list endpoint (limit=1): a 2xx response means
+// trails are provisioned/enabled for the repo, while 404/403 (and any other
+// non-2xx) mean they are not enabled or not accessible to this caller.
+//
+// Transport errors are returned to the caller (with enabled=false) so a
+// "couldn't reach the API" outcome is distinguishable from a definitive
+// "not enabled".
+func (c *Client) TrailsEnabled(ctx context.Context, forge, owner, repo string) (bool, error) {
+	resp, err := c.Get(ctx, fmt.Sprintf("/api/v1/trails/%s/%s/%s?limit=1", forge, owner, repo))
+	if err != nil {
+		return false, fmt.Errorf("probe trails enablement: %w", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices, nil
+}
