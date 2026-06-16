@@ -24,11 +24,12 @@ import (
 )
 
 var (
-	// lookupResourceToken returns a bearer scoped to the given resource
-	// origin. Production wiring goes through auth.TokenForResource so
-	// the tokenmanager's same-host shortcut, JWT-aud shortcut, and
-	// exchange dispatch all apply. Tests swap to a fixed-token closure.
-	lookupResourceToken = auth.TokenForResource
+	// lookupResourceToken returns a bearer for the given data-API base URL.
+	// Production wiring goes through auth.ResolveDataAPIToken so the dispatch
+	// host's /.well-known/entire-api.json picks the matching login context
+	// (a host that doesn't advertise discovery is a surfaced error). Tests
+	// swap to a fixed-token closure.
+	lookupResourceToken = auth.ResolveDataAPIToken
 
 	nowUTC = func() time.Time { return time.Now().UTC() }
 )

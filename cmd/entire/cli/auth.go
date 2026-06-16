@@ -33,37 +33,15 @@ const (
 	lastUsedJustNow = "just now"
 )
 
-// requireSecureBaseURL enforces TLS unless insecureHTTPAuth is set. Every
-// command that sends a bearer token over the network (login, logout,
-// auth status) must call this so credentials don't leak over plaintext HTTP
-// without explicit opt-in.
-//
-// Both the auth and data API origins are checked: the bearer travels to the
-// auth host for login + session management, and to the data host for
-// search/activity/dispatch/etc. When both origins resolve to the same host
-// (e.g. an explicitly collapsed single-host deployment) the redundant second
-// parse is skipped.
-//
-// When the opt-in flag is set, the tokenmanager's matching HTTP guard is
-// also relaxed via auth.EnableInsecureHTTP — otherwise an STS exchange
-// against a private-network http:// auth host would fail at the
-// tokenmanager layer even though the per-command TLS check was waived.
-func requireSecureBaseURL(insecureHTTPAuth bool) error {
+// applyInsecureHTTPAuth relaxes the tokenmanager's HTTP guard when the user
+// passed --insecure-http-auth, and reports whether per-target TLS checks
+// should be skipped. status/logout enforce TLS on the specific core they
+// dial (the active context's), not on any global origin.
+func applyInsecureHTTPAuth(insecureHTTPAuth bool) bool {
 	if insecureHTTPAuth {
 		auth.EnableInsecureHTTP()
-		return nil
 	}
-	dataURL, authURL := api.BaseURL(), api.AuthBaseURL()
-	if err := api.RequireSecureURL(dataURL); err != nil {
-		return fmt.Errorf("base URL check: %w", err)
-	}
-	if authURL == dataURL {
-		return nil
-	}
-	if err := api.RequireSecureURL(authURL); err != nil {
-		return fmt.Errorf("auth base URL check: %w", err)
-	}
-	return nil
+	return insecureHTTPAuth
 }
 
 // newAuthSessionsClient builds an api.Client for entire-core's login-session
@@ -73,18 +51,6 @@ func requireSecureBaseURL(insecureHTTPAuth bool) error {
 // targets a login server, never the data host.
 func newAuthSessionsClient(coreURL, token string) *api.Client {
 	return api.NewClientWithBaseURL(token, coreURL).WithAuthSessionsPath(coreAuthSessionsPath)
-}
-
-// resolveAuthHostToken returns a bearer scoped for the auth host (entire-core).
-// For the auth host's own origin the tokenmanager hits the same-host shortcut
-// and returns the stored login JWT unchanged — keeping the entire:session
-// scope that core's session endpoints (and /me) require, with no STS exchange.
-func resolveAuthHostToken(ctx context.Context) (string, error) {
-	token, err := auth.TokenForResource(ctx, api.OriginOnly(api.AuthBaseURL()))
-	if err != nil {
-		return "", fmt.Errorf("resolve auth-host token: %w", err)
-	}
-	return token, nil
 }
 
 // isKeychainTokenRejected reports whether err indicates the stored
@@ -164,16 +130,12 @@ func newAuthStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := requireSecureBaseURL(insecureHTTPAuth); err != nil {
-				return err
-			}
-			target, err := resolveStatusTarget(auth.NewContextStore(), auth.Contexts, api.AuthBaseURL())
+			target, err := resolveStatusTarget(cmd.Context(), auth.Contexts, auth.RefreshedLoginToken)
 			if err != nil {
 				return err
 			}
-			// We send the session token to target.coreURL; enforce TLS on it
-			// too (it may differ from AuthBaseURL when a context is active).
-			if !insecureHTTPAuth {
+			// We send the session token to target.coreURL; enforce TLS on it.
+			if !applyInsecureHTTPAuth(insecureHTTPAuth) && target.coreURL != "" {
 				if err := api.RequireSecureURL(target.coreURL); err != nil {
 					return fmt.Errorf("context login server URL check: %w", err)
 				}
@@ -208,28 +170,39 @@ type authSessionLister func(ctx context.Context, coreURL, token string) ([]api.A
 // name. Injected for testability; production wires auth.Contexts.
 type contextsProvider func() ([]*contexts.Context, string, error)
 
+// loginTokenResolver returns a usable login JWT for a context, transparently
+// re-minting an expired one from the stored refresh token. Injected so status
+// tests don't reach the network; production wires auth.RefreshedLoginToken.
+type loginTokenResolver func(ctx context.Context, c *contexts.Context) (string, error)
+
 // statusTarget is the resolved core to act against: the active context's
-// CoreURL + its session token, or (no active context) the configured
-// AuthBaseURL + legacy keyring entry. Shared by `auth status` (profile +
-// session list) and `logout` (revocation) so both hit the same login server.
+// CoreURL + its session token. Zero coreURL/token means not logged in.
+// Shared by `auth status` (profile + session list) and `logout`
+// (revocation) so both hit the same login server.
 type statusTarget struct {
 	coreURL       string
 	token         string
-	activeContext string // "" when falling back to the legacy entry
+	activeContext string
 	totalContexts int
 }
 
-// resolveStatusTarget picks the core + token for `entire auth status`. The
-// active contexts.json context wins (so `auth use` retargets status onto that
-// login server); otherwise it falls back to the legacy keyring entry keyed by
-// the configured auth host.
+// resolveStatusTarget picks the core + token for `entire auth status` (and
+// `logout`) from the active contexts.json context (so `auth use` retargets
+// status onto that login server). No active context means not logged in —
+// the zero-token target renders the `entire login` hint.
+//
+// The token is resolved through resolveLogin, which transparently re-mints
+// an expired login JWT from the stored refresh token: an
+// expired-but-refreshable session must report "logged in", not "re-login",
+// and `logout`'s revoke call gets a bearer that still authenticates. When
+// refresh fails (revoked family, network, opaque token), the raw stored
+// token is used and the /me liveness probe is the arbiter — preserving the
+// accurate "no longer valid" outcome for a genuinely dead session.
 //
 // A genuine contexts.json read/parse error is surfaced, not swallowed — a
 // missing file reads as "no contexts" (no error), so an error here means the
-// file is corrupt or unreadable, which the user must see. This keeps status
-// symmetric with the control-plane commands (auth.ResolveControlPlaneTarget),
-// which fail the same way rather than silently degrading to a stale identity.
-func resolveStatusTarget(store tokenStore, listContexts contextsProvider, fallbackBaseURL string) (statusTarget, error) {
+// file is corrupt or unreadable, which the user must see.
+func resolveStatusTarget(ctx context.Context, listContexts contextsProvider, resolveLogin loginTokenResolver) (statusTarget, error) {
 	all, current, err := listContexts()
 	if err != nil {
 		return statusTarget{}, fmt.Errorf("load contexts: %w", err)
@@ -239,15 +212,17 @@ func resolveStatusTarget(store tokenStore, listContexts contextsProvider, fallba
 		if c.Name != current || c.CoreURL == "" {
 			continue
 		}
+		if tok, terr := resolveLogin(ctx, c); terr == nil && tok != "" {
+			return statusTarget{coreURL: c.CoreURL, token: tok, activeContext: c.Name, totalContexts: total}, nil
+		}
 		if tok, terr := auth.LoginTokenForContext(c); terr == nil && tok != "" {
 			return statusTarget{coreURL: c.CoreURL, token: tok, activeContext: c.Name, totalContexts: total}, nil
 		}
+		// Active context with no readable token: report against its core so
+		// the not-logged-in message names the right login server.
+		return statusTarget{coreURL: c.CoreURL, activeContext: c.Name, totalContexts: total}, nil
 	}
-	tok, gerr := store.GetToken(fallbackBaseURL)
-	if gerr != nil {
-		tok = "" // best-effort: a keyring read failure just reads as "no token"
-	}
-	return statusTarget{coreURL: fallbackBaseURL, token: tok, totalContexts: total}, nil
+	return statusTarget{totalContexts: total}, nil
 }
 
 // defaultFetchProfile fetches a user's profile from coreURL's GET /me with the
@@ -286,7 +261,11 @@ func defaultListAuthSessions(ctx context.Context, coreURL, token string) ([]api.
 // listed so the effect of `logout` / `logout --everywhere` is visible.
 func runAuthStatus(ctx context.Context, w io.Writer, fetchProfile profileFetcher, listSessions authSessionLister, t statusTarget) error {
 	if t.token == "" {
-		fmt.Fprintf(w, "Not logged in to %s\n", t.coreURL)
+		if t.coreURL == "" {
+			fmt.Fprintln(w, "Not logged in.")
+		} else {
+			fmt.Fprintf(w, "Not logged in to %s\n", t.coreURL)
+		}
 		fmt.Fprintln(w, "Run 'entire login' to authenticate.")
 		return nil
 	}
@@ -471,14 +450,14 @@ func lastUsedSortKey(s api.AuthSession) string {
 	return *s.LastUsedAt
 }
 
-// formatAuthDate renders an RFC3339 timestamp as YYYY-MM-DD in local time,
+// formatAuthDate renders an RFC3339 timestamp as YYYY-MM-DD in its encoded zone,
 // falling back to a dash (empty) or the raw value (unparseable).
 func formatAuthDate(s string) string {
 	if s == "" {
 		return placeholderDash
 	}
 	if ts, err := time.Parse(time.RFC3339, s); err == nil {
-		return ts.Local().Format("2006-01-02")
+		return ts.Format("2006-01-02")
 	}
 	return s
 }
