@@ -780,6 +780,13 @@ func TestReviewRunModelMatches(t *testing.T) {
 		{"slash provider prefix stripped then identical", "anthropic/claude-sonnet", "claude-sonnet", true},
 		{"family matches across a provider component at offset", "claude-sonnet", "anthropic-claude-sonnet-4-5", true},
 		{"match where the next component is the last element", "sonnet-4", "claude-sonnet-4-5", true},
+		// Suffix-only spans are intentionally rejected (no version boundary to
+		// confirm the same model); this is what also keeps bare fragments and
+		// variant words from matching. Realistic configured models still match via
+		// the trailing version (see the alias/family cases above).
+		{"family+version suffix is intentionally not matched", "sonnet-4", "claude-sonnet-4", false},
+		{"variant-word suffix must not match", "mini", "gpt-4o-mini", false},
+		{"bare version suffix must not match", "4-5", "claude-sonnet-4", false},
 		{"thinking-suffix-only difference matches", "claude-sonnet:high", "claude-sonnet:low", true},
 		{"equal-length different family does not match", "claude-sonnet", "claude-opus", false},
 		{"equal-length different version does not match", "claude-sonnet-4", "claude-sonnet-5", false},
