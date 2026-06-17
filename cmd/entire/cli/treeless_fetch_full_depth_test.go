@@ -51,8 +51,13 @@ func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
 
 	originTip := gitOutput(t, bareDir, "rev-parse", "refs/heads/"+paths.MetadataBranchName)
 
+	// Single-branch file:// clone: fetch only main, via a real fetch-pack rather
+	// than the local hardlink optimization. This leaves the metadata branch and
+	// its history absent until FetchMetadataTreeOnly fetches them, so the
+	// assertions actually exercise the tip-read (the old --depth=1 behavior
+	// would shallow the repo here).
 	clonedDir := filepath.Join(tmpDir, "cloned")
-	runGit(t, tmpDir, "clone", bareDir, clonedDir)
+	runGit(t, tmpDir, "clone", "--single-branch", "--branch", "main", "file://"+bareDir, clonedDir)
 	runGit(t, clonedDir, "config", "user.email", "test@example.com")
 	runGit(t, clonedDir, "config", "user.name", "Test")
 
