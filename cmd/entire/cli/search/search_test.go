@@ -105,6 +105,18 @@ func TestParseGitHubRemote_NonGitHubHTTPS(t *testing.T) {
 	}
 }
 
+func TestParseGitHubRemote_RejectsExtraPathSegments(t *testing.T) {
+	t.Parallel()
+	for _, remoteURL := range []string{
+		"https://github.com/entirehq/entire.io/extra.git",
+		"entire://aws-us-east-2.entire.io/gh/entirehq/entire.io/extra",
+	} {
+		if _, _, err := ParseGitHubRemote(remoteURL); err == nil {
+			t.Errorf("expected error for malformed remote %q, got none", remoteURL)
+		}
+	}
+}
+
 func TestParseGitHubRemote_EntireMirror(t *testing.T) {
 	t.Parallel()
 	owner, repo, err := ParseGitHubRemote("entire://aws-us-east-2.entire.io/gh/entirehq/entire.io")
