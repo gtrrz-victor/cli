@@ -672,3 +672,16 @@ func TestRun_NaturalCompletionPastDeadlineIsNotTimeout(t *testing.T) {
 		t.Errorf("run.Err = %v, want nil", run.Err)
 	}
 }
+
+func TestInspectorTimeout(t *testing.T) {
+	t.Parallel()
+	if got := inspectorTimeout(reviewtypes.RunConfig{}); got != defaultInspectorTimeout {
+		t.Errorf("unset = %v, want default %v", got, defaultInspectorTimeout)
+	}
+	if got := inspectorTimeout(reviewtypes.RunConfig{InspectorTimeout: 5 * time.Minute}); got != 5*time.Minute {
+		t.Errorf("explicit = %v, want 5m", got)
+	}
+	if got := inspectorTimeout(reviewtypes.RunConfig{InspectorTimeout: -1}); got != 0 {
+		t.Errorf("disabled (negative) = %v, want 0 (no timeout)", got)
+	}
+}

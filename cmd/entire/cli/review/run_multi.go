@@ -34,26 +34,17 @@ import (
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
 
-// perAgentState tracks the mutable accumulation for one agent during a
-// multi-agent run.
+// perAgentState tracks the accumulation for one agent during a multi-agent run.
 //
-// Write paths (no mutex; the close-after-wait protocol below provides
-// happens-before for both):
-//   - waitErr, finishedAt, and timedOut are written by the per-agent
-//     forwarding goroutine after its proc.Events range loop exits. That
-//     goroutine may still send final derived events (synthetic RunError,
-//     enriched Tokens) before wg.Done.
-//   - All other mutable fields (events buffer, tokens, finishedSeen,
-//     finishedOk, sawRunError) are written from the single dispatch loop
-//     reading the fan-in channel.
-//
-// Read path: the main RunMulti goroutine reads every field only after
-// `for ev := range fanIn` returns, which is sequenced after wg.Wait →
-// close(fanIn) by the close goroutine. That sequencing is the
-// happens-before for both write paths.
-//
-// DO NOT add new writers from goroutines outside this protocol — adding
-// a third write path would require a mutex (or a redesign).
+// Concurrency: perAgentState has a single writer. The immutable fields
+// (name/agentName/model/startedAt) and startErr/finishedAt for agents whose
+// Start failed are set in the setup loop; every other field is written by the
+// dispatch loop as events — and a final terminal marker carrying
+// waitErr/finishedAt/timedOut — arrive over fanIn. Both run on the RunMulti
+// goroutine. The per-agent forwarding goroutines NEVER touch perAgentState;
+// they only send on fanIn. So there is no cross-goroutine field sharing, and
+// the post-loop accounting reads are safe by construction (the dispatch loop
+// has already returned).
 type perAgentState struct {
 	name         string
 	agentName    string
@@ -71,10 +62,22 @@ type perAgentState struct {
 	waitErr      error
 }
 
-// taggedEvent associates a fan-in event with its originating agent index.
+// taggedEvent associates a fan-in item with its originating agent index. It is
+// either an agent event (ev set) or the agent's terminal marker (terminal set),
+// the latter carrying end-of-run fields so the dispatch loop stays the sole
+// writer of perAgentState.
 type taggedEvent struct {
 	agentIdx int
 	ev       reviewtypes.Event
+	terminal *agentTerminal
+}
+
+// agentTerminal carries an agent's end-of-run results from its forwarding
+// goroutine to the dispatch loop, which writes them into perAgentState.
+type agentTerminal struct {
+	waitErr    error
+	finishedAt time.Time
+	timedOut   bool
 }
 
 // RunMulti executes a multi-agent review. Each reviewer runs concurrently;
@@ -132,12 +135,17 @@ func RunMulti(
 	// scheduling jitter without holding an unbounded queue.
 	fanIn := make(chan taggedEvent, len(reviewers)*16)
 
-	// Each inspector gets its own deadline so a stuck agent is cancelled (its
-	// process killed) without hanging the run; siblings and the judge proceed.
+	// Each inspector runs under its own deadline (unless inspectorTimeout returns
+	// 0, meaning disabled) so a stuck agent is cancelled without hanging the run;
+	// siblings and the judge proceed.
 	timeout := inspectorTimeout(cfg)
 	var wg sync.WaitGroup
 	for i, r := range reviewers {
-		agentCtx, cancelAgent := context.WithTimeout(ctx, timeout)
+		agentCtx := ctx
+		var cancelAgent context.CancelFunc = func() {}
+		if timeout > 0 {
+			agentCtx, cancelAgent = context.WithTimeout(ctx, timeout)
+		}
 		proc, err := r.Start(agentCtx, cfg)
 		if err != nil {
 			cancelAgent()
@@ -155,22 +163,6 @@ func RunMulti(
 			}
 			waitErr := p.Wait()
 			finishedAt := time.Now()
-			// waitErr, timedOut, and finishedAt are all written here, before this
-			// goroutine's deferred wg.Done(). The main goroutine reads them only
-			// after the dispatch loop ends, which is sequenced after
-			// wg.Wait() -> close(fanIn) by the close goroutine; that wg edge is the
-			// happens-before, so it covers these writes regardless of the fanIn
-			// sends below.
-			//
-			// Classify from waitErr (the cause captured when Wait returned): the
-			// Process contract returns DeadlineExceeded when killed by THIS agent's
-			// deadline and Canceled on a parent cancellation. Using waitErr instead
-			// of re-sampling the agent context avoids a deadline firing in the gap
-			// after a natural completion (waitErr == nil) and producing a false
-			// timeout.
-			states[idx].waitErr = waitErr
-			states[idx].timedOut = errors.Is(waitErr, context.DeadlineExceeded)
-			states[idx].finishedAt = finishedAt
 			if shouldEmitSyntheticRunError(ctx, waitErr) {
 				fanIn <- taggedEvent{agentIdx: idx, ev: reviewtypes.RunError{Err: waitErr}}
 			}
@@ -182,6 +174,16 @@ func RunMulti(
 				Duration:  finishedAt.Sub(states[idx].startedAt),
 				Err:       waitErr,
 			})
+			// Hand the terminal result to the dispatch loop so perAgentState has a
+			// single writer. Classify the timeout from waitErr (the cause the
+			// Process captured at Wait): DeadlineExceeded means this agent's deadline
+			// fired; a parent cancel is Canceled; a natural completion is nil even if
+			// the deadline elapses a moment later.
+			fanIn <- taggedEvent{agentIdx: idx, terminal: &agentTerminal{
+				waitErr:    waitErr,
+				finishedAt: finishedAt,
+				timedOut:   errors.Is(waitErr, context.DeadlineExceeded),
+			}}
 		}(i, proc, cancelAgent)
 	}
 
@@ -199,6 +201,14 @@ func RunMulti(
 	// even though N agent goroutines emit concurrently.
 	for tagged := range fanIn {
 		st := states[tagged.agentIdx]
+		if tagged.terminal != nil {
+			// End-of-run marker (internal): record terminal fields, don't forward
+			// to sinks.
+			st.waitErr = tagged.terminal.waitErr
+			st.finishedAt = tagged.terminal.finishedAt
+			st.timedOut = tagged.terminal.timedOut
+			continue
+		}
 		st.buffer = append(st.buffer, tagged.ev)
 		switch e := tagged.ev.(type) {
 		case reviewtypes.Tokens:
@@ -216,13 +226,9 @@ func RunMulti(
 		}
 	}
 
-	// The dispatch loop above returns only once fanIn is closed, which the close
-	// goroutine does after wg.Wait() — i.e. after every forwarding goroutine's
-	// deferred wg.Done(). Each goroutine writes waitErr/timedOut/finishedAt
-	// before that Done(), so reading those per-agent fields below is safe: the
-	// wg edge is the happens-before, regardless of when an inspector's deadline
-	// fired (`go test -race` covers this). The dispatch loop never reads these
-	// fields — only the event-driven ones (buffer/tokens/finishedSeen/...).
+	// The dispatch loop above is the sole writer of perAgentState and has
+	// returned (fanIn closed after wg.Wait()), so reading the per-agent fields
+	// below is safe.
 	finished := time.Now()
 	cancelled := ctx.Err() != nil
 

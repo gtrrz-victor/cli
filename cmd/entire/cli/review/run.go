@@ -38,11 +38,20 @@ func reviewerModelName(r reviewtypes.AgentReviewer) string {
 // process killed) and marked failed rather than hanging the review forever.
 const defaultInspectorTimeout = 10 * time.Minute
 
+// inspectorTimeout resolves the effective per-inspector timeout, distinguishing
+// the three RunConfig.InspectorTimeout states the zero value alone can't:
+//   - positive: use it.
+//   - zero (unset): use defaultInspectorTimeout.
+//   - negative: disabled — return 0, and callers treat 0 as "no timeout".
 func inspectorTimeout(cfg reviewtypes.RunConfig) time.Duration {
-	if cfg.InspectorTimeout > 0 {
+	switch {
+	case cfg.InspectorTimeout > 0:
 		return cfg.InspectorTimeout
+	case cfg.InspectorTimeout < 0:
+		return 0
+	default:
+		return defaultInspectorTimeout
 	}
-	return defaultInspectorTimeout
 }
 
 // timedOutError reports the per-inspector timeout as a user-facing error.
@@ -72,13 +81,17 @@ func Run(
 		modelName = cfg.Model
 	}
 
-	// Bound the inspector so a stuck agent can't hang the review forever. The
-	// deadline applies only to this agent; cancellation kills its process.
-	// defer runs at function return (after proc.Wait below), so agentCtx stays
-	// live for the whole run; deferring here — not after Start — also releases
-	// the timer on the Start-error path instead of leaking it.
+	// Bound the inspector so a stuck agent can't hang the review forever (unless
+	// the timeout is disabled). The deadline applies only to this agent;
+	// cancellation kills its process. defer runs at function return (after
+	// proc.Wait below), so agentCtx stays live for the whole run; deferring here
+	// — not after Start — also releases the timer on the Start-error path.
 	timeout := inspectorTimeout(cfg)
-	agentCtx, cancelAgent := context.WithTimeout(ctx, timeout)
+	agentCtx := ctx
+	var cancelAgent context.CancelFunc = func() {}
+	if timeout > 0 {
+		agentCtx, cancelAgent = context.WithTimeout(ctx, timeout)
+	}
 	defer cancelAgent()
 
 	proc, err := reviewer.Start(agentCtx, cfg)

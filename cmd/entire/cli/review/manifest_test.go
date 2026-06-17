@@ -779,6 +779,7 @@ func TestReviewRunModelMatches(t *testing.T) {
 		{"identical two-component ids match", "claude-sonnet", "claude-sonnet", true},
 		{"slash provider prefix stripped then identical", "anthropic/claude-sonnet", "claude-sonnet", true},
 		{"family matches across a provider component at offset", "claude-sonnet", "anthropic-claude-sonnet-4-5", true},
+		{"match where the next component is the last element", "sonnet-4", "claude-sonnet-4-5", true},
 		{"thinking-suffix-only difference matches", "claude-sonnet:high", "claude-sonnet:low", true},
 		{"equal-length different family does not match", "claude-sonnet", "claude-opus", false},
 		{"equal-length different version does not match", "claude-sonnet-4", "claude-sonnet-5", false},

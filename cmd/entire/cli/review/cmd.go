@@ -134,7 +134,8 @@ Flags:
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
   --timeout DUR  max time each inspector may run before it's cancelled and
-                 marked failed (default 10m). Siblings and the judge proceed.
+                 marked failed (default 10m; 0 disables). Siblings and the
+                 judge proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
                  Default: first existing of origin/HEAD, origin/main,
@@ -206,7 +207,15 @@ use 'entire attach --review <id>'.`,
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
 			}
-			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, inspectTimeout, deps)
+			// --timeout 0 disables the per-inspector bound. The RunConfig zero
+			// value means "use the default", so translate an explicit 0 to a
+			// negative disable sentinel. (The flag defaults to 10m, so the value is
+			// only 0 when the user passed --timeout 0.)
+			timeoutArg := inspectTimeout
+			if timeoutArg == 0 {
+				timeoutArg = -1
+			}
+			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, timeoutArg, deps)
 		},
 	}
 	cmd.Flags().BoolVar(&configure, "configure", false, "set up a review profile; shows available agents and accepts --set-* flags for non-interactive config")
@@ -227,7 +236,7 @@ use 'entire attach --review <id>'.`,
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
-	cmd.Flags().DurationVar(&inspectTimeout, "timeout", defaultInspectorTimeout, "max time each inspector may run before it is cancelled and marked failed")
+	cmd.Flags().DurationVar(&inspectTimeout, "timeout", defaultInspectorTimeout, "max time each inspector may run before it is cancelled and marked failed (0 disables)")
 	// The listing modes and the action modes each select a distinct command
 	// behavior; combining them silently runs one and drops the rest, so reject
 	// the combination up front with a clear cobra error.
