@@ -115,7 +115,7 @@ Flags:
                  otherwise it opens the wizard (interactive) without starting agents.
   --set-agents   with --configure: comma-separated inspector agents for the profile
   --set-judge    with --configure: the consolidating judge as agent[=model]
-  --set-output   with --configure: where the verdict goes — local (default) or trail
+  --set-output   with --configure: where the verdict goes: local (default) or trail
   --local        with --configure: save to .entire/settings.local.json (just you)
                  instead of .entire/settings.json (shared). Interactive setup asks.
   --set-task     with --configure: the profile's canonical task text
@@ -447,9 +447,9 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 				cfg := profile.Agents[worker]
 				status := reviewHooksInstalledStatus
 				if _, ok := installedSet[reviewAgentName(worker, cfg)]; !ok {
-					status = "hooks NOT installed — run `entire configure --agent " + reviewAgentName(worker, cfg) + "`"
+					status = "hooks NOT installed; run `entire configure --agent " + reviewAgentName(worker, cfg) + "`"
 				}
-				fmt.Fprintf(out, "  %s — %s\n", reviewWorkerLabel(worker, cfg), status)
+				fmt.Fprintf(out, "  %s: %s\n", reviewWorkerLabel(worker, cfg), status)
 			}
 			fmt.Fprintln(out)
 			fmt.Fprintln(out, "See all available agents and profiles with `entire inspect --configure`.")
@@ -461,7 +461,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 	catalog := availableReviewAgents(installed, deps.ReviewerFor)
 	fmt.Fprintln(out, "No review profile configured yet. Available review agents:")
 	for _, e := range catalog {
-		status := "not installed — run `entire configure --agent " + e.Name + "`"
+		status := "not installed; run `entire configure --agent " + e.Name + "`"
 		if e.Installed {
 			status = reviewHooksInstalledStatus
 		}
@@ -502,10 +502,10 @@ func availableReviewAgents(installed []types.AgentName, reviewerFor func(string)
 func printReviewConfigCatalog(out io.Writer, profileName string, catalog []reviewAgentCatalogEntry, s *settings.EntireSettings) {
 	fmt.Fprintln(out, "Available review agents:")
 	if len(catalog) == 0 {
-		fmt.Fprintln(out, "  (none — install one with `entire configure --agent claude-code`)")
+		fmt.Fprintln(out, "  (none; install one with `entire configure --agent claude-code`)")
 	}
 	for _, e := range catalog {
-		status := "not installed — run `entire configure --agent " + e.Name + "`"
+		status := "not installed; run `entire configure --agent " + e.Name + "`"
 		if e.Installed {
 			status = reviewHooksInstalledStatus
 		}
@@ -762,7 +762,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 				return silentErr(defaultErr)
 			}
 			profile = defaultProfile
-			fmt.Fprintf(out, "No review profiles found — using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
+			fmt.Fprintf(out, "No review profiles found; using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
 			fmt.Fprintln(out, "Configure later with `entire inspect --configure`.")
 			fmt.Fprintln(out)
 		}

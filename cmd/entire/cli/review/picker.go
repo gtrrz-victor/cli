@@ -51,7 +51,7 @@ func newAccessibleForm(groups ...*huh.Group) *huh.Form {
 // setup phase explicit, and the trailing "running review now" line in the
 // caller closes the loop on what comes next.
 func ConfirmFirstRunSetup(ctx context.Context, out io.Writer) bool {
-	fmt.Fprintln(out, "No review profiles found — let's set one up first.")
+	fmt.Fprintln(out, "No review profiles found. Let's set one up first.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "You'll choose a review focus and inspector agents. They're saved to")
 	fmt.Fprintln(out, "local review preferences; configure later with `entire inspect --configure`.")
@@ -187,9 +187,9 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 	current = strings.TrimSpace(current)
 	picked := DefaultProfileName
 	presets := []struct{ label, value string }{
-		{"General — correctness, regressions, tests", DefaultProfileName},
-		{"Security — auth, injection, secrets", "security"},
-		{"Accessibility — keyboard, screen readers, contrast", "accessibility"},
+		{"General - correctness, regressions, tests", DefaultProfileName},
+		{"Security - auth, injection, secrets", "security"},
+		{"Accessibility - keyboard, screen readers, contrast", "accessibility"},
 	}
 	options := make([]huh.Option[string], 0, len(presets)+1)
 	for _, p := range presets {
@@ -200,7 +200,7 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 		}
 		options = append(options, huh.NewOption(label, p.value))
 	}
-	customLabel := "Custom… — describe your own task"
+	customLabel := "Custom… - describe your own task"
 	if current == customProfileName {
 		customLabel += "  (current)"
 		picked = reviewFocusCustomSentinel
@@ -264,7 +264,7 @@ func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (str
 			label += " (default)"
 		}
 		if len(workers) > 0 {
-			label += " — " + strings.Join(workers, ", ")
+			label += " - " + strings.Join(workers, ", ")
 		}
 		options = append(options, huh.NewOption(label, name))
 	}
@@ -495,7 +495,7 @@ func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string,
 			}
 		}
 	}
-	title := "Add a slot — which agent?"
+	title := "Add a slot: which agent?"
 	if editing {
 		title = "Change agent"
 	}
@@ -522,7 +522,7 @@ func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, 
 	for _, m := range models {
 		label := m.ID
 		if m.Note != "" {
-			label = m.ID + "  — " + m.Note
+			label = m.ID + "  - " + m.Note
 		}
 		options = append(options, huh.NewOption(label, m.ID))
 		if m.ID == seedModel {
@@ -532,7 +532,7 @@ func promptCrewModel(ctx context.Context, agentName, seedModel string) (string, 
 	// Preserve a previously-set custom model so editing a slot doesn't silently
 	// drop it: surface it as a selectable option.
 	if seedModel != "" && !seedAdvertised {
-		options = append(options, huh.NewOption(seedModel+"  — current", seedModel))
+		options = append(options, huh.NewOption(seedModel+"  - current", seedModel))
 	}
 	options = append(options, huh.NewOption("Custom… (type any value)", reviewModelCustomSentinel))
 
@@ -678,8 +678,8 @@ func promptForOutputMode(ctx context.Context, current string) (string, error) {
 			Title("Where should the verdict go?").
 			Description("Local keeps it on this machine; Trail also posts it to this branch's trail.").
 			Options(
-				huh.NewOption("Local — printed and saved to local findings", ReviewOutputLocal),
-				huh.NewOption("Trail — also posted to this branch's trail as a finding", ReviewOutputTrail),
+				huh.NewOption("Local - printed and saved to local findings", ReviewOutputLocal),
+				huh.NewOption("Trail - also posted to this branch's trail as a finding", ReviewOutputTrail),
 			).
 			Value(&picked),
 	))
@@ -702,8 +702,8 @@ func promptForSettingsScope(ctx context.Context, preselectLocal bool) (reviewSet
 			Title("Where should this profile be saved?").
 			Description("Project is shared with the team and committed; Local is just for you.").
 			Options(
-				huh.NewOption(settings.EntireSettingsFile+" — shared with the team (committed)", reviewScopeProject),
-				huh.NewOption(settings.EntireSettingsLocalFile+" — just you (git-ignored)", reviewScopeLocal),
+				huh.NewOption(settings.EntireSettingsFile+" - shared with the team (committed)", reviewScopeProject),
+				huh.NewOption(settings.EntireSettingsLocalFile+" - just you (git-ignored)", reviewScopeLocal),
 			).
 			Value(&picked),
 	))
