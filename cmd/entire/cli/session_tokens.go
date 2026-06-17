@@ -528,7 +528,7 @@ func agentBriefOptimizationAction(report sessionTokensReport) (string, bool) {
 	case hasTokenRecommendation(report, "api-call-amplification"):
 		return agentBriefCostProxyBatchAction, true
 	case hasTokenRecommendation(report, "context-replay-hotspot"):
-		return "Use at most 2 focused reads after summarizing known findings, then answer. Avoid broad grep, broad diffs, and broad tests.", true
+		return "Use at most 2 focused reads only if a named file or test can change the answer; otherwise answer now. Avoid broad grep, broad diffs, and broad tests.", true
 	case hasTokenRecommendation(report, "subagent-heavy"):
 		return "Do not launch broad subagents. Use one narrowly scoped check with a concrete expected output.", true
 	case hasTokenRecommendation(report, "high-context-pressure"):
