@@ -286,6 +286,15 @@ func isAutocompleteMenu(content string) bool {
 	return false
 }
 
+// isStartupDialog reports whether the captured pane is showing a Copilot
+// startup dialog (e.g. "Confirm folder trust") rather than the interactive
+// prompt. The dialog renders its selected option with the same "❯" cursor as
+// the input prompt, so presence of "❯" alone cannot distinguish them — we must
+// key off the dialog chrome.
+func isStartupDialog(content string) bool {
+	return strings.Contains(content, "Enter to select")
+}
+
 func (c *CopilotCLI) StartSession(ctx context.Context, dir string) (Session, error) {
 	bin, err := exec.LookPath(c.Binary())
 	if err != nil {
@@ -322,7 +331,7 @@ func (c *CopilotCLI) StartSession(ctx context.Context, dir string) (Session, err
 			_ = s.Close()
 			return nil, fmt.Errorf("waiting for startup prompt: %w", err)
 		}
-		if strings.Contains(content, "❯") && !strings.Contains(content, "Enter to select") {
+		if strings.Contains(content, "❯") && !isStartupDialog(content) {
 			foundPrompt = true
 			break
 		}
