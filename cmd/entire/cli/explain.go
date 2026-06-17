@@ -946,11 +946,6 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, stores *c
 		return fmt.Errorf("failed to save summary: %w", err)
 	}
 
-	refs := checkpoint.ResolveCommittedRefs(ctx)
-	if err := strategy.MirrorCommittedMetadataRef(ctx, stores.Repository(), refs); err != nil {
-		return fmt.Errorf("summary was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
-	}
-
 	styles := newStatusStyles(w)
 	rows := summaryProviderRows(provider)
 	rows = append(rows, explainRow{Label: "duration", Value: formatSummaryDuration(elapsed)})

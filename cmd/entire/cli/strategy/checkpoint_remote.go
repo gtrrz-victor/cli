@@ -118,14 +118,6 @@ func FetchMetadataBranch(ctx context.Context, remoteURL string) error {
 		return err
 	}
 
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		logging.Warn(ctx, "committed-ref mirror skipped after metadata fetch",
-			slog.String("error", err.Error()))
-		return nil
-	}
-	defer repo.Close()
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
 	return nil
 }
 

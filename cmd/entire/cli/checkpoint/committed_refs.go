@@ -14,11 +14,8 @@ import (
 type CommittedRefs struct {
 	Primary plumbing.ReferenceName
 	Read    plumbing.ReferenceName
-	Mirror  plumbing.ReferenceName
 	Push    []plumbing.ReferenceName
 }
-
-func (r CommittedRefs) HasMirror() bool { return r.Mirror != "" }
 
 // DefaultV1Refs returns the v1-only topology.
 func DefaultV1Refs() CommittedRefs {

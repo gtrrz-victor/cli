@@ -682,8 +682,7 @@ func promptResumeFromOlderCheckpoint() (bool, error) {
 }
 
 // checkRemoteMetadata checks if checkpoint metadata exists on the remote and
-// fetches it if available. Skips when reads don't target a ref origin tracks
-// (e.g. the local-only v1.1 mirror).
+// fetches it if available. Skips when reads don't target a ref origin tracks.
 func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
