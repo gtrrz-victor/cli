@@ -320,18 +320,18 @@ func isGitSequenceOperation(ctx context.Context) bool {
 	}
 
 	// Check for rebase state directories
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-merge")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-merge")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "rebase-apply")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "rebase-apply")); err == nil {
 		return true
 	}
 
 	// Check for cherry-pick and revert state files
-	if _, err := os.Stat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "CHERRY_PICK_HEAD")); err == nil {
 		return true
 	}
-	if _, err := os.Stat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
+	if _, err := os.Lstat(filepath.Join(gitDir, "REVERT_HEAD")); err == nil {
 		return true
 	}
 
@@ -829,7 +829,7 @@ func warnStaleEndedSessionsTo(ctx context.Context, count int, w io.Writer) {
 	}
 	warnDir := filepath.Join(commonDir, session.SessionStateDirName)
 	warnFile := filepath.Join(warnDir, staleEndedSessionWarnFile)
-	if info, statErr := os.Stat(warnFile); statErr == nil {
+	if info, statErr := os.Lstat(warnFile); statErr == nil {
 		if time.Since(info.ModTime()) < staleEndedSessionWarnInterval {
 			return // rate-limited
 		}
@@ -1061,7 +1061,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	repoDir string,
 ) error {
 	logCtx := logging.WithComponent(ctx, "attribution")
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	summary, err := store.ReadCommitted(ctx, checkpointID)
 	if err != nil {
@@ -1072,15 +1072,18 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	}
 
 	// Collect union of files_touched from sessions that had real checkpoints (SaveStep ran).
-	// Sessions with checkpoints_count == 0 (e.g., commit-only sessions) use a fallback that
+	// Sessions with no SaveStep steps (e.g., commit-only sessions) use a fallback that
 	// includes ALL committed files, which would incorrectly classify human-created files as agent work.
+	// Gate on SaveStepCount (the honest "SaveStep ran" signal), not CheckpointsCount —
+	// CheckpointsCount is now a prompt count floored at 1, so it's no longer 0 for these sessions.
+	// Old metadata lacks SaveStepCount → 0 → conservatively skipped, matching prior behavior.
 	agentFiles := make(map[string]struct{})
 	for i := range len(summary.Sessions) {
 		metadata, readErr := store.ReadSessionMetadata(ctx, checkpointID, i)
 		if readErr != nil || metadata == nil {
 			continue
 		}
-		if metadata.CheckpointsCount == 0 {
+		if metadata.SaveStepCount == 0 {
 			continue // Skip sessions that used the filesTouched fallback
 		}
 		for _, f := range metadata.FilesTouched {
@@ -1156,8 +1159,8 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	}
 
 	// Combined attribution is a committed write in the post-commit hook, so the
-	// v1 custom ref must track it too when opted in (local-only, never pushed).
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	// mirror must track it too when configured (best-effort).
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	return nil
 }
@@ -2292,6 +2295,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		if transcriptPath != "" && state.TranscriptPath != transcriptPath {
 			state.TranscriptPath = transcriptPath
 		}
+		captureSessionBranch(repo, state)
 
 		// ORDERING: attribution runs BEFORE migrate to use the pre-migration
 		// BaseCommit as the base tree (preserving correct agent-line counts
@@ -2335,6 +2339,7 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 		}
 		promptAttr := s.calculatePromptAttributionAtStart(ctx, repo, state)
 		state.PendingPromptAttribution = &promptAttr
+		captureSessionBranch(repo, state)
 		return nil
 	})
 	if mutErr != nil && !errors.Is(mutErr, ErrStateNotFound) {
@@ -2344,6 +2349,25 @@ func (s *ManualCommitStrategy) InitializeSession(ctx context.Context, sessionID 
 	logging.Info(logging.WithComponent(ctx, "hooks"), "initialized shadow session",
 		slog.String("session_id", sessionID))
 	return nil
+}
+
+// captureSessionBranch records the branch HEAD currently points at into the
+// session state so `entire resume` can map a stopped session back to its branch.
+// It is a no-op when HEAD is detached or cannot be read — the branch field is
+// best-effort and resume derives it from commit trailers when absent.
+func captureSessionBranch(repo *git.Repository, state *SessionState) {
+	headRef, err := repo.Head()
+	if err != nil {
+		return
+	}
+	if headRef.Name().IsBranch() {
+		state.Branch = headRef.Name().Short()
+	} else {
+		// Detached HEAD: clear any branch recorded on a previous turn so resume
+		// falls back to deriving the branch from checkpoint trailers instead of
+		// using a stale, now-incorrect value.
+		state.Branch = ""
+	}
 }
 
 // calculatePromptAttributionAtStart calculates attribution at prompt start (before agent runs).
@@ -2773,7 +2797,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	// Post-commit emits 7-layer-only blobs; the writer joins + redacts
 	// via checkpoint.redactedJoinedPrompts. OPF runs later, once per
 	// push, in the pre-push rewrite path.
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2815,10 +2839,10 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 	}
 
-	// Mirror the finalized v1 metadata to the v1 custom ref when opted in
-	// (local-only, never pushed; failures are logged, not fatal). Once after the
-	// loop is enough — it tracks v1's final commit.
-	MirrorCommittedMetadataRefBestEffort(ctx, repo)
+	// Mirror the finalized primary metadata to refs.Mirror when configured
+	// (best-effort; failures are logged, not fatal). Once after the loop is
+	// enough — it tracks Primary's final commit.
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
 
 	// Clear turn checkpoint IDs. Do NOT update CheckpointTranscriptStart here — it was
 	// already set correctly by PostCommit: condenseAndUpdateState sets it to the total
@@ -2889,7 +2913,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	start := time.Now()
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 
 	// Don't include metadata directory in carry-forward. The carry-forward branch
 	// only needs to preserve file content for comparison - not the transcript.

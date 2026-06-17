@@ -108,7 +108,7 @@ func setupV1Repo(t *testing.T) (*git.Repository, plumbing.Hash) {
 	})
 	require.NoError(t, err)
 
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 	require.NoError(t, store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID: cpID,

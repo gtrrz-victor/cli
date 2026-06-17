@@ -53,6 +53,30 @@ func DispatchLifecycleEvent(ctx context.Context, ag agent.Agent, event *agent.Ev
 		return errors.New("event cannot be nil")
 	}
 
+	// Reject path-unsafe identifiers once, here, before any handler uses them to
+	// build filesystem paths. Handlers historically validated individually,
+	// which is fragile — handleLifecycleTurnEnd builds .entire/metadata/<id>/
+	// via os.MkdirAll + os.WriteFile, and handleLifecycleSubagentEnd builds a
+	// subagent transcript path from SubagentID and reads it, without their own
+	// checks. Centralizing the guard covers every handler (and any future one)
+	// uniformly. Empty IDs pass through: handlers apply their own empty-handling
+	// (e.g. TurnEnd falls back to a safe constant; SubagentEnd skips the path).
+	if event.SessionID != "" {
+		if err := validation.ValidateSessionID(event.SessionID); err != nil {
+			return fmt.Errorf("invalid session ID in %s event: %w", event.Type, err)
+		}
+	}
+	if event.ToolUseID != "" {
+		if err := validation.ValidateToolUseID(event.ToolUseID); err != nil {
+			return fmt.Errorf("invalid tool use ID in %s event: %w", event.Type, err)
+		}
+	}
+	if event.SubagentID != "" {
+		if err := validation.ValidateAgentID(event.SubagentID); err != nil {
+			return fmt.Errorf("invalid subagent ID in %s event: %w", event.Type, err)
+		}
+	}
+
 	// Filter forwarded hooks: when Cursor IDE forwards events to both
 	// .cursor/hooks.json and .claude/settings.json, only the agent that owns
 	// the session should process them — otherwise checkpoints, metadata
@@ -341,6 +365,79 @@ func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 
 // handleLifecycleTurnStart handles turn start: captures pre-prompt state,
 // ensures strategy setup, initializes session.
+// entireTrailContextInjection is the one-time, model-facing documentation Entire
+// injects to teach the agent the `entire trail` command. Kept terse: it costs
+// context-window tokens on the first turn of every session, and states no
+// transient fact (whether a trail exists can change at any time).
+func entireTrailContextInjection() string {
+	return "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it."
+}
+
+// emitContextInjection writes ag's native context-injection payload to stdout
+// when ag injects at event.Type, trails are enabled for the repo on the API,
+// and this session has not been injected yet. Best-effort: an injection failure
+// never fails the hook.
+func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Event) {
+	injector, ok := agent.AsContextInjector(ag)
+	if !ok || injector.InjectionEvent() != event.Type || event.SessionID == "" {
+		return
+	}
+	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
+
+	// Decide once per session, recorded on the session state itself (not a
+	// separate marker file). Winning the check-and-set means this turn owns the
+	// decision. trailsEnabledForRepo only reads clone-local cached enablement;
+	// the API refresh happens earlier on `entire enable`, outside the prompt path.
+	// Marking "decided" before checking the cache means a missing/stale false
+	// cache fails closed (no hint for this session) rather than retrying/spamming.
+	mutated := false
+	mutErr := strategy.MutateSessionState(ctx, event.SessionID, func(state *strategy.SessionState) error {
+		if state.ContextInjectionDecided {
+			return strategy.ErrMutationSkip
+		}
+		// Review/investigate sessions are task-specific and don't need the branch
+		// trail pointer; skip without marking decided so normal sessions keep the
+		// usual first-turn behavior.
+		if state.Kind != "" {
+			return strategy.ErrMutationSkip
+		}
+		state.ContextInjectionDecided = true
+		mutated = true
+		return nil
+	})
+	if mutErr != nil && !errors.Is(mutErr, strategy.ErrStateNotFound) {
+		logging.Warn(logCtx, "failed to record context injection decision",
+			slog.String("error", mutErr.Error()))
+		return
+	}
+	// Only proceed after the state mutation was persisted. If saving the updated
+	// state failed, mutErr was non-nil above and we returned without injecting,
+	// leaving a later turn free to retry safely.
+	won := mutErr == nil && mutated
+	if !won {
+		return // already decided for this session, skipped kind, or no session state yet
+	}
+
+	// Only advertise trails when they're literally enabled for this repo on the API.
+	if !trailsEnabledForRepo(ctx) {
+		return
+	}
+
+	payload, err := injector.RenderContextInjection(agent.ContextInjection{Text: entireTrailContextInjection()})
+	if err != nil {
+		logging.Warn(logCtx, "failed to render context injection",
+			slog.String("error", err.Error()))
+		return
+	}
+	if len(payload) == 0 {
+		return
+	}
+	if _, err := os.Stdout.Write(payload); err != nil {
+		logging.Warn(logCtx, "failed to write context injection",
+			slog.String("error", err.Error()))
+	}
+}
+
 func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.Event) error {
 	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
 	logging.Info(logCtx, "turn-start",
@@ -458,6 +555,10 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 			slog.String("error", mutErr.Error()))
 	}
 	initSpan.End()
+
+	// Inject Entire's model-facing context (once per session) for agents whose
+	// transport supports it at TurnStart (e.g. Pi). Extension reads stdout.
+	emitContextInjection(ctx, ag, event)
 
 	return nil
 }
@@ -1113,12 +1214,24 @@ func persistEventMetadataToState(event *agent.Event, state *strategy.SessionStat
 	}
 	// Use hook-reported turn count if available (take max); otherwise
 	// increment on each TurnEnd event to count turns ourselves.
+	prevTurnCount := state.SessionTurnCount
 	if event.TurnCount > 0 {
 		if event.TurnCount > state.SessionTurnCount {
 			state.SessionTurnCount = event.TurnCount
 		}
 	} else if event.Type == agent.TurnEnd {
 		state.SessionTurnCount++
+	}
+	// Deferred checkpoint-window reset: the first time the turn count actually
+	// advances after a checkpoint was written, re-anchor the window base to the
+	// count from before this turn so the current turn becomes the first prompt of
+	// the new window. Gate on a real advance (not just a TurnEnd / non-zero
+	// TurnCount) so a repeated or stale hook reporting the same cumulative count
+	// doesn't re-anchor early — that would make a later back-to-back checkpoint
+	// report 1 instead of matching the prior count.
+	if state.SessionTurnCount > prevTurnCount && state.PromptWindowResetPending {
+		state.PromptWindowBase = prevTurnCount
+		state.PromptWindowResetPending = false
 	}
 	if event.ContextTokens > 0 {
 		state.ContextTokens = event.ContextTokens

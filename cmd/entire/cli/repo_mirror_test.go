@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,143 @@ func TestExplainSuspendedMirror(t *testing.T) {
 		if buf.Len() != 0 {
 			t.Errorf("expected no output, got %q", buf.String())
 		}
+	})
+}
+
+// TestFinishMirrorCreate exercises the post-create branching: when the
+// upstream is empty we must skip the HEAD-poll loop (an empty repo never
+// advertises a HEAD), yet an *existing* empty placement must still go through
+// the token exchange so a suspended mirror surfaces its resume guidance
+// instead of a success-style "nothing to clone" note.
+func TestFinishMirrorCreate(t *testing.T) {
+	t.Parallel()
+
+	const id = "01KS6KFJR2XS6PZ188MVYE07AN"
+	const mirrorURL = "entire://eu-west-1.entire.io/gh/octocat/hello-world"
+	// The error shape RepoScopedToken/waitForMirrorClone produce for a
+	// suspended (non-servable) placement.
+	suspended := fmt.Errorf("repo-scoped token exchange: %w", auth.ErrRepoTargetUnknown)
+
+	// seen records whether each injected operation ran, so we can assert the
+	// empty path never polls and a fresh create never probes.
+	type call struct{ probed, waited bool }
+
+	t.Run("fresh empty create skips both probe and poll", func(t *testing.T) {
+		t.Parallel()
+		var seen call
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: true, Empty: true, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { seen.probed = true; return nil },
+			func() error { seen.waited = true; return nil },
+		)
+		require.NoError(t, err)
+		require.False(t, seen.probed, "a fresh create can't be suspended; must not probe")
+		require.False(t, seen.waited, "empty upstream has nothing to clone; must not poll")
+		require.Contains(t, out.String(), "nothing to clone")
+		require.Empty(t, errW.String())
+	})
+
+	t.Run("existing empty healthy probes but does not poll", func(t *testing.T) {
+		t.Parallel()
+		var seen call
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: false, Empty: true, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { seen.probed = true; return nil },
+			func() error { seen.waited = true; return nil },
+		)
+		require.NoError(t, err)
+		require.True(t, seen.probed, "existing empty placement must probe for suspension")
+		require.False(t, seen.waited, "empty upstream has nothing to clone; must not poll")
+		require.Contains(t, out.String(), "nothing to clone")
+	})
+
+	t.Run("existing empty suspended surfaces resume guidance", func(t *testing.T) {
+		t.Parallel()
+		var seen call
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: false, Empty: true, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { seen.probed = true; return suspended },
+			func() error { seen.waited = true; return nil },
+		)
+		var silent *SilentError
+		require.ErrorAs(t, err, &silent, "suspended mirror must return a SilentError")
+		require.True(t, seen.probed)
+		require.False(t, seen.waited, "must not poll a suspended empty mirror")
+		require.Contains(t, errW.String(), "entire-core admin mirrors resume "+id)
+		require.NotContains(t, out.String(), "nothing to clone",
+			"a suspended mirror must not get the success-style empty note")
+	})
+
+	t.Run("existing empty transient probe error is non-fatal", func(t *testing.T) {
+		t.Parallel()
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: false, Empty: true, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { return errors.New("dial tcp: connection refused") },
+			func() error { t.Fatal("must not poll an empty mirror"); return nil },
+		)
+		require.NoError(t, err, "a non-suspension probe error must not fail a create whose placement exists")
+		require.Contains(t, out.String(), "nothing to clone")
+	})
+
+	t.Run("non-empty no-wait skips both probe and poll", func(t *testing.T) {
+		t.Parallel()
+		var seen call
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: true, Empty: false, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, true,
+			func() error { seen.probed = true; return nil },
+			func() error { seen.waited = true; return nil },
+		)
+		require.NoError(t, err)
+		require.False(t, seen.probed)
+		require.False(t, seen.waited, "--no-wait must not poll")
+		require.Contains(t, out.String(), "still be in progress")
+	})
+
+	t.Run("non-empty waits for clone then prints clone hint", func(t *testing.T) {
+		t.Parallel()
+		var seen call
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: true, Empty: false, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { seen.probed = true; return nil },
+			func() error { seen.waited = true; return nil },
+		)
+		require.NoError(t, err)
+		require.False(t, seen.probed, "non-empty path detects suspension through waitClone, not a separate probe")
+		require.True(t, seen.waited)
+		require.Contains(t, out.String(), "git clone "+mirrorURL)
+	})
+
+	t.Run("non-empty existing suspended surfaces resume guidance", func(t *testing.T) {
+		t.Parallel()
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: false, Empty: false, MirrorId: id, MirrorUrl: mirrorURL}
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { return nil },
+			func() error { return suspended },
+		)
+		var silent *SilentError
+		require.ErrorAs(t, err, &silent)
+		require.Contains(t, errW.String(), "entire-core admin mirrors resume "+id)
+		require.NotContains(t, out.String(), "git clone")
+	})
+
+	t.Run("non-empty wait error other than suspension propagates", func(t *testing.T) {
+		t.Parallel()
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: true, Empty: false, MirrorId: id, MirrorUrl: mirrorURL}
+		wantErr := errors.New("timed out waiting for initial clone")
+		err := finishMirrorCreate(&out, &errW, created, false,
+			func() error { return nil },
+			func() error { return wantErr },
+		)
+		require.ErrorIs(t, err, wantErr)
+		require.Empty(t, errW.String())
 	})
 }
 
@@ -371,4 +509,24 @@ func mustReq(t *testing.T, rawURL string) *http.Request {
 	u, err := url.Parse(rawURL)
 	require.NoError(t, err)
 	return &http.Request{URL: u}
+}
+
+// TestWaitForMirrorClone_TimeoutBoundsAuthorization pins that --wait-timeout
+// covers the authorization phase, not just the probe loop: building the
+// token source spans cluster discovery and a possible login refresh, so a
+// hung auth path must be cut off by the user's wait budget.
+//
+// Not parallel: swaps the package-level newRepoTokenSource seam.
+func TestWaitForMirrorClone_TimeoutBoundsAuthorization(t *testing.T) {
+	prev := newRepoTokenSource
+	newRepoTokenSource = func(ctx context.Context, _ string) (repoTokenSource, error) {
+		<-ctx.Done() // hang until the wait deadline fires
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { newRepoTokenSource = prev })
+
+	start := time.Now()
+	err := waitForMirrorClone(context.Background(), io.Discard, "cluster.example", "o", "r", 50*time.Millisecond)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(start), 10*time.Second, "authorization must be bounded by the wait timeout")
 }

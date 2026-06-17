@@ -43,7 +43,7 @@ func TestWriteCommitted_DoesNotEmitOPFAppliedTrailer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 
 	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{

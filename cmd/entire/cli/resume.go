@@ -31,14 +31,21 @@ func newResumeCmd() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "resume <branch>",
-		Short: "Switch to a branch and resume its session",
-		Long: `Switch to a local branch and resume the agent session from its last commit.
+		Use:   "resume [branch]",
+		Short: "Resume a stopped session (interactive picker, or by branch)",
+		Long: `Resume an agent session.
 
-This command:
+With no argument, opens an interactive picker of stopped sessions across all
+worktrees so you don't have to remember which branch you left work on. Picking
+a session checks out its branch and shows the command to continue the agent. If
+the branch is already checked out in another worktree, you'll be pointed there
+instead.
+
+With a branch argument, switches to that branch and resumes its session directly:
 1. Checks out the specified branch
 2. Finds the session ID from commits unique to this branch (not on main)
-3. Restores the session log if it doesn't exist locally
+3. Restores the session log if it doesn't exist locally (an existing local log
+   is kept as-is; use --force to overwrite it from the checkpoint)
 4. Shows the command to resume the session
 
 If the branch doesn't exist locally but exists on origin, you'll be prompted
@@ -47,7 +54,7 @@ to fetch it.
 If newer commits without checkpoints exist on the branch (e.g., after merging main
 or cherry-picking from elsewhere), this operation will reset your Git status to the
 most recent commit with a checkpoint.  You'll be prompted to confirm resuming in this case.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if checkDisabledGuard(cmd.Context(), cmd.OutOrStdout()) {
 				return nil
@@ -55,6 +62,10 @@ most recent commit with a checkpoint.  You'll be prompted to confirm resuming in
 
 			// Discover external agents so checkpoints from external agents can be resolved.
 			external.DiscoverAndRegister(cmd.Context())
+
+			if len(args) == 0 {
+				return runResumePicker(cmd.Context(), cmd, force)
+			}
 
 			return runResume(cmd.Context(), cmd, args[0], force)
 		},
@@ -78,38 +89,50 @@ func runResume(ctx context.Context, cmd *cobra.Command, branchName string, force
 	w := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
 
+	proceed, err := switchToBranchForResume(ctx, w, errW, branchName, force)
+	if err != nil || !proceed {
+		return err
+	}
+
+	return resumeFromCurrentBranch(ctx, w, errW, branchName, force)
+}
+
+// switchToBranchForResume ensures the working tree is on branchName, checking it
+// out (or fetching it from origin) as needed. It returns proceed=false with a nil
+// error when the user declined to fetch a remote-only branch, so callers should
+// stop without treating that as a failure.
+func switchToBranchForResume(ctx context.Context, w, errW io.Writer, branchName string, force bool) (bool, error) {
 	// Check if we're already on this branch
 	currentBranch, err := GetCurrentBranch(ctx)
 	if err == nil && currentBranch == branchName {
-		// Already on the branch, skip checkout
-		return resumeFromCurrentBranch(ctx, w, errW, branchName, force)
+		return true, nil
 	}
 
 	// Check if branch exists locally
 	exists, err := BranchExistsLocally(ctx, branchName)
 	if err != nil {
-		return fmt.Errorf("failed to check branch: %w", err)
+		return false, fmt.Errorf("failed to check branch: %w", err)
 	}
 
 	if !exists {
 		// Branch doesn't exist locally, check if it exists on remote
 		remoteExists, err := BranchExistsOnRemote(ctx, branchName)
 		if err != nil {
-			return fmt.Errorf("failed to check remote branch: %w", err)
+			return false, fmt.Errorf("failed to check remote branch: %w", err)
 		}
 
 		if !remoteExists {
-			return fmt.Errorf("branch '%s' not found locally or on origin", branchName)
+			return false, fmt.Errorf("branch '%s' not found locally or on origin", branchName)
 		}
 
 		// Ask user if they want to fetch from remote (--force skips the prompt)
 		if !force {
 			shouldFetch, err := promptFetchFromRemote(branchName)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if !shouldFetch {
-				return nil
+				return false, nil
 			}
 		}
 
@@ -117,28 +140,85 @@ func runResume(ctx context.Context, cmd *cobra.Command, branchName string, force
 		fmt.Fprintf(w, "Fetching branch '%s' from origin...\n", branchName)
 		if err := FetchAndCheckoutRemoteBranch(ctx, branchName); err != nil {
 			fmt.Fprintf(errW, "Error: failed to checkout branch: %v\n", err)
-			return NewSilentError(errors.New("failed to checkout branch"))
+			return false, NewSilentError(errors.New("failed to checkout branch"))
 		}
 		fmt.Fprintf(w, "✓ Switched to branch %s\n", branchName)
-	} else {
-		// Branch exists locally, check for uncommitted changes before checkout
-		hasChanges, err := HasUncommittedChanges(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check for uncommitted changes: %w", err)
-		}
-		if hasChanges {
-			return errors.New("you have uncommitted changes. Please commit or stash them first")
-		}
-
-		// Checkout the branch
-		if err := CheckoutBranch(ctx, branchName); err != nil {
-			fmt.Fprintf(errW, "Error: failed to checkout branch: %v\n", err)
-			return NewSilentError(errors.New("failed to checkout branch"))
-		}
-		fmt.Fprintf(w, "✓ Switched to branch %s\n", branchName)
+		return true, nil
 	}
 
-	return resumeFromCurrentBranch(ctx, w, errW, branchName, force)
+	// Branch exists locally, check for uncommitted changes before checkout
+	hasChanges, err := HasUncommittedChanges(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to check for uncommitted changes: %w", err)
+	}
+	if hasChanges {
+		return false, errors.New("you have uncommitted changes. Please commit or stash them first")
+	}
+
+	// Checkout the branch
+	if err := CheckoutBranch(ctx, branchName); err != nil {
+		fmt.Fprintf(errW, "Error: failed to checkout branch: %v\n", err)
+		return false, NewSilentError(errors.New("failed to checkout branch"))
+	}
+	fmt.Fprintf(w, "✓ Switched to branch %s\n", branchName)
+	return true, nil
+}
+
+// resumeSessionOnBranch switches to branchName and resumes the specific session
+// identified by checkpointID, instead of re-deriving the latest checkpoint on the
+// branch. The interactive picker uses this so that selecting one of several
+// sessions on the same branch resumes exactly that session.
+func resumeSessionOnBranch(ctx context.Context, cmd *cobra.Command, branchName string, checkpointID id.CheckpointID, force bool) error {
+	if _, err := paths.WorktreeRoot(ctx); err == nil {
+		logging.SetLogLevelGetter(GetLogLevel)
+		if err := logging.Init(ctx, ""); err == nil {
+			defer logging.Close()
+		}
+	}
+
+	w := cmd.OutOrStdout()
+	errW := cmd.ErrOrStderr()
+
+	proceed, err := switchToBranchForResume(ctx, w, errW, branchName, force)
+	if err != nil || !proceed {
+		return err
+	}
+
+	return resumeByCheckpointID(ctx, w, errW, checkpointID, force)
+}
+
+// resumeByCheckpointID restores the session(s) recorded in a specific committed
+// checkpoint and prints the resume command(s). Unlike resumeFromCurrentBranch it
+// does not search branch history — the caller already knows which checkpoint to
+// resume, so two sessions on the same branch resume independently.
+func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID id.CheckpointID, force bool) error {
+	if checkpointID.IsEmpty() {
+		return errors.New("no checkpoint to resume")
+	}
+
+	repo, err := openRepository(ctx)
+	if err != nil {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+	defer repo.Close()
+
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
+	store.SetBlobFetcher(FetchBlobsByHash)
+	refs := store.Refs()
+	if refs.ReadBootstrappableFromOrigin() {
+		promoteRemoteTrackingPrimary(ctx, repo, refs)
+	}
+
+	metadata, err := readCheckpointInfoFromStore(ctx, store, checkpointID)
+	if err != nil {
+		logging.Debug(ctx, "resume by checkpoint: metadata read failed, checking remote",
+			slog.String("checkpoint_id", checkpointID.String()),
+			slog.String("error", err.Error()),
+		)
+		return checkRemoteMetadata(ctx, w, errW, checkpointID, store.Refs())
+	}
+
+	return resumeSession(ctx, w, errW, metadata, force)
 }
 
 func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName string, force bool) error {
@@ -187,11 +267,12 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	checkpointID := result.checkpointIDs[0]
 	var metadata *strategy.CheckpointInfo
 
-	store := checkpoint.NewCommittedReadStore(ctx, repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	store.SetBlobFetcher(FetchBlobsByHash)
 
-	if store.CommittedReadRef() == plumbing.NewBranchReferenceName(paths.MetadataBranchName) {
-		promoteRemoteTrackingMetadataBranch(ctx, repo)
+	refs := store.Refs()
+	if refs.ReadBootstrappableFromOrigin() {
+		promoteRemoteTrackingPrimary(ctx, repo, refs)
 	}
 
 	// Multiple checkpoints (squash merge): resolve latest by CreatedAt timestamp.
@@ -205,7 +286,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 			)
 			fmt.Fprintf(w, "Found %d checkpoints for commit %s but metadata is not available\n",
 				len(result.checkpointIDs), result.commitHash[:7])
-			return checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], store.CommittedReadRef())
+			return checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], store.Refs())
 		}
 		skipped := len(result.checkpointIDs) - 1
 		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest (%d older checkpoints skipped)\n",
@@ -227,7 +308,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("error", storeErr.Error()),
 			)
-			return checkRemoteMetadata(ctx, w, errW, checkpointID, store.CommittedReadRef())
+			return checkRemoteMetadata(ctx, w, errW, checkpointID, store.Refs())
 		}
 	}
 
@@ -301,10 +382,10 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpoint.Committed
 func readCheckpointInfoFromRef(
 	ctx context.Context,
 	repo *git.Repository,
-	committedReadRef plumbing.ReferenceName,
+	refs checkpoint.CommittedRefs,
 	checkpointID id.CheckpointID,
 ) (*strategy.CheckpointInfo, error) {
-	store := checkpoint.NewGitStoreWithRef(repo, committedReadRef)
+	store := checkpoint.NewGitStore(repo, refs)
 	store.SetBlobFetcher(FetchBlobsByHash)
 	return readCheckpointInfoFromStore(ctx, store, checkpointID)
 }
@@ -318,17 +399,19 @@ func readCheckpointInfoFromRef(
 func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error) {
 	logCtx := logging.WithComponent(ctx, "resume.getMetadataTree")
 
-	// Helper to log ref hash for a repo's metadata branch
+	refs := checkpoint.ResolveCommittedRefs(ctx)
+
+	// Helper to log ref hash for a repo's primary metadata ref
 	logRefHash := func(repo *git.Repository, source string) {
-		ref, refErr := repo.Reference(plumbing.NewBranchReferenceName("entire/checkpoints/v1"), true)
+		ref, refErr := repo.Reference(refs.Primary, true)
 		if refErr != nil {
-			logging.Debug(logCtx, "metadata branch ref not found",
+			logging.Debug(logCtx, "primary metadata ref not found",
 				slog.String("source", source),
 				slog.String("error", refErr.Error()),
 			)
 			return
 		}
-		logging.Debug(logCtx, "metadata branch ref resolved",
+		logging.Debug(logCtx, "primary metadata ref resolved",
 			slog.String("source", source),
 			slog.String("ref_hash", ref.Hash().String()),
 		)
@@ -341,7 +424,7 @@ func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error)
 		freshRepo, freshErr := openRepository(ctx)
 		if freshErr == nil {
 			logRefHash(freshRepo, "checkpoint-remote")
-			metadataTree, treeErr := strategy.GetMetadataBranchTree(freshRepo)
+			metadataTree, treeErr := strategy.GetMetadataRefTree(freshRepo, refs.Primary)
 			if treeErr == nil {
 				logging.Debug(logCtx, "metadata tree obtained via checkpoint remote fetch",
 					slog.String("tree_hash", metadataTree.Hash.String()),
@@ -365,7 +448,7 @@ func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error)
 		freshRepo, repoErr := openRepository(ctx)
 		if repoErr == nil {
 			logRefHash(freshRepo, "treeless-fetch")
-			metadataTree, treeErr := strategy.GetMetadataBranchTree(freshRepo)
+			metadataTree, treeErr := strategy.GetMetadataRefTree(freshRepo, refs.Primary)
 			if treeErr == nil {
 				logging.Debug(logCtx, "metadata tree obtained via treeless fetch",
 					slog.String("tree_hash", metadataTree.Hash.String()),
@@ -387,7 +470,7 @@ func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error)
 	localRepo, repoErr := openRepository(ctx)
 	if repoErr == nil {
 		logRefHash(localRepo, "local")
-		metadataTree, err := strategy.GetMetadataBranchTree(localRepo)
+		metadataTree, err := strategy.GetMetadataRefTree(localRepo, refs.Primary)
 		if err == nil {
 			logging.Debug(logCtx, "metadata tree obtained from local branch",
 				slog.String("tree_hash", metadataTree.Hash.String()),
@@ -405,7 +488,7 @@ func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error)
 		freshRepo, repoErr := openRepository(ctx)
 		if repoErr == nil {
 			logRefHash(freshRepo, "full-fetch")
-			metadataTree, treeErr := strategy.GetMetadataBranchTree(freshRepo)
+			metadataTree, treeErr := strategy.GetMetadataRefTree(freshRepo, refs.Primary)
 			if treeErr == nil {
 				logging.Debug(logCtx, "metadata tree obtained via full fetch",
 					slog.String("tree_hash", metadataTree.Hash.String()),
@@ -423,13 +506,13 @@ func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error)
 		)
 	}
 
-	// Try remote tree directly (origin/entire/checkpoints/v1)
+	// Try remote tree directly (origin's tracking ref for Primary)
 	remoteRepo, repoErr := openRepository(ctx)
 	if repoErr != nil {
 		return nil, nil, fmt.Errorf("failed to open repository: %w", repoErr)
 	}
 	logRefHash(remoteRepo, "remote-tracking")
-	remoteTree, remoteErr := strategy.GetRemoteMetadataBranchTree(remoteRepo)
+	remoteTree, remoteErr := strategy.GetRemotePrimaryTree(ctx, remoteRepo)
 	if remoteErr == nil {
 		logging.Debug(logCtx, "metadata tree obtained from remote-tracking branch")
 		return remoteTree, remoteRepo, nil
@@ -593,18 +676,19 @@ func promptResumeFromOlderCheckpoint() (bool, error) {
 	return confirmed, nil
 }
 
-// checkRemoteMetadata checks if v1 checkpoint metadata exists on the remote and
-// fetches it if available. Custom committed read refs are local-only.
+// checkRemoteMetadata checks if checkpoint metadata exists on the remote and
+// fetches it if available. Skips when reads don't target a ref origin tracks
+// (e.g. the local-only v1.1 mirror).
 func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
 	checkpointID id.CheckpointID,
-	committedReadRef plumbing.ReferenceName,
+	refs checkpoint.CommittedRefs,
 ) error {
 	logCtx := logging.WithComponent(ctx, "resume.checkRemoteMetadata")
 
-	if committedReadRef != plumbing.NewBranchReferenceName(paths.MetadataBranchName) {
-		fmt.Fprintf(errW, "Checkpoint '%s' found in commit but metadata is not available in %s.\n", checkpointID, committedReadRef)
+	if !refs.ReadBootstrappableFromOrigin() {
+		fmt.Fprintf(errW, "Checkpoint '%s' found in commit but metadata is not available in %s.\n", checkpointID, refs.Read)
 		fmt.Fprintf(errW, "This ref is local-only. Try: entire explain %s\n", checkpointID)
 		return nil
 	}
@@ -637,7 +721,7 @@ func checkRemoteMetadata(
 					)
 				} else {
 					defer freshRepo.Close()
-					metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, committedReadRef, checkpointID)
+					metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, refs, checkpointID)
 					if err != nil {
 						logging.Debug(logCtx, "checkpoint remote: fetch succeeded but checkpoint metadata read failed",
 							slog.String("checkpoint_id", checkpointID.String()),
@@ -656,8 +740,8 @@ func checkRemoteMetadata(
 	}
 
 	// Fall back to origin's remote-tracking branch
-	promoteRemoteTrackingMetadataBranch(ctx, repo)
-	metadata, metadataErr := readCheckpointInfoFromRef(ctx, repo, committedReadRef, checkpointID)
+	promoteRemoteTrackingPrimary(ctx, repo, refs)
+	metadata, metadataErr := readCheckpointInfoFromRef(ctx, repo, refs, checkpointID)
 	if metadataErr == nil {
 		return resumeSession(ctx, w, errW, metadata, false)
 	}
@@ -674,7 +758,7 @@ func checkRemoteMetadata(
 			)
 		} else {
 			defer freshRepo.Close()
-			metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, committedReadRef, checkpointID)
+			metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, refs, checkpointID)
 			if err != nil {
 				logging.Debug(logCtx, "origin metadata fetch succeeded but checkpoint metadata read failed",
 					slog.String("checkpoint_id", checkpointID.String()),
@@ -706,20 +790,23 @@ func checkRemoteMetadata(
 	return nil
 }
 
-// promoteRemoteTrackingMetadataBranch advances the local entire/checkpoints/v1
-// ref to match origin's remote-tracking ref. Without this, callers reading
-// checkpoint metadata via the local ref miss checkpoints already fetched into
-// refs/remotes/origin/...: the committed-checkpoint store only falls back to
-// origin/... when the local ref is *missing*, not when it's behind.
-func promoteRemoteTrackingMetadataBranch(ctx context.Context, repo *git.Repository) {
-	localRefName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
-	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), true)
+// promoteRemoteTrackingPrimary advances the local primary ref to match origin's
+// remote-tracking ref. Without this, callers reading checkpoint metadata via
+// the local ref miss checkpoints already fetched into refs/remotes/origin/...:
+// the committed-checkpoint store only falls back to origin/... when the local
+// ref is *missing*, not when it's behind. No-op when Primary isn't in Push
+// (no remote-tracking ref exists).
+func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) {
+	if !refs.PrimaryFetchableFromOrigin() {
+		return
+	}
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", refs.Primary.Short()), true)
 	if err != nil {
 		return
 	}
 
-	if err := strategy.SafelyAdvanceLocalRef(ctx, repo, localRefName, remoteRef.Hash()); err != nil {
-		logging.Debug(ctx, "failed to promote remote-tracking metadata branch",
+	if err := strategy.SafelyAdvanceLocalRef(ctx, repo, refs.Primary, remoteRef.Hash()); err != nil {
+		logging.Debug(ctx, "failed to promote remote-tracking primary ref",
 			slog.String("error", err.Error()),
 		)
 	}
@@ -815,9 +902,10 @@ func displayRestoredSessions(w io.Writer, sessions []strategy.RestoredSession) e
 }
 
 // resumeSingleSession restores a single session (fallback when multi-session restore fails).
-// Always overwrites existing session logs to ensure consistency with checkpoint state.
-// If force is false, prompts for confirmation when local log has newer timestamps.
-func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent, sessionID string, checkpointID id.CheckpointID, repoRoot string, force bool) error {
+// By default it never overwrites an existing local session log — if one is present it is
+// kept and only the resume command is printed; --force overwrites it from the checkpoint.
+// A missing local log is always restored from the checkpoint.
+func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, sessionID string, checkpointID id.CheckpointID, repoRoot string, force bool) error {
 	sessionLogPath, err := resolveTranscriptPath(ctx, sessionID, ag)
 	if err != nil {
 		return fmt.Errorf("failed to resolve transcript path: %w", err)
@@ -838,7 +926,7 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 		return fmt.Errorf("failed to open repository: %w", repoErr)
 	}
 	defer repo.Close()
-	store := checkpoint.NewCommittedReadStore(ctx, repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
 	store.SetBlobFetcher(FetchBlobsByHash)
 	logContent, _, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, store, checkpointID)
 	if err != nil {
@@ -860,27 +948,15 @@ func resumeSingleSession(ctx context.Context, w, errW io.Writer, ag agent.Agent,
 		return fmt.Errorf("failed to get session log: %w", err)
 	}
 
-	// Check if local file has newer timestamps than checkpoint
+	// By default, never overwrite a session log that already exists locally: the
+	// on-disk transcript is the live session the user is resuming, so we keep it
+	// and just print the resume command. --force overwrites it from the checkpoint.
 	if !force {
-		localTime := paths.GetLastTimestampFromFile(sessionLogPath)
-		checkpointTime := paths.GetLastTimestampFromBytes(logContent)
-		status := strategy.ClassifyTimestamps(localTime, checkpointTime)
-
-		if status == strategy.StatusLocalNewer {
-			sessions := []strategy.SessionRestoreInfo{{
-				SessionID:      sessionID,
-				Status:         status,
-				LocalTime:      localTime,
-				CheckpointTime: checkpointTime,
-			}}
-			shouldOverwrite, promptErr := strategy.PromptOverwriteNewerLogs(errW, sessions)
-			if promptErr != nil {
-				return fmt.Errorf("failed to get confirmation: %w", promptErr)
-			}
-			if !shouldOverwrite {
-				fmt.Fprintf(w, "Resume cancelled. Local session log preserved.\n")
-				return nil
-			}
+		if _, statErr := os.Stat(sessionLogPath); statErr == nil {
+			fmt.Fprintf(w, "Keeping existing local session log for '%s' (use --force to overwrite from checkpoint).\n", sessionID)
+			fmt.Fprintf(w, "\nTo continue this session:\n")
+			fmt.Fprintf(w, "  %s\n", ag.FormatResumeCommand(sessionID))
+			return nil
 		}
 	}
 

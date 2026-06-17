@@ -13,6 +13,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 
 	"github.com/go-git/go-git/v6"
@@ -777,7 +778,7 @@ func TestPostCommit_FilesTouched_ResetsAfterCondensation(t *testing.T) {
 	require.NoError(t, err, "entire/checkpoints/v1 should exist after first condensation")
 
 	// Verify first condensation contains A.txt and B.txt
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	cpID1 := id.MustCheckpointID(checkpointID1)
 	summary1, err := store.ReadCommitted(context.Background(), cpID1)
 	require.NoError(t, err)
@@ -951,14 +952,9 @@ func TestFilesChangedInCommit_InitialCommit(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
-
-	cfg, err := repo.Config()
-	require.NoError(t, err)
-	cfg.User.Name = "Test"
-	cfg.User.Email = "test@test.com"
-	require.NoError(t, repo.SetConfig(cfg))
 
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
@@ -1359,7 +1355,7 @@ func TestHandleTurnEnd_PartialFailure(t *testing.T) {
 		"TurnCheckpointIDs should be cleared after HandleTurnEnd, even with errors")
 
 	// Verify the 2 valid checkpoints were finalized with the full transcript
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	for _, cpIDStr := range []string{"a1b2c3d4e5f6", "b2c3d4e5f6a1"} {
 		cpID := id.MustCheckpointID(cpIDStr)
 		content, readErr := store.ReadSessionContent(context.Background(), cpID, 0)

@@ -22,24 +22,20 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    string
 
-	// authTokensPath is the base path for the auth-tokens management
-	// endpoints (list / revoke). Set via WithAuthTokensPath when the
-	// client targets the auth host. Empty for data-API-only clients;
-	// auth-tokens methods error out if called against an empty path.
-	authTokensPath string
+	// authSessionsPath is the base path for entire-core's login-session
+	// endpoints (list / revoke / current). Set via WithAuthSessionsPath when the
+	// client targets the auth host; empty otherwise, and the session methods
+	// error out if called against an empty path.
+	authSessionsPath string
 }
 
-// WithAuthTokensPath sets the base path used by ListTokens,
-// RevokeCurrentToken, and RevokeToken. The path is supplied by the
-// auth shim from auth.CurrentProvider().AuthTokensPath, which is the
-// single source of truth for provider-version routing — the api
-// package no longer reads ENTIRE_AUTH_PROVIDER_VERSION itself.
+// WithAuthSessionsPath sets the base path used by ListAuthSessions,
+// RevokeCurrentAuthSession, and RevokeAuthSession. Returns the receiver for chaining
+// at construction:
 //
-// Returns the receiver for chaining at construction:
-//
-//	c := api.NewClientWithBaseURL(token, base).WithAuthTokensPath(p)
-func (c *Client) WithAuthTokensPath(path string) *Client {
-	c.authTokensPath = path
+//	c := api.NewClientWithBaseURL(token, base).WithAuthSessionsPath(p)
+func (c *Client) WithAuthSessionsPath(path string) *Client {
+	c.authSessionsPath = path
 	return c
 }
 
@@ -50,9 +46,8 @@ func NewClient(token string) *Client {
 }
 
 // NewClientWithBaseURL creates a new authenticated API client targeting an
-// explicit base URL. Use this for endpoints that live on the auth host (e.g.
-// auth-token management) when ENTIRE_AUTH_BASE_URL splits the auth origin
-// from the data API origin.
+// explicit base URL. Use this for endpoints that live on a login server
+// rather than the data API (e.g. auth-session management).
 func NewClientWithBaseURL(token, baseURL string) *Client {
 	return &Client{
 		httpClient: &http.Client{

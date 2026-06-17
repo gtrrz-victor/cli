@@ -29,10 +29,7 @@ func TestResolveWorktreeBranch_RegularRepo(t *testing.T) {
 		dir = resolved
 	}
 
-	_, err := git.PlainInit(dir, false)
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	testutil.InitRepo(t, dir)
 
 	// Read the default branch name directly from HEAD to avoid hard-coding it
 	headData, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD"))
@@ -53,9 +50,10 @@ func TestResolveWorktreeBranch_DetachedHEAD(t *testing.T) {
 		dir = resolved
 	}
 
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
-		t.Fatalf("git init: %v", err)
+		t.Fatalf("git open: %v", err)
 	}
 
 	// Create a commit so we can detach HEAD
@@ -1890,7 +1888,7 @@ func writeStatusHeadCheckpoint(t *testing.T, hasReview, hasInvestigation bool) {
 		cpHex = "abcdef013333"
 	}
 	cpID := id.MustCheckpointID(cpHex)
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	if err := store.WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
 		CheckpointID:     cpID,
 		SessionID:        "status-test-session",

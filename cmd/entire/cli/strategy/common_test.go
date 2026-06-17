@@ -270,9 +270,10 @@ func TestGetMainRepoRoot(t *testing.T) {
 func TestGetCurrentBranchName(t *testing.T) {
 	t.Run("on branch", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -326,9 +327,10 @@ func TestGetCurrentBranchName(t *testing.T) {
 
 	t.Run("detached HEAD", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -369,9 +371,10 @@ func TestGetCurrentBranchName(t *testing.T) {
 // initTestRepo creates a git repo with an initial commit
 func initTestRepo(t *testing.T, dir string) {
 	t.Helper()
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
-		t.Fatalf("failed to init repo: %v", err)
+		t.Fatalf("failed to open repo: %v", err)
 	}
 
 	testFile := filepath.Join(dir, "README.md")
@@ -412,9 +415,10 @@ func removeWorktree(repoDir, worktreeDir string) {
 func TestGetDefaultBranchName(t *testing.T) {
 	t.Run("returns main when main branch exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit (go-git creates master by default)
@@ -454,9 +458,10 @@ func TestGetDefaultBranchName(t *testing.T) {
 
 	t.Run("returns master when only master exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit (go-git creates master by default)
@@ -489,9 +494,10 @@ func TestGetDefaultBranchName(t *testing.T) {
 
 	t.Run("returns empty when no main or master", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -538,9 +544,10 @@ func TestGetDefaultBranchName(t *testing.T) {
 
 	t.Run("returns origin/HEAD target when set", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -597,9 +604,10 @@ func TestGetDefaultBranchName(t *testing.T) {
 func TestIsOnDefaultBranch(t *testing.T) {
 	t.Run("returns true when on main", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -644,9 +652,10 @@ func TestIsOnDefaultBranch(t *testing.T) {
 
 	t.Run("returns true when on master", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit (go-git creates master by default)
@@ -681,9 +690,10 @@ func TestIsOnDefaultBranch(t *testing.T) {
 
 	t.Run("returns false when on feature branch", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -728,9 +738,10 @@ func TestIsOnDefaultBranch(t *testing.T) {
 
 	t.Run("returns false for detached HEAD", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		repo, err := git.PlainInit(tmpDir, false)
+		testutil.InitRepo(t, tmpDir)
+		repo, err := git.PlainOpen(tmpDir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create initial commit
@@ -952,7 +963,7 @@ func initBareWithMetadataBranch(t *testing.T) string {
 	return bareDir
 }
 
-func TestEnsureMetadataBranch(t *testing.T) {
+func TestEnsurePrimaryRef(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates from remote on fresh clone", func(t *testing.T) {
@@ -968,8 +979,8 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("failed to open repo: %v", err)
 		}
 
-		if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-			t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+		if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+			t.Fatalf("EnsurePrimaryRef() failed: %v", err)
 		}
 
 		// Local branch should exist with data (not empty)
@@ -1032,8 +1043,8 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("failed to set ref: %v", err)
 		}
 
-		if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-			t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+		if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+			t.Fatalf("EnsurePrimaryRef() failed: %v", err)
 		}
 
 		// Should have been updated from remote — no longer empty
@@ -1054,8 +1065,8 @@ func TestEnsureMetadataBranch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open repo: %v", err)
 		}
-		if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-			t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+		if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+			t.Fatalf("EnsurePrimaryRef() failed: %v", err)
 		}
 
 		ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
@@ -1076,7 +1087,7 @@ func TestEnsureMetadataBranch(t *testing.T) {
 	})
 }
 
-func TestEnsureMetadataBranch_WritesVercelConfigWhenEnabled(t *testing.T) {
+func TestEnsurePrimaryRef_WritesVercelConfigWhenEnabled(t *testing.T) {
 	vercelconfig.ResetSettingsCache()
 	t.Cleanup(vercelconfig.ResetSettingsCache)
 
@@ -1098,8 +1109,8 @@ func TestEnsureMetadataBranch_WritesVercelConfigWhenEnabled(t *testing.T) {
 		t.Fatalf("InitSettings() failed: %v", err)
 	}
 
-	if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-		t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+	if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+		t.Fatalf("EnsurePrimaryRef() failed: %v", err)
 	}
 
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
@@ -1132,7 +1143,7 @@ func TestEnsureMetadataBranch_WritesVercelConfigWhenEnabled(t *testing.T) {
 }
 
 // Not parallel: uses t.Chdir so settings.Load picks up the v1.1 opt-in.
-func TestEnsureMetadataBranch_MirrorsV11WhenSeedingFromRemote(t *testing.T) {
+func TestEnsurePrimaryRef_MirrorsV11WhenSeedingFromRemote(t *testing.T) {
 	bareDir := initBareWithMetadataBranch(t)
 	cloneDir, _ := cloneWithConfig(t, bareDir)
 
@@ -1148,13 +1159,13 @@ func TestEnsureMetadataBranch_MirrorsV11WhenSeedingFromRemote(t *testing.T) {
 	repo, err := git.PlainOpen(cloneDir)
 	require.NoError(t, err)
 
-	require.NoError(t, EnsureMetadataBranch(t.Context(), repo))
+	require.NoError(t, EnsurePrimaryRef(t.Context(), repo))
 
 	v1Ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	require.NoError(t, err, "local v1 branch should be seeded from origin")
 
 	mirrorRef, err := repo.Reference(plumbing.ReferenceName(paths.MetadataRefName), true)
-	require.NoError(t, err, "v1.1 mirror should track the v1 write performed by EnsureMetadataBranch")
+	require.NoError(t, err, "v1.1 mirror should track the v1 write performed by EnsurePrimaryRef")
 	assert.Equal(t, v1Ref.Hash(), mirrorRef.Hash())
 }
 
@@ -1180,7 +1191,7 @@ func cloneWithConfig(t *testing.T, bareDir string) (string, func(args ...string)
 	return cloneDir, run
 }
 
-func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testing.T) {
+func TestEnsurePrimaryRef_DisconnectedBranchesNotReconciledInEnable(t *testing.T) {
 	t.Parallel()
 
 	bareDir := initBareWithMetadataBranch(t)
@@ -1208,18 +1219,18 @@ func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testi
 		t.Fatalf("failed to open repo: %v", err)
 	}
 
-	// Get local ref hash before EnsureMetadataBranch
+	// Get local ref hash before EnsurePrimaryRef
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 	localRefBefore, err := repo.Reference(refName, true)
 	if err != nil {
 		t.Fatalf("local branch not found: %v", err)
 	}
 
-	if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-		t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+	if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+		t.Fatalf("EnsurePrimaryRef() failed: %v", err)
 	}
 
-	// EnsureMetadataBranch should NOT reconcile disconnected branches.
+	// EnsurePrimaryRef should NOT reconcile disconnected branches.
 	// Reconciliation happens at pre-push time or via 'entire doctor'.
 	// The local branch should be unchanged.
 	localRefAfter, err := repo.Reference(refName, true)
@@ -1227,11 +1238,11 @@ func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testi
 		t.Fatalf("local branch not found: %v", err)
 	}
 	if localRefAfter.Hash() != localRefBefore.Hash() {
-		t.Error("EnsureMetadataBranch should not modify disconnected local branch with real data")
+		t.Error("EnsurePrimaryRef should not modify disconnected local branch with real data")
 	}
 }
 
-func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
+func TestEnsurePrimaryRef_DoesNotFastForwardWhenBehind(t *testing.T) {
 	t.Parallel()
 
 	bareDir := initBareWithMetadataBranch(t)
@@ -1242,8 +1253,8 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
-	if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-		t.Fatalf("first EnsureMetadataBranch() failed: %v", err)
+	if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+		t.Fatalf("first EnsurePrimaryRef() failed: %v", err)
 	}
 
 	// Remember current local hash
@@ -1282,18 +1293,18 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 		t.Fatalf("failed to reopen repo: %v", err)
 	}
 
-	if err := EnsureMetadataBranch(t.Context(), repo); err != nil {
-		t.Fatalf("second EnsureMetadataBranch() failed: %v", err)
+	if err := EnsurePrimaryRef(t.Context(), repo); err != nil {
+		t.Fatalf("second EnsurePrimaryRef() failed: %v", err)
 	}
 
-	// EnsureMetadataBranch no longer fast-forwards diverged branches (handled by push path).
+	// EnsurePrimaryRef no longer fast-forwards diverged branches (handled by push path).
 	// Local should be unchanged since it has real data and shares ancestry with remote.
 	localAfter, err := repo.Reference(refName, true)
 	if err != nil {
 		t.Fatalf("local branch not found: %v", err)
 	}
 	if localAfter.Hash() != localBefore.Hash() {
-		t.Error("EnsureMetadataBranch should not modify local branch with shared ancestry")
+		t.Error("EnsurePrimaryRef should not modify local branch with shared ancestry")
 	}
 }
 
@@ -1405,9 +1416,10 @@ func TestSafelyAdvanceLocalRef_DoesNotReplayDisconnectedChainWhenTargetIsShallow
 func buildCommittedTree(t *testing.T, files map[string]string) *object.Tree {
 	t.Helper()
 	dir := t.TempDir()
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
-		t.Fatalf("failed to init repo: %v", err)
+		t.Fatalf("failed to open repo: %v", err)
 	}
 
 	for path, content := range files {
@@ -1599,14 +1611,27 @@ func TestReadLatestSessionPromptFromCommittedTree(t *testing.T) {
 	})
 }
 
+func TestReadAllSessionPromptsFromTree(t *testing.T) {
+	t.Parallel()
+
+	tree := buildCommittedTree(t, map[string]string{
+		"a3/b2c4d5e6f7/0/prompt.txt": "First session prompt",
+		"a3/b2c4d5e6f7/1/prompt.txt": "Second session prompt",
+	})
+
+	got := ReadAllSessionPromptsFromTree(tree, "a3/b2c4d5e6f7", 2, []string{"session-1", "session-2"})
+	assert.Equal(t, []string{"First session prompt", "Second session prompt"}, got)
+}
+
 func TestIsEmptyRepository(t *testing.T) {
 	t.Parallel()
 	t.Run("empty repo returns true", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		repo, err := git.PlainInit(dir, false)
+		testutil.InitRepo(t, dir)
+		repo, err := git.PlainOpen(dir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 		if !IsEmptyRepository(repo) {
 			t.Error("IsEmptyRepository() = false, want true for empty repo")
@@ -1616,9 +1641,10 @@ func TestIsEmptyRepository(t *testing.T) {
 	t.Run("repo with commit returns false", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		repo, err := git.PlainInit(dir, false)
+		testutil.InitRepo(t, dir)
+		repo, err := git.PlainOpen(dir)
 		if err != nil {
-			t.Fatalf("failed to init repo: %v", err)
+			t.Fatalf("failed to open repo: %v", err)
 		}
 
 		// Create a commit

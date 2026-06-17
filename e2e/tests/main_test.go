@@ -25,6 +25,22 @@ func TestMain(m *testing.M) {
 	_ = os.MkdirAll(runDir, 0o755)
 	testutil.SetRunDir(runDir)
 
+	// Route every spawned entire binary (and the git hooks that invoke it) at
+	// the file-backed token store so e2e never touches the developer's real
+	// OS keychain. internal/entireclient/tokenstore honors these env vars
+	// unconditionally, and they are inherited by child processes.
+	// In-process keyring.MockInit() cannot help here: the binary is a subprocess.
+	os.Setenv("ENTIRE_TOKEN_STORE", "file")
+	os.Setenv("ENTIRE_TOKEN_STORE_PATH", filepath.Join(runDir, "e2e-tokenstore.json"))
+
+	// Same for the CLI's config and cache directories: contexts.json,
+	// version_check.json, and the discovery caches must never resolve to the
+	// developer's real ~/.config/entire or ~/.cache/entire from a spawned
+	// binary (testing.Testing() is false there, so the internal/testdirs
+	// fallback cannot protect it).
+	os.Setenv("ENTIRE_CONFIG_DIR", filepath.Join(runDir, "entire-config"))
+	os.Setenv("XDG_CACHE_HOME", filepath.Join(runDir, "entire-cache"))
+
 	// Resolve the entire binary (set by mise run build via E2E_ENTIRE_BIN).
 	entireBin := entire.BinPath()
 	if err := ensureHookEntireBinary(entireBin); err != nil {

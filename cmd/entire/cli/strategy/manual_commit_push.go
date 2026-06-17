@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/perf"
 	"github.com/entireio/cli/redact"
@@ -19,7 +19,7 @@ import (
 var errOPFAbortedByUser = errors.New("OPF prompt aborted by user; push cancelled")
 
 // PrePush is called by the git pre-push hook before pushing to a remote.
-// It pushes the entire/checkpoints/v1 branch alongside the user's push.
+// It pushes each ref in refs.Push alongside the user's push.
 //
 // If a checkpoint_remote is configured in settings, checkpoint branches/refs
 // are pushed to the derived URL instead of the user's push remote.
@@ -39,6 +39,8 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	if ps.pushDisabled {
 		return nil
 	}
+
+	refs := checkpoint.ResolveCommittedRefs(ctx)
 
 	// OPF pre-push rewrite: if OPF is configured, resolve the user's
 	// decision (env > settings > prompt > non-TTY auto-run), then
@@ -76,6 +78,7 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 				)
 				return repoErr
 			}
+			defer repo.Close()
 			if _, rewriteErr := RewriteUnpushedV1WithOPF(ctx, repo, ps.pushTarget()); rewriteErr != nil {
 				opfSpan.RecordError(rewriteErr)
 				opfSpan.End()
@@ -88,28 +91,49 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		}
 	}
 
+	refreshMirrorBeforePush(ctx, refs)
+
 	// Thread the span's context into the push so the network push and any
 	// fetch+rebase recovery nest beneath it as child steps in the perf trace.
-	pushCtx, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoints_branch")
-	err := pushBranchIfNeeded(pushCtx, ps.pushTarget(), paths.MetadataBranchName)
-	pushCheckpointsSpan.RecordError(err)
-	pushCheckpointsSpan.End()
-
-	// Post-push cleanup: only when the v1 push succeeded, so we know
-	// the condensed checkpoint data is on the remote. Failures here are
-	// non-fatal — shadow branches just accumulate until `entire clean`
-	// or the next successful push.
-	if err == nil {
-		if deleted, cleanupErr := CleanupPushedShadowBranches(ctx); cleanupErr != nil {
-			logging.Warn(ctx, "post-push shadow branch cleanup failed",
-				slog.String("error", cleanupErr.Error()),
-			)
-		} else if deleted > 0 {
-			logging.Info(ctx, "cleaned up vestigial shadow branches",
-				slog.Int("count", deleted),
-			)
+	pushCtx, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoint_refs")
+	for _, ref := range refs.Push {
+		if err := pushRefIfNeeded(pushCtx, ps.pushTarget(), ref); err != nil {
+			pushCheckpointsSpan.RecordError(err)
+			pushCheckpointsSpan.End()
+			return err
 		}
 	}
+	pushCheckpointsSpan.End()
 
-	return err
+	// Post-push cleanup: only when all configured checkpoint refs were pushed
+	// successfully, so we know condensed checkpoint data reached the remote.
+	// Failures here are non-fatal — shadow branches just accumulate until
+	// `entire clean` or the next successful push.
+	if deleted, cleanupErr := CleanupPushedShadowBranches(ctx); cleanupErr != nil {
+		logging.Warn(ctx, "post-push shadow branch cleanup failed",
+			slog.String("error", cleanupErr.Error()),
+		)
+	} else if deleted > 0 {
+		logging.Info(ctx, "cleaned up vestigial shadow branches",
+			slog.Int("count", deleted),
+		)
+	}
+
+	return nil
+}
+
+// refreshMirrorBeforePush advances the mirror to the primary tip before
+// pushing. Best-effort: failures are logged, never blocking the push.
+func refreshMirrorBeforePush(ctx context.Context, refs checkpoint.CommittedRefs) {
+	if !refs.HasMirror() {
+		return
+	}
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		logging.Debug(ctx, "pre-push mirror refresh skipped: open repository failed",
+			slog.String("error", err.Error()))
+		return
+	}
+	defer repo.Close()
+	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
 }

@@ -48,9 +48,10 @@ func TestCopyMetadataDir_SkipsSymlinks(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory structure
@@ -78,7 +79,7 @@ func TestCopyMetadataDir_SkipsSymlinks(t *testing.T) {
 	}
 
 	// Create GitStore and call copyMetadataDir
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	entries := make(map[string]object.TreeEntry)
 
 	err = store.copyMetadataDir(context.Background(), metadataDir, "checkpoint/", entries)
@@ -108,9 +109,10 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create worktree and make initial commit
@@ -133,7 +135,7 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 	}
 
 	// Create checkpoint store
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// Write a committed checkpoint with Agent field
 	checkpointID := id.MustCheckpointID("a1b2c3d4e5f6")
@@ -299,9 +301,10 @@ func TestWriteTemporary_Deduplication(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create worktree and make initial commit
@@ -343,7 +346,7 @@ func TestWriteTemporary_Deduplication(t *testing.T) {
 	}
 
 	// Create checkpoint store
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// First checkpoint should be created
 	baseCommit := initialCommit.String()
@@ -423,9 +426,10 @@ func setupBranchTestRepo(t *testing.T) (*git.Repository, plumbing.Hash) {
 	t.Helper()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -469,7 +473,7 @@ func TestEnsureSessionsBranch_WritesVercelConfigWhenEnabled(t *testing.T) {
 		t.Fatalf("write settings.json: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	if err := store.ensureSessionsBranch(context.Background()); err != nil {
 		t.Fatalf("ensureSessionsBranch() error = %v", err)
 	}
@@ -544,7 +548,7 @@ func TestWriteCommitted_MergesVercelConfigOnMetadataBranch(t *testing.T) {
 		t.Fatalf("BuildTreeFromEntries() error = %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	commitHash, err := store.createCommit(context.Background(), treeHash, plumbing.ZeroHash, "Initialize metadata branch", "Test", "test@test.com")
 	if err != nil {
 		t.Fatalf("createCommit() error = %v", err)
@@ -686,7 +690,7 @@ func TestWriteCommitted_BranchField(t *testing.T) {
 
 		// Write a committed checkpoint with branch information
 		checkpointID := id.MustCheckpointID("a1b2c3d4e5f6")
-		store := NewGitStore(repo)
+		store := NewGitStore(repo, DefaultV1Refs())
 		err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
 			CheckpointID: checkpointID,
 			SessionID:    "test-session-123",
@@ -726,7 +730,7 @@ func TestWriteCommitted_BranchField(t *testing.T) {
 
 		// Write a committed checkpoint (branch should be empty in detached HEAD)
 		checkpointID := id.MustCheckpointID("b2c3d4e5f6a7")
-		store := NewGitStore(repo)
+		store := NewGitStore(repo, DefaultV1Refs())
 		err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
 			CheckpointID: checkpointID,
 			SessionID:    "test-session-456",
@@ -748,7 +752,7 @@ func TestWriteCommitted_BranchField(t *testing.T) {
 // field in an existing checkpoint's metadata.
 func TestUpdateSummary(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("f1e2d3c4b5a6")
 
 	// First, create a checkpoint without a summary
@@ -820,7 +824,7 @@ func TestUpdateSummary(t *testing.T) {
 // when the checkpoint doesn't exist.
 func TestUpdateSummary_NotFound(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// Ensure sessions branch exists
 	err := store.ensureSessionsBranch(context.Background())
@@ -846,9 +850,10 @@ func TestUpdateSummary_NotFound(t *testing.T) {
 func TestListCommitted_FallsBackToRemote(t *testing.T) {
 	// Create "remote" repo (non-bare, so we can make commits)
 	remoteDir := t.TempDir()
-	remoteRepo, err := git.PlainInit(remoteDir, false)
+	testutil.InitRepo(t, remoteDir)
+	remoteRepo, err := git.PlainOpen(remoteDir)
 	if err != nil {
-		t.Fatalf("failed to init remote repo: %v", err)
+		t.Fatalf("failed to open remote repo: %v", err)
 	}
 
 	// Create an initial commit on main branch (required for cloning)
@@ -870,7 +875,7 @@ func TestListCommitted_FallsBackToRemote(t *testing.T) {
 	}
 
 	// Create entire/checkpoints/v1 branch on the remote with a checkpoint
-	remoteStore := NewGitStore(remoteRepo)
+	remoteStore := NewGitStore(remoteRepo, DefaultV1Refs())
 	cpID := id.MustCheckpointID("abcdef123456")
 	err = remoteStore.WriteCommitted(context.Background(), WriteCommittedOptions{
 		CheckpointID: cpID,
@@ -917,7 +922,7 @@ func TestListCommitted_FallsBackToRemote(t *testing.T) {
 	}
 
 	// ListCommitted should find the checkpoint by falling back to remote
-	localStore := NewGitStore(localRepo)
+	localStore := NewGitStore(localRepo, DefaultV1Refs())
 	checkpoints, err := localStore.ListCommitted(context.Background())
 	if err != nil {
 		t.Fatalf("ListCommitted() error = %v", err)
@@ -934,7 +939,7 @@ func TestListCommitted_FallsBackToRemote(t *testing.T) {
 // author of the commit that created the checkpoint on the entire/checkpoints/v1 branch.
 func TestGetCheckpointAuthor(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("a1b2c3d4e5f6")
 
 	// Create a checkpoint with specific author info
@@ -972,7 +977,7 @@ func TestGetCheckpointAuthor(t *testing.T) {
 // empty author when the checkpoint doesn't exist.
 func TestGetCheckpointAuthor_NotFound(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// Query for a non-existent checkpoint (must be valid hex)
 	checkpointID := id.MustCheckpointID("ffffffffffff")
@@ -993,12 +998,13 @@ func TestGetCheckpointAuthor_NotFound(t *testing.T) {
 func TestGetCheckpointAuthor_NoSessionsBranch(t *testing.T) {
 	// Create a fresh repo without sessions branch
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 
 	author, err := store.GetCheckpointAuthor(context.Background(), checkpointID)
@@ -1021,7 +1027,7 @@ func TestGetCheckpointAuthor_NoSessionsBranch(t *testing.T) {
 // sessions to the same checkpoint ID creates separate numbered subdirectories.
 func TestWriteCommitted_MultipleSessionsSameCheckpoint(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("a1a2a3a4a5a6")
 
 	// Write first session
@@ -1102,7 +1108,7 @@ func TestWriteCommitted_MultipleSessionsSameCheckpoint(t *testing.T) {
 // multiple sessions written to the same checkpoint.
 func TestWriteCommitted_Aggregation(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("b1b2b3b4b5b6")
 
 	// Write first session with specific stats
@@ -1193,7 +1199,7 @@ func TestWriteCommitted_Aggregation(t *testing.T) {
 // a CheckpointSummary with the correct structure including Sessions array.
 func TestReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("c1c2c3c4c5c6")
 
 	// Write two sessions
@@ -1253,7 +1259,7 @@ func TestReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 // specific sessions by their 0-based index within a checkpoint.
 func TestReadSessionContent_ByIndex(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("d1d2d3d4d5d6")
 
 	// Write two sessions with distinct content
@@ -1315,7 +1321,7 @@ func TestReadSessionContent_ByIndex(t *testing.T) {
 func writeSingleSession(t *testing.T, cpIDStr, sessionID, transcript string) (*GitStore, id.CheckpointID) {
 	t.Helper()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID(cpIDStr)
 
 	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
@@ -1335,7 +1341,7 @@ func writeSingleSession(t *testing.T, cpIDStr, sessionID, transcript string) (*G
 
 func TestWriteCommitted_CodexSanitizesPortableTranscript(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("c0de1234beef")
 
 	transcript := `{"timestamp":"2026-03-25T11:31:11.754Z","type":"response_item","payload":{"type":"reasoning","summary":[{"text":"brief"}],"encrypted_content":"REDACTED"}}
@@ -1388,7 +1394,7 @@ func TestReadSessionContent_InvalidIndex(t *testing.T) {
 // the content of the most recently added session (highest index).
 func TestReadLatestSessionContent(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("f1f2f3f4f5f6")
 
 	// Write three sessions
@@ -1426,7 +1432,7 @@ func TestReadLatestSessionContent(t *testing.T) {
 // a session by its session ID rather than by index.
 func TestReadSessionContentByID(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("010203040506")
 
 	// Write two sessions with distinct IDs
@@ -1479,7 +1485,7 @@ func TestReadSessionContentByID_NotFound(t *testing.T) {
 // information for checkpoints with multiple sessions.
 func TestListCommitted_MultiSessionInfo(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("212223242526")
 
 	// Write two sessions to the same checkpoint
@@ -1542,7 +1548,7 @@ func TestListCommitted_MultiSessionInfo(t *testing.T) {
 // written without prompts and still be read correctly.
 func TestWriteCommitted_SessionWithNoPrompts(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("313233343536")
 
 	// Write session without prompts
@@ -1587,7 +1593,7 @@ func TestWriteCommitted_SessionWithNoPrompts(t *testing.T) {
 // Regression test for ENT-243 where Summary was omitted from the struct literal.
 func TestWriteCommitted_SessionWithSummary(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 
 	summary := &Summary{
@@ -1629,7 +1635,7 @@ func TestWriteCommitted_SessionWithSummary(t *testing.T) {
 // to ensure the 0-based indexing works correctly throughout.
 func TestWriteCommitted_ThreeSessions(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("515253545556")
 
 	// Write three sessions
@@ -1700,7 +1706,7 @@ func TestWriteCommitted_ThreeSessions(t *testing.T) {
 // nil (not an error) when the checkpoint doesn't exist.
 func TestReadCommitted_NonexistentCheckpoint(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// Ensure sessions branch exists
 	err := store.ensureSessionsBranch(context.Background())
@@ -1723,7 +1729,7 @@ func TestReadCommitted_NonexistentCheckpoint(t *testing.T) {
 // returns ErrCheckpointNotFound when the checkpoint doesn't exist.
 func TestReadSessionContent_NonexistentCheckpoint(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	// Ensure sessions branch exists
 	err := store.ensureSessionsBranch(context.Background())
@@ -1746,9 +1752,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesModifiedTrackedFiles(t *testing.
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit containing README.md
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -1793,7 +1800,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesModifiedTrackedFiles(t *testing.
 	// Create checkpoint store and write first checkpoint
 	// Note: ModifiedFiles is empty because agent hasn't touched anything yet
 	// The first checkpoint should still capture README.md because it's modified in working dir
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -1883,9 +1890,10 @@ func TestWriteTemporary_PathNormalizationAndSkipping(t *testing.T) {
 				t.Fatalf("failed to resolve symlinks: %v", err)
 			}
 
-			repo, err := git.PlainInit(tempDir, false)
+			testutil.InitRepo(t, tempDir)
+			repo, err := git.PlainOpen(tempDir)
 			if err != nil {
-				t.Fatalf("failed to init git repo: %v", err)
+				t.Fatalf("failed to open git repo: %v", err)
 			}
 
 			worktree, err := repo.Worktree()
@@ -1922,7 +1930,7 @@ func TestWriteTemporary_PathNormalizationAndSkipping(t *testing.T) {
 				t.Fatalf("failed to write transcript: %v", err)
 			}
 
-			store := NewGitStore(repo)
+			store := NewGitStore(repo, DefaultV1Refs())
 			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
 				SessionID:      "test-session",
 				BaseCommit:     initialCommit.String(),
@@ -1976,9 +1984,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2021,7 +2030,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2067,15 +2076,139 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUntrackedFiles(t *testing.T) {
 	}
 }
 
+// TestWriteTemporary_PreservesSymlinkWithoutReadingTarget verifies that changed
+// worktree symlinks are snapshotted as git symlinks, not as the target contents.
+func TestWriteTemporary_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tests := []struct {
+		name              string
+		isFirstCheckpoint bool
+	}{
+		{
+			name:              "first checkpoint untracked symlink",
+			isFirstCheckpoint: true,
+		},
+		{
+			name:              "subsequent checkpoint new symlink",
+			isFirstCheckpoint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			externalDir := t.TempDir()
+
+			repo, err := git.PlainInit(tempDir, false)
+			if err != nil {
+				t.Fatalf("failed to init git repo: %v", err)
+			}
+
+			worktree, err := repo.Worktree()
+			if err != nil {
+				t.Fatalf("failed to get worktree: %v", err)
+			}
+
+			readmeFile := filepath.Join(tempDir, "README.md")
+			if err := os.WriteFile(readmeFile, []byte("# Test\n"), 0o644); err != nil {
+				t.Fatalf("failed to write README: %v", err)
+			}
+			if _, err := worktree.Add("README.md"); err != nil {
+				t.Fatalf("failed to add README: %v", err)
+			}
+			initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+				Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+			})
+			if err != nil {
+				t.Fatalf("failed to commit: %v", err)
+			}
+
+			secretContent := "SECRET DATA THAT MUST NOT ENTER CHECKPOINTS"
+			secretFile := filepath.Join(externalDir, "id_rsa")
+			if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+				t.Fatalf("failed to write external secret: %v", err)
+			}
+
+			linkPath := filepath.Join(tempDir, "leaked-key")
+			if err := os.Symlink(secretFile, linkPath); err != nil {
+				t.Skipf("cannot create symlink on this platform: %v", err)
+			}
+
+			t.Chdir(tempDir)
+
+			metadataDir := filepath.Join(tempDir, ".entire", "metadata", "test-session")
+			if err := os.MkdirAll(metadataDir, 0o755); err != nil {
+				t.Fatalf("failed to create metadata dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(metadataDir, "full.jsonl"), []byte(`{"test": true}`), 0o644); err != nil {
+				t.Fatalf("failed to write transcript: %v", err)
+			}
+
+			var newFiles []string
+			if !tt.isFirstCheckpoint {
+				newFiles = []string{"leaked-key"}
+			}
+
+			store := NewGitStore(repo, DefaultV1Refs())
+			result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
+				SessionID:         "test-session",
+				BaseCommit:        initialCommit.String(),
+				NewFiles:          newFiles,
+				MetadataDir:       ".entire/metadata/test-session",
+				MetadataDirAbs:    metadataDir,
+				CommitMessage:     "Checkpoint symlink",
+				AuthorName:        "Test",
+				AuthorEmail:       "test@test.com",
+				IsFirstCheckpoint: tt.isFirstCheckpoint,
+			})
+			if err != nil {
+				t.Fatalf("WriteTemporary() error = %v", err)
+			}
+
+			commit, err := repo.CommitObject(result.CommitHash)
+			if err != nil {
+				t.Fatalf("failed to get commit object: %v", err)
+			}
+			tree, err := commit.Tree()
+			if err != nil {
+				t.Fatalf("failed to get tree: %v", err)
+			}
+
+			entry, err := tree.FindEntry("leaked-key")
+			if err != nil {
+				t.Fatalf("leaked-key not found in checkpoint tree: %v", err)
+			}
+			if entry.Mode != filemode.Symlink {
+				t.Fatalf("leaked-key mode = %v, want %v", entry.Mode, filemode.Symlink)
+			}
+
+			file, err := tree.File("leaked-key")
+			if err != nil {
+				t.Fatalf("failed to get leaked-key file: %v", err)
+			}
+			content, err := file.Contents()
+			if err != nil {
+				t.Fatalf("failed to read leaked-key blob: %v", err)
+			}
+			if content != secretFile {
+				t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+			}
+			if content == secretContent {
+				t.Fatal("checkpoint stored symlink target contents instead of link target")
+			}
+		})
+	}
+}
+
 // TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles verifies that
 // the first checkpoint does NOT capture files that are in .gitignore.
 func TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2130,7 +2263,7 @@ func TestWriteTemporary_FirstCheckpoint_ExcludesGitIgnoredFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2230,7 +2363,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesGitIgnoredModifiedFiles(t *
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// Write first checkpoint to establish the shadow branch
@@ -2351,7 +2484,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesGitIgnoredNewFiles(t *testi
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// First checkpoint
@@ -2462,7 +2595,7 @@ func TestWriteTemporary_SubsequentCheckpoint_ExcludesNestedGitIgnoredFiles(t *te
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// First checkpoint
@@ -2528,9 +2661,10 @@ func TestWriteTemporary_FirstCheckpoint_UserAndAgentChanges(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2585,7 +2719,7 @@ func TestWriteTemporary_FirstCheckpoint_UserAndAgentChanges(t *testing.T) {
 	}
 
 	// Create checkpoint - agent reports main.go as modified (from transcript)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2647,9 +2781,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUserDeletedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2699,7 +2834,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesUserDeletedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2749,9 +2884,10 @@ func TestWriteTemporary_FirstCheckpoint_CapturesRenamedFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2797,7 +2933,7 @@ func TestWriteTemporary_FirstCheckpoint_CapturesRenamedFiles(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2847,9 +2983,10 @@ func TestWriteTemporary_FirstCheckpoint_FilenamesWithSpaces(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -2893,7 +3030,7 @@ func TestWriteTemporary_FirstCheckpoint_FilenamesWithSpaces(t *testing.T) {
 	}
 
 	// Create checkpoint store and write first checkpoint
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	result, err := store.WriteTemporary(context.Background(), WriteTemporaryOptions{
@@ -2940,7 +3077,7 @@ func TestWriteTemporary_FirstCheckpoint_FilenamesWithSpaces(t *testing.T) {
 func TestWriteCommitted_DuplicateSessionIDUpdatesInPlace(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("deda01234567")
 
 	// Write session "X" with initial data
@@ -3075,7 +3212,7 @@ func TestWriteCommitted_DuplicateSessionIDUpdatesInPlace(t *testing.T) {
 func TestWriteCommitted_DuplicateSessionIDSingleSession(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("dedb07654321")
 
 	// Write session "X" with initial data
@@ -3151,7 +3288,7 @@ func TestWriteCommitted_DuplicateSessionIDSingleSession(t *testing.T) {
 func TestWriteCommitted_DuplicateSessionIDReusesIndex(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("dedc0abcdef1")
 
 	// Write session A at index 0
@@ -3235,7 +3372,7 @@ func TestWriteCommitted_DuplicateSessionIDReusesIndex(t *testing.T) {
 func TestWriteCommitted_DuplicateSessionIDClearsStaleFiles(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("dedd0abcdef2")
 
 	// Write session A with prompts and context
@@ -3313,7 +3450,7 @@ const highEntropySecret = "sk-ant-api03-xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6pA"
 
 func TestWriteCommitted_PreservesRedactedTranscript(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef1")
 
 	// Callers redact before passing to WriteCommitted; the store persists as-is.
@@ -3351,7 +3488,7 @@ func TestWriteCommitted_PreservesRedactedTranscript(t *testing.T) {
 
 func TestWriteCommitted_RedactsPromptSecrets(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef2")
 
 	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
@@ -3384,9 +3521,10 @@ func TestWriteCommitted_RedactsPromptSecrets(t *testing.T) {
 func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	metadataDir := filepath.Join(tempDir, "metadata")
@@ -3406,7 +3544,7 @@ func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 		t.Fatalf("failed to write txt file: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	entries := make(map[string]object.TreeEntry)
 
 	if err := store.copyMetadataDir(context.Background(), metadataDir, "cp/", entries); err != nil {
@@ -3454,9 +3592,10 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -3477,7 +3616,7 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	checkpointID := id.MustCheckpointID("b1c2d3e4f5a6")
 	sessionID := "test-session-version"
@@ -3567,9 +3706,10 @@ func TestWriteCommitted_ModelFieldAlwaysPresent(t *testing.T) {
 
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -3590,7 +3730,7 @@ func TestWriteCommitted_ModelFieldAlwaysPresent(t *testing.T) {
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 
 	checkpointID := id.MustCheckpointID("c1d2e3f4a5b6")
 	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
@@ -3808,7 +3948,7 @@ func TestRedactCodeLearnings_NilAndEmpty(t *testing.T) {
 func TestWriteCommitted_RedactsSummarySecrets(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef7")
 
 	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
@@ -3850,7 +3990,7 @@ func TestWriteCommitted_RedactsSummarySecrets(t *testing.T) {
 func TestUpdateSummary_RedactsSecrets(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef8")
 
 	// First write a checkpoint without a summary
@@ -3895,7 +4035,7 @@ func TestUpdateSummary_RedactsSecrets(t *testing.T) {
 func TestWriteCommitted_SubagentTranscript_JSONLFallback(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupBranchTestRepo(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef9")
 
 	// Create a temp file with invalid JSONL containing a secret
@@ -3965,9 +4105,10 @@ func TestWriteTemporaryTask_SubagentTranscript_RedactsSecrets(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Initialize a git repository with an initial commit
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -3996,7 +4137,7 @@ func TestWriteTemporaryTask_SubagentTranscript_RedactsSecrets(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	_, err = store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
@@ -4056,9 +4197,10 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create a directory structure where the relative path could escape
@@ -4087,13 +4229,59 @@ func TestAddDirectoryToEntries_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestMetadataDirectoryWalkersAllowDotDotPrefixedNames(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
+	require.NoError(t, err)
+
+	metadataDir := filepath.Join(tempDir, "metadata")
+	generatedDir := filepath.Join(metadataDir, "..generated")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatalf("failed to create metadata dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(generatedDir, "schema.json"), []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("failed to write metadata file: %v", err)
+	}
+
+	expectedPath := filepath.ToSlash(filepath.Join("checkpoint", "..generated", "schema.json"))
+
+	entries := make(map[string]object.TreeEntry)
+	if err := addDirectoryToEntriesWithAbsPath(repo, metadataDir, "checkpoint", entries); err != nil {
+		t.Fatalf("addDirectoryToEntriesWithAbsPath failed: %v", err)
+	}
+	if _, ok := entries[expectedPath]; !ok {
+		t.Fatalf("expected entry at %q, got entries: %v", expectedPath, entries)
+	}
+
+	changes, err := addDirectoryToChanges(repo, metadataDir, "checkpoint")
+	if err != nil {
+		t.Fatalf("addDirectoryToChanges failed: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Path != expectedPath {
+		t.Fatalf("expected one change at %q, got %#v", expectedPath, changes)
+	}
+
+	committedEntries := make(map[string]object.TreeEntry)
+	store := NewGitStore(repo, DefaultV1Refs())
+	if err := store.copyMetadataDir(context.Background(), metadataDir, "checkpoint/", committedEntries); err != nil {
+		t.Fatalf("copyMetadataDir failed: %v", err)
+	}
+	if _, ok := committedEntries[expectedPath]; !ok {
+		t.Fatalf("expected committed entry at %q, got entries: %v", expectedPath, committedEntries)
+	}
+}
+
 func TestAddDirectoryToEntries_SkipsSymlinks(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory
@@ -4145,9 +4333,10 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	// Create metadata directory with a regular file
@@ -4196,6 +4385,97 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 	}
 }
 
+// TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget verifies that task
+// checkpoints use the same symlink-safe blob path as session checkpoints.
+func TestWriteTemporaryTask_PreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tempDir := t.TempDir()
+	externalDir := t.TempDir()
+
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	if _, err := worktree.Add("README.md"); err != nil {
+		t.Fatalf("failed to add README: %v", err)
+	}
+	initialCommit, err := worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com"},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	secretContent := "SECRET DATA THAT MUST NOT ENTER TASK CHECKPOINTS"
+	secretFile := filepath.Join(externalDir, "token")
+	if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+		t.Fatalf("failed to write external secret: %v", err)
+	}
+
+	linkPath := filepath.Join(tempDir, "reported-link")
+	if err := os.Symlink(secretFile, linkPath); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
+	}
+
+	t.Chdir(tempDir)
+
+	store := NewGitStore(repo, DefaultV1Refs())
+	commitHash, err := store.WriteTemporaryTask(context.Background(), WriteTemporaryTaskOptions{
+		SessionID:      "test-session",
+		BaseCommit:     initialCommit.String(),
+		ToolUseID:      "toolu_symlink123",
+		AgentID:        "agent1",
+		ModifiedFiles:  []string{"reported-link"},
+		CheckpointUUID: "test-uuid",
+		CommitMessage:  "Task checkpoint",
+		AuthorName:     "Test",
+		AuthorEmail:    "test@test.com",
+	})
+	if err != nil {
+		t.Fatalf("WriteTemporaryTask() error = %v", err)
+	}
+
+	commit, err := repo.CommitObject(commitHash)
+	if err != nil {
+		t.Fatalf("failed to get commit object: %v", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatalf("failed to get tree: %v", err)
+	}
+
+	entry, err := tree.FindEntry("reported-link")
+	if err != nil {
+		t.Fatalf("reported-link not found in task checkpoint tree: %v", err)
+	}
+	if entry.Mode != filemode.Symlink {
+		t.Fatalf("reported-link mode = %v, want %v", entry.Mode, filemode.Symlink)
+	}
+
+	file, err := tree.File("reported-link")
+	if err != nil {
+		t.Fatalf("failed to get reported-link file: %v", err)
+	}
+	content, err := file.Contents()
+	if err != nil {
+		t.Fatalf("failed to read reported-link blob: %v", err)
+	}
+	if content != secretFile {
+		t.Fatalf("symlink blob content = %q, want link target %q", content, secretFile)
+	}
+	if content == secretContent {
+		t.Fatal("task checkpoint stored symlink target contents instead of link target")
+	}
+}
+
 // TestWriteTemporaryTask_ExcludesGitIgnoredFiles verifies that task (subagent)
 // checkpoints also filter out gitignored files. This is the same vulnerability as
 // the WriteTemporary path — a subagent that touches .env must not leak it into the
@@ -4203,9 +4483,10 @@ func TestAddDirectoryToEntries_SkipsSymlinkedDirectories(t *testing.T) {
 func TestWriteTemporaryTask_ExcludesGitIgnoredFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -4250,7 +4531,7 @@ func TestWriteTemporaryTask_ExcludesGitIgnoredFiles(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	baseCommit := initialCommit.String()
 
 	// Write task checkpoint where subagent reports .env as modified
@@ -4561,9 +4842,10 @@ func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID
 func initRepoForCheckpointTest(t *testing.T) *git.Repository {
 	t.Helper()
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("init git repo: %v", err)
+		t.Fatalf("open git repo: %v", err)
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -4593,7 +4875,7 @@ func TestWriteCommitted_PropagatesHasInvestigation(t *testing.T) {
 	t.Parallel()
 
 	repo := initRepoForCheckpointTest(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 
 	// First session: investigate session, sets HasInvestigation=true.
@@ -4646,7 +4928,7 @@ func TestCommittedMetadata_InvestigateFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	repo := initRepoForCheckpointTest(t)
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("11223344aabb")
 
 	if err := store.WriteCommitted(context.Background(), WriteCommittedOptions{

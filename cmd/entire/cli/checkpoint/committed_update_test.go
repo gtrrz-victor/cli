@@ -10,6 +10,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/redact"
 
 	"github.com/go-git/go-git/v6"
@@ -23,9 +24,10 @@ func setupRepoForUpdate(t *testing.T) (*git.Repository, *GitStore, id.Checkpoint
 	t.Helper()
 
 	tempDir := t.TempDir()
-	repo, err := git.PlainInit(tempDir, false)
+	testutil.InitRepo(t, tempDir)
+	repo, err := git.PlainOpen(tempDir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	worktree, err := repo.Worktree()
@@ -46,7 +48,7 @@ func setupRepoForUpdate(t *testing.T) (*git.Repository, *GitStore, id.Checkpoint
 		t.Fatalf("failed to commit: %v", err)
 	}
 
-	store := NewGitStore(repo)
+	store := NewGitStore(repo, DefaultV1Refs())
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 
 	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
@@ -486,7 +488,7 @@ func TestUpdateCommitted_UsesCorrectAuthor(t *testing.T) {
 			}
 
 			// Write initial checkpoint
-			store := NewGitStore(repo)
+			store := NewGitStore(repo, DefaultV1Refs())
 			cpID := id.MustCheckpointID("a1b2c3d4e5f6")
 			err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
 				CheckpointID: cpID,
