@@ -8,29 +8,19 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 )
 
-// TestFetchMetadataTreeOnly_DoesNotShallowRepo is a regression test for the
-// shallow-metadata false-disconnect.
-//
-// FetchMetadataTreeOnly resolves the latest checkpoint on resume/explain/attach.
-// It used to fetch with --depth=1, which adds the fetched tip to .git/shallow.
-// Once the metadata tip is a shallow boundary, a later `git merge-base` against
-// refs/remotes/origin/entire/checkpoints/v1 can't reach the real common
-// ancestor (it's below the boundary) and the disconnection check falsely
-// reports "no common ancestor" — aborting push and looping doctor.
-//
-// The fix drops --depth=1 and relies on blob filtering for cheapness, so the
-// fetch never creates a shallow boundary.
-func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
-	// Uses t.Chdir() — cannot run in parallel.
-
+// seedTreelessFetchRepo builds a bare origin with a `main` commit and a 2-commit
+// orphan entire/checkpoints/v1 branch, then makes a single-branch file:// clone
+// of main (a real fetch-pack, not the local hardlink optimization, so the
+// metadata branch and its history are absent until fetched). Returns the clone
+// dir and the origin metadata tip. The caller is responsible for t.Chdir.
+func seedTreelessFetchRepo(t *testing.T) (clonedDir, originTip string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	bareDir := filepath.Join(tmpDir, "bare.git")
 	localDir := filepath.Join(tmpDir, "local")
 
 	runGit(t, tmpDir, "init", "--bare", bareDir)
 
-	// Seed: a main commit plus an orphan metadata branch with two checkpoint
-	// commits, so a --depth=1 fetch would visibly truncate to one.
 	testutil.InitRepo(t, localDir)
 	testutil.WriteFile(t, localDir, "README.md", "hello")
 	testutil.GitAdd(t, localDir, "README.md")
@@ -49,18 +39,35 @@ func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
 	runGit(t, localDir, "push", "origin", "HEAD:refs/heads/main", paths.MetadataBranchName)
 	runGit(t, bareDir, "symbolic-ref", "HEAD", "refs/heads/main")
 
-	originTip := gitOutput(t, bareDir, "rev-parse", "refs/heads/"+paths.MetadataBranchName)
+	originTip = gitOutput(t, bareDir, "rev-parse", "refs/heads/"+paths.MetadataBranchName)
 
-	// Single-branch file:// clone: fetch only main, via a real fetch-pack rather
-	// than the local hardlink optimization. This leaves the metadata branch and
-	// its history absent until FetchMetadataTreeOnly fetches them, so the
-	// assertions actually exercise the tip-read (the old --depth=1 behavior
-	// would shallow the repo here).
-	clonedDir := filepath.Join(tmpDir, "cloned")
+	clonedDir = filepath.Join(tmpDir, "cloned")
 	runGit(t, tmpDir, "clone", "--single-branch", "--branch", "main", "file://"+bareDir, clonedDir)
 	runGit(t, clonedDir, "config", "user.email", "test@example.com")
 	runGit(t, clonedDir, "config", "user.name", "Test")
+	return clonedDir, originTip
+}
 
+func repoIsShallow(t *testing.T, dir string) bool {
+	t.Helper()
+	return gitOutput(t, dir, "rev-parse", "--is-shallow-repository") == "true"
+}
+
+// TestFetchMetadataTreeOnly_DoesNotShallowRepo is a regression test for the
+// shallow-metadata false-disconnect.
+//
+// FetchMetadataTreeOnly resolves the latest checkpoint on resume/explain/attach.
+// It used to fetch with --depth=1, which adds the fetched tip to .git/shallow.
+// Once the metadata tip is a shallow boundary, a later `git merge-base` against
+// refs/remotes/origin/entire/checkpoints/v1 can't reach the real common
+// ancestor (it's below the boundary) and the disconnection check falsely
+// reports "no common ancestor" — aborting push and looping doctor.
+//
+// The fix drops --depth=1 and relies on blob filtering for cheapness, so the
+// fetch never creates a shallow boundary.
+func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
+	// Uses t.Chdir() — cannot run in parallel.
+	clonedDir, originTip := seedTreelessFetchRepo(t)
 	t.Chdir(clonedDir)
 
 	if err := FetchMetadataTreeOnly(t.Context()); err != nil {
@@ -68,9 +75,9 @@ func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
 	}
 
 	// The fix: the tip-read must not leave the repo shallow. Under the old
-	// --depth=1 behavior this would be "true".
-	if shallow := gitOutput(t, clonedDir, "rev-parse", "--is-shallow-repository"); shallow != "false" {
-		t.Errorf("repo is shallow after tree-only fetch (--is-shallow-repository=%q); the tip-read must not create a shallow boundary", shallow)
+	// --depth=1 behavior this would be shallow.
+	if repoIsShallow(t, clonedDir) {
+		t.Errorf("repo is shallow after tree-only fetch; the tip-read must not create a shallow boundary")
 	}
 
 	// The full metadata history is present (two commits), not truncated to one.
@@ -83,5 +90,35 @@ func TestFetchMetadataTreeOnly_DoesNotShallowRepo(t *testing.T) {
 	localRef := "refs/heads/" + paths.MetadataBranchName
 	if got := gitOutput(t, clonedDir, "rev-parse", localRef); got != originTip {
 		t.Errorf("local primary ref %s = %q, want origin tip %q", localRef, got, originTip)
+	}
+}
+
+// TestFetchMetadataTreeOnly_HealsPriorShallow verifies that a repo already
+// shallowed by an older CLI (a lingering --depth=1 boundary on the metadata
+// branch) is unshallowed by the tip-read, so the poison doesn't persist
+// indefinitely for users who ran the buggy version.
+func TestFetchMetadataTreeOnly_HealsPriorShallow(t *testing.T) {
+	// Uses t.Chdir() — cannot run in parallel.
+	clonedDir, _ := seedTreelessFetchRepo(t)
+
+	// Reproduce the old behavior: a --depth=1 fetch grafts the metadata tip into
+	// .git/shallow, marking the repo shallow.
+	runGit(t, clonedDir, "fetch", "--depth=1", "origin",
+		"+refs/heads/"+paths.MetadataBranchName+":refs/remotes/origin/"+paths.MetadataBranchName)
+	if !repoIsShallow(t, clonedDir) {
+		t.Fatal("precondition: expected a shallow repo after --depth=1 fetch")
+	}
+
+	t.Chdir(clonedDir)
+	if err := FetchMetadataTreeOnly(t.Context()); err != nil {
+		t.Fatalf("FetchMetadataTreeOnly: %v", err)
+	}
+
+	if repoIsShallow(t, clonedDir) {
+		t.Errorf("repo still shallow after tree-only fetch; a prior --depth=1 boundary must be healed")
+	}
+	originRef := "refs/remotes/origin/" + paths.MetadataBranchName
+	if n := gitOutput(t, clonedDir, "rev-list", "--count", originRef); n != "2" {
+		t.Errorf("metadata history = %s commit(s) after heal, want 2 (full depth)", n)
 	}
 }

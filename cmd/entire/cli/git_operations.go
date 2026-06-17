@@ -407,8 +407,6 @@ func FetchAndCheckoutRemoteBranch(ctx context.Context, branchName string) error 
 // FetchMetadataBranch fetches the entire/checkpoints/v1 branch from origin
 // with full blob content. Used as a fallback by resume/explain when the
 // tree-only probe is insufficient (e.g. the metadata.json blob is missing).
-// Does NOT --unshallow: --unshallow is a global property of the clone, so on
-// shallow checkpoint repos it would also deepen unrelated branches.
 func FetchMetadataBranch(ctx context.Context) error {
 	return fetchMetadataFromOrigin(ctx, true /* noFilter */)
 }
@@ -427,6 +425,9 @@ func FetchMetadataBranch(ctx context.Context) error {
 // (see strategy.IsMetadataDisconnected). Fetching at full depth keeps the
 // remote-tracking ref connected; git fetches incrementally, so after the first
 // fetch only new commits/trees travel.
+//
+// It also unshallows a repo that an older CLI already shallowed, so the boundary
+// left by a prior --depth=1 fetch is removed rather than lingering forever.
 func FetchMetadataTreeOnly(ctx context.Context) error {
 	return fetchMetadataFromOrigin(ctx, false /* noFilter */)
 }
@@ -453,6 +454,13 @@ func fetchMetadataFromOrigin(ctx context.Context, noFilter bool) error {
 		RefSpecs: []string{refSpec},
 		NoTags:   true,
 		NoFilter: noFilter,
+		// Heal a repo that an older CLI already shallowed with --depth=1: the
+		// metadata tip is grafted in .git/shallow, which breaks merge-base
+		// connectivity checks for the metadata branch. remote.Fetch only adds
+		// --unshallow when the repo is actually shallow, so this is a no-op on a
+		// normally-cloned repo and only does work where a prior shallow boundary
+		// needs removing.
+		Unshallow: true,
 	})
 	if fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
