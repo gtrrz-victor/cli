@@ -902,8 +902,9 @@ func displayRestoredSessions(w io.Writer, sessions []strategy.RestoredSession) e
 }
 
 // resumeSingleSession restores a single session (fallback when multi-session restore fails).
-// Always overwrites existing session logs to ensure consistency with checkpoint state.
-// If force is false, prompts for confirmation when local log has newer timestamps.
+// By default it never overwrites an existing local session log — if one is present it is
+// kept and only the resume command is printed; --force overwrites it from the checkpoint.
+// A missing local log is always restored from the checkpoint.
 func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, sessionID string, checkpointID id.CheckpointID, repoRoot string, force bool) error {
 	sessionLogPath, err := resolveTranscriptPath(ctx, sessionID, ag)
 	if err != nil {
@@ -952,7 +953,7 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 	// and just print the resume command. --force overwrites it from the checkpoint.
 	if !force {
 		if _, statErr := os.Stat(sessionLogPath); statErr == nil {
-			fmt.Fprintf(w, "Session '%s' already has a local log — keeping it (use --force to overwrite from checkpoint).\n", sessionID)
+			fmt.Fprintf(w, "Keeping existing local session log for '%s' (use --force to overwrite from checkpoint).\n", sessionID)
 			fmt.Fprintf(w, "\nTo continue this session:\n")
 			fmt.Fprintf(w, "  %s\n", ag.FormatResumeCommand(sessionID))
 			return nil

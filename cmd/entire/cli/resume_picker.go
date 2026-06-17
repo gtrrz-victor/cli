@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -59,6 +60,15 @@ func (r resumableSession) unresumableReason() string {
 func runResumePicker(ctx context.Context, cmd *cobra.Command, force bool) error {
 	w := cmd.OutOrStdout()
 
+	// The picker is interactive. Without a usable terminal (CI, piped, agent
+	// subprocess) the form can't render — bail with guidance instead of hanging
+	// or erroring on /dev/tty, matching `entire attach`.
+	if !interactive.CanPromptInteractively() {
+		fmt.Fprintln(w, "The resume picker needs an interactive terminal.")
+		fmt.Fprintln(w, "Pass a branch instead, e.g. 'entire session resume <branch>'.")
+		return nil
+	}
+
 	states, err := strategy.ListSessionStates(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
@@ -96,8 +106,10 @@ func runResumePicker(ctx context.Context, cmd *cobra.Command, force bool) error 
 				Value(&selected),
 		),
 	)
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
+	if err := form.RunWithContext(ctx); err != nil {
+		// User cancelled (esc/Ctrl+C) or the context was cancelled — exit cleanly
+		// without a noisy error.
+		if errors.Is(err, huh.ErrUserAborted) || errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return fmt.Errorf("selection failed: %w", err)
@@ -255,6 +267,7 @@ func buildCheckpointBranchIndex(repo *git.Repository) map[string]string {
 	if err != nil {
 		return index
 	}
+	defer iter.Close()
 	forEachErr := iter.ForEach(func(ref *plumbing.Reference) error {
 		branchName := ref.Name().Short()
 		if branchName == defaultBranch || strings.HasPrefix(branchName, "entire/") {
@@ -415,8 +428,12 @@ func worktreeClashMessage(branch, otherPath, lastPrompt string) string {
 // other than the current one, returning that worktree's path.
 func branchCheckedOutElsewhere(ctx context.Context, branch string) (string, bool) {
 	rawRoot, rootErr := paths.WorktreeRoot(ctx)
-	if rootErr != nil {
-		rawRoot = ""
+	if rootErr != nil || rawRoot == "" {
+		// Can't determine the current worktree, so we can't reliably tell whether
+		// a branch is checked out *elsewhere*. Don't report a clash (which would
+		// falsely flag the current checkout); let the normal checkout proceed and
+		// surface any real conflict via git.
+		return "", false
 	}
 	currentRoot := normalizeWorktreePath(rawRoot)
 

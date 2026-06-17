@@ -2362,6 +2362,11 @@ func captureSessionBranch(repo *git.Repository, state *SessionState) {
 	}
 	if headRef.Name().IsBranch() {
 		state.Branch = headRef.Name().Short()
+	} else {
+		// Detached HEAD: clear any branch recorded on a previous turn so resume
+		// falls back to deriving the branch from checkpoint trailers instead of
+		// using a stale, now-incorrect value.
+		state.Branch = ""
 	}
 }
 
