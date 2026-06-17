@@ -1316,13 +1316,14 @@ func maybePostReviewToTrail(
 		verdict = combinedReviewNarratives(summary)
 	}
 	if verdict == "" {
-		fmt.Fprintln(out, "Nothing to post to the trail (no review output produced).")
+		fmt.Fprintln(out, "Nothing to report, so nothing was posted to the trail.")
 		return
 	}
 	if deps.PostReviewToTrail == nil {
-		fmt.Fprintln(out, "Trail output is not available here; keeping the review local.")
+		fmt.Fprintln(out, "Trail output is not available here; the review was kept local.")
 		return
 	}
+	// On success the hook prints its own confirmation and trail link.
 	if err := deps.PostReviewToTrail(ctx, out, profileName, verdict); err != nil {
 		fmt.Fprintf(out, "Could not post the review to the trail: %v\n", err)
 	}
