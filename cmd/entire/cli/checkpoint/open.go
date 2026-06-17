@@ -27,8 +27,7 @@ type Stores struct {
 	// committed reads and writes.
 	Primary *GitStore
 
-	temporary *GitStore
-	refs      CommittedRefs
+	refs CommittedRefs
 }
 
 // Open resolves the checkpoint storage topology and constructs the backing
@@ -42,9 +41,8 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 		store.SetBlobFetcher(opts.BlobFetcher)
 	}
 	return &Stores{
-		Primary:   store,
-		temporary: store,
-		refs:      refs,
+		Primary: store,
+		refs:    refs,
 	}, nil
 }
 
@@ -55,8 +53,10 @@ func resolveOpenRefs(ctx context.Context, opts OpenOptions) CommittedRefs {
 	return ResolveCommittedRefs(ctx)
 }
 
-// Temporary returns the git-backed temporary (shadow-branch) store.
-func (s *Stores) Temporary() *GitStore { return s.temporary }
+// Temporary returns the git-backed temporary (shadow-branch) store. It is the
+// same backing store as Primary; the name marks shadow-branch intent at the
+// call site.
+func (s *Stores) Temporary() *GitStore { return s.Primary }
 
 // Refs returns the resolved committed-ref topology.
 func (s *Stores) Refs() CommittedRefs { return s.refs }
