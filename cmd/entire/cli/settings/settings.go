@@ -1070,7 +1070,7 @@ func IsSetUp(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(settingsFileAbs)
+	_, err = os.Lstat(settingsFileAbs)
 	return err == nil
 }
 
