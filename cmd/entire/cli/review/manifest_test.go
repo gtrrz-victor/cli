@@ -843,7 +843,8 @@ func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThin
 	if a == b {
 		t.Fatalf("both inspectors linked to the same session %q; used-session tracking must keep them distinct", a)
 	}
-	if !(a == "sess-1" || a == "sess-2") || !(b == "sess-1" || b == "sess-2") {
+	valid := map[string]bool{"sess-1": true, "sess-2": true}
+	if !valid[a] || !valid[b] {
 		t.Errorf("sessions = {%q, %q}, want the two distinct sessions sess-1 and sess-2", a, b)
 	}
 }
