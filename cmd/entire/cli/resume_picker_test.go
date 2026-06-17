@@ -481,6 +481,48 @@ func TestBuildCheckpointBranchIndex_DefaultBranchCheckpoint(t *testing.T) {
 	}
 }
 
+// TestParseWorktreeForBranch covers the porcelain parser, including a detached
+// worktree (no branch line) that must not cause a stale or empty-path match.
+func TestParseWorktreeForBranch(t *testing.T) {
+	t.Parallel()
+
+	porcelain := strings.Join([]string{
+		"worktree /repo/main",
+		"HEAD 1111111111111111111111111111111111111111",
+		"branch refs/heads/main",
+		"",
+		"worktree /repo/wt-feat",
+		"HEAD 2222222222222222222222222222222222222222",
+		"branch refs/heads/feat",
+		"",
+		"worktree /repo/wt-detached",
+		"HEAD 3333333333333333333333333333333333333333",
+		"detached",
+		"",
+	}, "\n")
+
+	// A branch checked out in another worktree is found, with its path.
+	if path, ok := parseWorktreeForBranch(porcelain, "feat", "/repo/main"); !ok || path != "/repo/wt-feat" {
+		t.Errorf("feat: got (%q, %v), want (/repo/wt-feat, true)", path, ok)
+	}
+
+	// The current worktree's own branch is not "elsewhere".
+	if path, ok := parseWorktreeForBranch(porcelain, "main", "/repo/main"); ok {
+		t.Errorf("main from its own worktree should not match, got (%q, %v)", path, ok)
+	}
+
+	// A branch on no worktree is not found.
+	if _, ok := parseWorktreeForBranch(porcelain, "nope", "/repo/main"); ok {
+		t.Error("unknown branch should not match")
+	}
+
+	// A name equal to the detached worktree's path must not match (the detached
+	// block has no branch line, so nothing is attributed to it).
+	if _, ok := parseWorktreeForBranch(porcelain, "/repo/wt-detached", "/repo/main"); ok {
+		t.Error("detached worktree must not produce a branch match")
+	}
+}
+
 // TestBranchCheckedOutElsewhere verifies worktree awareness: a branch checked
 // out in another worktree is detected (with its path), while the current
 // worktree's own branch and unknown branches are not flagged.

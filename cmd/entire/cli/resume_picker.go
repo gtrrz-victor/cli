@@ -441,20 +441,32 @@ func branchCheckedOutElsewhere(ctx context.Context, branch string) (string, bool
 	defer cancel()
 
 	gitCmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
-	if rawRoot != "" {
-		gitCmd.Dir = rawRoot
-	}
+	gitCmd.Dir = rawRoot
 	out, err := gitCmd.Output()
 	if err != nil {
 		return "", false
 	}
 
+	return parseWorktreeForBranch(string(out), branch, currentRoot)
+}
+
+// parseWorktreeForBranch scans `git worktree list --porcelain` output and returns
+// the path of a worktree (other than currentRoot) that has branch checked out.
+//
+// Each worktree is a block beginning with a `worktree <path>` line and separated
+// by a blank line; a `branch <ref>` line only appears for non-detached worktrees.
+// curPath is reset at each block boundary and a branch line is only considered
+// when a worktree line was seen in the same block, so a detached worktree (no
+// branch line) can never pair a branch with a stale path or return an empty one.
+func parseWorktreeForBranch(porcelain, branch, currentRoot string) (string, bool) {
 	var curPath string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(porcelain, "\n") {
 		switch {
+		case line == "":
+			curPath = "" // block boundary
 		case strings.HasPrefix(line, "worktree "):
 			curPath = strings.TrimPrefix(line, "worktree ")
-		case strings.HasPrefix(line, "branch "):
+		case strings.HasPrefix(line, "branch ") && curPath != "":
 			name := strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
 			if name == branch && normalizeWorktreePath(curPath) != currentRoot {
 				return curPath, true
