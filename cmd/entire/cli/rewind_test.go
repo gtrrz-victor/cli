@@ -11,8 +11,9 @@ import (
 // legacyFallbackTranscriptPath reads its metadata-dir argument from the
 // attacker-influenceable Entire-Metadata commit trailer and feeds the result to
 // an unrooted os.ReadFile. A crafted trailer must not be able to redirect that
-// read outside the repository, so traversal and absolute/volume paths must fail
-// closed (return "").
+// read anywhere other than Entire-owned metadata under .entire/metadata/, so
+// anything outside that subtree (traversal, absolute/volume paths, and in-repo
+// or CWD-relative dirs like "notes" or ".") must fail closed (return "").
 func TestLegacyFallbackTranscriptPath(t *testing.T) {
 	t.Parallel()
 
@@ -57,6 +58,21 @@ func TestLegacyFallbackTranscriptPath(t *testing.T) {
 		{
 			name:        "absolute path fails closed",
 			metadataDir: "/etc/passwd",
+			want:        "",
+		},
+		{
+			name:        "in-repo dir outside .entire/metadata fails closed",
+			metadataDir: "notes",
+			want:        "",
+		},
+		{
+			name:        "current dir fails closed",
+			metadataDir: ".",
+			want:        "",
+		},
+		{
+			name:        "the metadata root itself (not a session dir) fails closed",
+			metadataDir: ".entire",
 			want:        "",
 		},
 	}

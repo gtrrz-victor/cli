@@ -669,20 +669,24 @@ func handleLogsOnlyResetNonInteractive(ctx context.Context, w, errW io.Writer, s
 // (<metadataDir>/full.log) used when checkpoint-storage and shadow-branch
 // restores are unavailable. metadataDir originates from the Entire-Metadata
 // commit trailer, which is attacker-influenceable, and the result is read via
-// copyFile -> os.ReadFile with no root containment on the source. Reject
-// absolute paths, Windows volume-relative paths, and any value that escapes its
-// base via traversal so a crafted trailer cannot redirect the read outside the
-// repository. Returns "" when the metadata dir is empty or unsafe, which makes
-// the local-file fallback fail closed.
+// copyFile -> os.ReadFile with no root containment on the source.
+//
+// Legitimate values are always Entire-owned metadata under .entire/metadata/, so
+// require the cleaned path to stay within that subtree. paths.IsSubpath also
+// rejects absolute, volume-relative, and traversing paths, so a crafted trailer
+// cannot redirect the read to arbitrary in-repo or CWD-relative locations (e.g.
+// "notes/full.log" or "."). Returns "" when the metadata dir is empty or unsafe,
+// which makes the local-file fallback fail closed. filepath.Join cleans the
+// result, avoiding surprising ".//a/../b" forms.
 func legacyFallbackTranscriptPath(metadataDir string) string {
 	if metadataDir == "" {
 		return ""
 	}
 	cleaned := filepath.Clean(metadataDir)
-	if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" || paths.IsRelativeTraversal(cleaned) {
+	if !paths.IsSubpath(paths.EntireMetadataDir, cleaned) {
 		return ""
 	}
-	return filepath.Join(metadataDir, paths.TranscriptFileNameLegacy)
+	return filepath.Join(cleaned, paths.TranscriptFileNameLegacy)
 }
 
 func restoreSessionTranscript(ctx context.Context, w io.Writer, transcriptFile, sessionID string, agent agentpkg.Agent) error {
