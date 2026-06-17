@@ -3,20 +3,26 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/cmd/entire/cli/trail"
 	"github.com/entireio/cli/internal/entireclient/clusterdiscovery"
 	"github.com/entireio/cli/internal/entireclient/contexts"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -102,6 +108,27 @@ func TestRunTrailListAllWithClient_ValidatesOptionsBeforeRepoLookup(t *testing.T
 	}
 	if got, want := err.Error(), "limit must be greater than 0"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestTrailRootPrintsHelp(t *testing.T) {
+	t.Parallel()
+	cmd := newTrailCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute trail root: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"Trails are branch-centric", "show", "list", "create"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("help output missing %q, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Not logged in") {
+		t.Fatalf("trail root should not perform auth/API work, got:\n%s", text)
 	}
 }
 
@@ -219,6 +246,81 @@ func TestTrailListQueryCapsLimitAtServerMax(t *testing.T) {
 	got := trailListQuery(nil, "", 5000)
 	if !strings.Contains(got, "limit=200") {
 		t.Fatalf("expected limit capped at 200, got %q", got)
+	}
+}
+
+func TestTrailListQueryWithOffsetIncludesOffset(t *testing.T) {
+	t.Parallel()
+	got := trailListQueryWithOffset(nil, "", 10, 20)
+	if !strings.Contains(got, "offset=20") {
+		t.Fatalf("expected offset in query, got %q", got)
+	}
+}
+
+func TestFindTrailPaginatesPastServerMax(t *testing.T) {
+	t.Parallel()
+	var offsets []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		offsets = append(offsets, offset)
+		trails := []api.TrailResource{}
+		if offset == 0 {
+			trails = make([]api.TrailResource, trailListServerMaxLimit)
+			for i := range trails {
+				trails[i] = api.TrailResource{ID: "trl_first_" + strconv.Itoa(i), Number: i + 1, Branch: "old/" + strconv.Itoa(i)}
+			}
+		} else if offset == trailListServerMaxLimit {
+			trails = []api.TrailResource{{ID: "trl_target", Number: 201, Branch: "target"}}
+		}
+		_ = json.NewEncoder(w).Encode(api.TrailListResponse{Trails: trails, Total: trailListServerMaxLimit + 1})
+	}))
+	defer srv.Close()
+
+	client := api.NewClientWithBaseURL("tok", srv.URL)
+	found, err := findTrailByBranch(context.Background(), client, "gh", "acme", "repo", "target")
+	if err != nil {
+		t.Fatalf("findTrailByBranch: %v", err)
+	}
+	if found == nil || found.ID != "trl_target" {
+		t.Fatalf("found = %#v, want trl_target", found)
+	}
+	if len(offsets) != 2 || offsets[0] != 0 || offsets[1] != trailListServerMaxLimit {
+		t.Fatalf("offsets = %v, want [0 %d]", offsets, trailListServerMaxLimit)
+	}
+}
+
+func TestBuildTrailUpdateRequestCanClearBody(t *testing.T) {
+	t.Parallel()
+	req := buildTrailUpdateRequest(&api.TrailResource{Body: "old"}, trailUpdateInputs{BodyChanged: true, Body: ""})
+	if req.Body == nil {
+		t.Fatal("Body pointer is nil, want empty string pointer")
+	}
+	if *req.Body != "" {
+		t.Fatalf("Body = %q, want empty string", *req.Body)
+	}
+}
+
+func TestBuildTrailUpdateRequestIncludesPhase(t *testing.T) {
+	t.Parallel()
+	req := buildTrailUpdateRequest(&api.TrailResource{}, trailUpdateInputs{PhaseChanged: true, Phase: "has_code"})
+	if req.Phase == nil || *req.Phase != "has_code" {
+		t.Fatalf("Phase = %#v, want has_code pointer", req.Phase)
+	}
+}
+
+func TestValidateTrailUpdateFieldsRejectsEmptyTitle(t *testing.T) {
+	t.Parallel()
+	if err := validateTrailUpdateFields(trailUpdateInputs{TitleChanged: true, Title: "   "}); err == nil {
+		t.Fatal("expected empty title to be rejected")
+	}
+}
+
+func TestTrailCreateAndUpdateRejectUnexpectedArgs(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range []*cobra.Command{newTrailCreateCmd(), newTrailUpdateCmd()} {
+		if err := cmd.Args(cmd, []string{"unexpected"}); err == nil {
+			t.Fatalf("%s accepted an unexpected positional arg", cmd.Name())
+		}
 	}
 }
 
@@ -374,6 +476,26 @@ func TestPrintTrailListSingleStatusFilterOmitsStatusColumn(t *testing.T) {
 
 	if text := out.String(); strings.Contains(text, "STATUS") {
 		t.Fatalf("single-status list should not repeat the status as a column, got:\n%s", text)
+	}
+}
+
+func TestPrintTrailListShowsPhaseWhenPresent(t *testing.T) {
+	t.Parallel()
+	alice := trailListTestAuthorAlice
+	var out bytes.Buffer
+	printTrailList(&out, []*trail.Metadata{
+		{Branch: "feat/a", Status: trail.StatusOpen, Phase: "has_code", Author: &trail.Author{Login: &alice}, UpdatedAt: time.Now()},
+	}, trailListDisplayOptions{
+		RequestedAuthor: "",
+		StatusFilters:   []trail.Status{trail.StatusOpen},
+		TotalMatched:    1,
+	})
+
+	text := out.String()
+	for _, want := range []string{"PHASE", "has code"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, text)
+		}
 	}
 }
 

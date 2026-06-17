@@ -45,6 +45,7 @@ var errTrailReviewDefaultTargetNotFound = errors.New("default trail finding targ
 
 type trailReviewListOptions struct {
 	Status           string
+	StatusChanged    bool
 	Severity         string
 	Stale            string
 	IncludeDismissed bool
@@ -83,6 +84,7 @@ discover a trail selector first.`,
 			if err != nil {
 				return err
 			}
+			opts.StatusChanged = cmd.Flags().Changed("status")
 			return runTrailReviewDashboard(cmd, selector, opts)
 		},
 	}
@@ -130,6 +132,7 @@ func newTrailFindingListCmd(targetOpts *trailReviewTargetOptions) *cobra.Command
 			if err != nil {
 				return err
 			}
+			opts.StatusChanged = cmd.Flags().Changed("status")
 			return runTrailReviewComments(cmd, selector, opts)
 		},
 	}
@@ -264,6 +267,11 @@ func newTrailReviewWatchCmd(targetOpts *trailReviewTargetOptions) *cobra.Command
 }
 
 func runTrailReviewDashboard(cmd *cobra.Command, selector string, opts trailReviewListOptions) error {
+	var err error
+	opts, err = normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		return err
+	}
 	client, target, err := authenticatedTrailReviewTarget(cmd, selector)
 	if err != nil {
 		if strings.TrimSpace(selector) == "" && errors.Is(err, errTrailReviewDefaultTargetNotFound) {
@@ -290,6 +298,11 @@ func runTrailReviewDashboard(cmd *cobra.Command, selector string, opts trailRevi
 }
 
 func runTrailReviewComments(cmd *cobra.Command, selector string, opts trailReviewListOptions) error {
+	var err error
+	opts, err = normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		return err
+	}
 	client, target, err := authenticatedTrailReviewTarget(cmd, selector)
 	if err != nil {
 		return err
@@ -496,12 +509,82 @@ func parseTrailReviewNumberSelector(selector string) (int, bool) {
 	return n, true
 }
 
-func fetchTrailReviewComments(ctx context.Context, client *api.Client, trailID string, opts trailReviewListOptions) ([]api.TrailReviewComment, bool, error) {
+func normalizeTrailReviewListOptions(opts trailReviewListOptions) (trailReviewListOptions, error) {
 	if opts.Limit <= 0 {
-		return nil, false, errors.New("limit must be greater than 0")
+		return opts, errors.New("limit must be greater than 0")
 	}
 	if opts.Offset < 0 {
-		return nil, false, errors.New("offset must be non-negative")
+		return opts, errors.New("offset must be non-negative")
+	}
+	status, err := normalizeTrailReviewStatusFilter(opts.Status)
+	if err != nil {
+		return opts, err
+	}
+	opts.Status = status
+	severity, err := normalizeCommaSet(opts.Severity, "severity", map[string]bool{
+		trailReviewSeverityHigh: true, trailReviewSeverityMedium: true, trailReviewSeverityLow: true,
+	})
+	if err != nil {
+		return opts, err
+	}
+	opts.Severity = severity
+	if stale := strings.TrimSpace(opts.Stale); stale != "" {
+		switch stale {
+		case trailReviewStaleCurrent, "stale", trailReviewStaleAny:
+		default:
+			return opts, fmt.Errorf("invalid stale filter %q: valid values are current, stale, any", opts.Stale)
+		}
+		opts.Stale = stale
+	}
+	// `--include-dismissed` should do what it says for the common case: when the
+	// caller did not explicitly choose a status, do not keep the default open-only
+	// status filter that would still hide dismissed findings.
+	if opts.IncludeDismissed && !opts.StatusChanged && strings.TrimSpace(opts.Status) == trailReviewStatusOpen {
+		opts.Status = trailReviewStatusAny
+	}
+	return opts, nil
+}
+
+func normalizeTrailReviewStatusFilter(filter string) (string, error) {
+	filter = strings.TrimSpace(filter)
+	if filter == "" || filter == trailReviewStatusAny {
+		return filter, nil
+	}
+	return normalizeCommaSet(filter, "status", map[string]bool{
+		trailReviewStatusOpen: true, trailReviewStatusResolved: true, trailReviewStatusDismissed: true,
+	})
+}
+
+func normalizeCommaSet(filter, name string, valid map[string]bool) (string, error) {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return "", nil
+	}
+	parts := strings.Split(filter, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			return "", fmt.Errorf("invalid %s filter %q: empty value", name, filter)
+		}
+		if !valid[value] {
+			vals := make([]string, 0, len(valid))
+			for v := range valid {
+				vals = append(vals, v)
+			}
+			sort.Strings(vals)
+			return "", fmt.Errorf("invalid %s %q: valid values are %s", name, value, strings.Join(vals, ", "))
+		}
+		out = append(out, value)
+	}
+	return strings.Join(out, ","), nil
+}
+
+func fetchTrailReviewComments(ctx context.Context, client *api.Client, trailID string, opts trailReviewListOptions) ([]api.TrailReviewComment, bool, error) {
+	var err error
+	opts, err = normalizeTrailReviewListOptions(opts)
+	if err != nil {
+		return nil, false, err
 	}
 	resp, err := client.Get(ctx, trailReviewCommentsPath(trailID, opts))
 	if err != nil {
