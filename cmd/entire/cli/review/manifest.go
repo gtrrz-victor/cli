@@ -479,11 +479,16 @@ func reviewRunModelMatches(want, got string) bool {
 // "claude-sonnet-4-5" while rejecting variant suffixes like "gpt-4o-mini" and
 // bare version fragments like "4-5".
 //
+// `short` may appear at any offset in `long`, so a provider/family prefix on
+// the recorded model does not block a match: "claude-sonnet" matches
+// "anthropic-claude-sonnet-4-5" at offset 1 (the next component "4" is numeric).
+//
 // Equal-length cases are intentionally rejected here (`len(short) >= len(long)`):
-// identical ids already returned true via reviewRunModelMatches's `want == got`
-// short-circuit before this helper runs, and two *distinct* equal-length ids
-// (e.g. "claude-sonnet" vs "claude-opus") are different models that must not
-// match. Legitimate matches are always strict subsets, so `short` is shorter.
+// two equal-length component arrays are either identical — already matched via
+// reviewRunModelMatches's `want == got` short-circuit before this helper runs,
+// since identical arrays imply identical normalized strings — or genuinely
+// different models (e.g. "claude-sonnet" vs "claude-opus") that must not match.
+// A strict subset needs a longer container, so `short` is always shorter.
 func modelComponentsMatch(short, long []string) bool {
 	if len(short) == 0 || len(short) >= len(long) {
 		return false

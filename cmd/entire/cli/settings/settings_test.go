@@ -1190,8 +1190,14 @@ func TestMergeReviewProfiles_PureAndPrecedence(t *testing.T) {
 		t.Errorf("src mutated: len = %d, want 2", len(src))
 	}
 
-	// Both empty returns without allocating a non-nil map surprise.
-	if got := mergeReviewProfiles(nil, nil); got != nil {
-		t.Errorf("merge(nil,nil) = %v, want nil", got)
+	// The result is always a fresh, non-nil map, even when both inputs are
+	// empty/nil, so callers never receive nil from a non-nil input.
+	if got := mergeReviewProfiles(nil, nil); got == nil {
+		t.Error("merge(nil, nil) should return a non-nil empty map, got nil")
+	} else if len(got) != 0 {
+		t.Errorf("merge(nil, nil) = %v, want empty", got)
+	}
+	if got := mergeReviewProfiles(nil, map[string]ReviewProfileConfig{}); got == nil {
+		t.Error("merge(nil, emptyNonNil) should return a non-nil empty map, got nil")
 	}
 }

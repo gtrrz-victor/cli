@@ -685,11 +685,10 @@ func saveClonePreferencesToFile(prefs *ClonePreferences, filePath string) error 
 // hiding the others' profiles.
 //
 // Neither input map is mutated: callers (and the maps they own, e.g. a freshly
-// loaded ClonePreferences) can rely on their maps being left untouched.
+// loaded ClonePreferences) can rely on their maps being left untouched. The
+// result is always a fresh, non-nil map (empty when both inputs are empty), so
+// callers never receive nil from a non-nil input.
 func mergeReviewProfiles(base, src map[string]ReviewProfileConfig) map[string]ReviewProfileConfig {
-	if len(base) == 0 && len(src) == 0 {
-		return base
-	}
 	out := make(map[string]ReviewProfileConfig, len(base)+len(src))
 	for name, cfg := range base {
 		out[name] = cfg
