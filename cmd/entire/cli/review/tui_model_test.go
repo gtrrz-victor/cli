@@ -1204,3 +1204,20 @@ func TestTUIModel_PostFinishInDetailMode_EscReturnsToDashboard(t *testing.T) {
 		}
 	}
 }
+
+func TestTUIModel_AutoExitsOnRunFinished(t *testing.T) {
+	t.Parallel()
+	m := newTestModel([]string{"agent-a"}, func() {})
+	updated, cmd := m.Update(runFinishedMsg{summary: reviewtypes.RunSummary{}})
+	if !mustModel(t, updated).finished {
+		t.Fatal("model should be finished after runFinishedMsg")
+	}
+	// The TUI must exit on its own when the run finishes (no keypress) so the
+	// judge (SynthesisSink) and the narrative dump run automatically.
+	if cmd == nil {
+		t.Fatal("runFinishedMsg should return a quit command (auto-exit), got nil")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("runFinishedMsg command = %T, want tea.QuitMsg", cmd())
+	}
+}

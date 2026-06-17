@@ -177,7 +177,12 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.rows[i].runEnd = now
 			}
 		}
-		return m, nil
+		// Exit as soon as the run completes — do NOT wait for a keypress. The
+		// judge (SynthesisSink) and the narrative dump run after the TUI tears
+		// down (they write to stdout, which can't happen over the alt-screen), so
+		// blocking here would force the user to press Enter just to start the
+		// final consolidation. The dump renders the same per-agent outcome below.
+		return m, tea.Quit
 
 	case tickMsg:
 		if m.finished {

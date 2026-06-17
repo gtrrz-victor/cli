@@ -146,16 +146,15 @@ func (s *TUISink) AgentEvent(agent string, ev reviewtypes.Event) {
 }
 
 // RunFinished (Sink interface): mark the run complete and send the final
-// summary message. The TUI shows the dashboard one more frame with the
-// terminal statuses, then waits for the user to dismiss it. After a run
-// completes, dismissal requires an explicit exit key (q/Esc/Enter/Ctrl+C);
-// Ctrl+O still drills into agent buffers for post-mortem inspection. Other
-// keys are no-ops so users can navigate the completed run without
-// accidentally dismissing.
+// summary message. On completion the TUI exits on its own — it does NOT wait
+// for a keypress — so the judge (SynthesisSink) and the narrative dump run
+// automatically instead of forcing the user to press Enter to start the final
+// consolidation.
 //
-// IMPORTANT: RunFinished blocks until the user dismisses so that post-run
-// sinks (e.g. DumpSink) render their narrative AFTER the TUI has exited
-// and the terminal is back in normal mode.
+// RunFinished still blocks until the Bubble Tea program has exited so that
+// post-run sinks (DumpSink, SynthesisSink) render AFTER the TUI has torn down
+// the alt-screen and the terminal is back in normal mode; that block now ends
+// as soon as the run finishes rather than on an explicit dismissal key.
 func (s *TUISink) RunFinished(summary reviewtypes.RunSummary) {
 	s.mu.Lock()
 	if s.finished {
