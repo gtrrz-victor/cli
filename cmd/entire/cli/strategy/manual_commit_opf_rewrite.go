@@ -287,13 +287,13 @@ func RewriteUnpushedV1WithOPF(ctx context.Context, repo *git.Repository, target 
 				return plumbing.ZeroHash, fmt.Errorf("load tree for %s: %w", c.Hash.String()[:7], err)
 			}
 			pc.startIdx = len(globalBlobs)
-			// Whole-tree redaction (empty shardPath): each v1 commit tree is
-			// cumulative, so the newest commit can still carry older shards
-			// that were 7-layer-only before this rewrite. Redacting the whole
-			// tree for every unapplied commit keeps the final rewritten tip
-			// from reintroducing an un-OPF-redacted older shard. collect and
-			// apply MUST pass the same scope so cached keys line up.
-			if err := collectTreeBlobs(repo, tree, "", "", &pc.blobs, &pc.paths); err != nil {
+			// Whole-tree redaction: each v1 commit tree is cumulative, so the
+			// newest commit can still carry older shards that were 7-layer-only
+			// before this rewrite. Redacting the whole tree for every unapplied
+			// commit keeps the final rewritten tip from reintroducing an
+			// un-OPF-redacted older shard. collect and apply walk the tree the
+			// same way so the cached keys line up.
+			if err := collectTreeBlobs(repo, tree, "", &pc.blobs, &pc.paths); err != nil {
 				return plumbing.ZeroHash, fmt.Errorf("collect blobs %s: %w", c.Hash.String()[:7], err)
 			}
 			for _, b := range pc.blobs {
@@ -479,8 +479,8 @@ func listUnpushedV1Commits(repo *git.Repository, localTip, remoteTip plumbing.Ha
 // Correctness note: each v1 commit tree is cumulative. During a multi-commit
 // rewrite, the newest original commit can still contain older shards that were
 // 7-layer-only before this rewrite. The collect/apply walkers redact the whole
-// tree (empty shardPath) for every unapplied commit so the final rewritten tip
-// cannot reintroduce an older un-OPF-redacted shard.
+// tree for every unapplied commit so the final rewritten tip cannot
+// reintroduce an older un-OPF-redacted shard.
 func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *object.Commit, parent plumbing.Hash, redactedByPath map[string][]byte) (plumbing.Hash, error) {
 	newTree := oldCommit.TreeHash
 	if !trailers.HasOPFApplied(oldCommit.Message) {
@@ -488,9 +488,9 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("load tree: %w", err)
 		}
-		// Whole-tree redaction (empty shardPath) — see the collect pass in
+		// Whole-tree redaction — see the collect pass in
 		// RewriteUnpushedV1WithOPF for why we never scope to a single shard.
-		newTree, err = rebuildTreeWithCachedRedaction(repo, tree, "", "", redactedByPath)
+		newTree, err = rebuildTreeWithCachedRedaction(repo, tree, "", redactedByPath)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
@@ -524,29 +524,6 @@ func rebuildV1Commit(ctx context.Context, repo *git.Repository, oldCommit *objec
 	return hash, nil
 }
 
-// parseShardPathFromCommitMessage extracts the sharded path
-// "<id[:2]>/<id[2:]>" from a "Checkpoint: <id>" subject line.
-// Returns "" when the subject doesn't match (bootstrap commits, or
-// historical commits with a different format) — callers walk the
-// whole tree in that case.
-func parseShardPathFromCommitMessage(message string) string {
-	firstLine, _, _ := strings.Cut(message, "\n")
-	const prefix = "Checkpoint: "
-	if !strings.HasPrefix(firstLine, prefix) {
-		return ""
-	}
-	id := strings.TrimSpace(firstLine[len(prefix):])
-	if len(id) != 12 {
-		return ""
-	}
-	for _, c := range id {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return ""
-		}
-	}
-	return id[:2] + "/" + id[2:]
-}
-
 // isRedactableBlobName reports whether a file at the given name should
 // flow through OPF. The policy is fail-closed: every regular file
 // inside the shard is redacted EXCEPT content_hash.txt, which is
@@ -567,14 +544,16 @@ func isRedactableBlobName(name string) bool {
 	return name != paths.ContentHashFileName
 }
 
-// collectTreeBlobs walks tree and appends every redactable blob's
-// content + full tree path to the parallel output slices. The same
-// shard-scoping rules as rebuildTreeWithCachedRedaction apply.
+// collectTreeBlobs walks the whole tree and appends every redactable
+// blob's content + full tree path to the parallel output slices. It
+// walks the entire tree (no shard scoping — see RewriteUnpushedV1WithOPF
+// for why); rebuildTreeWithCachedRedaction applies the same walk so the
+// cached keys line up.
 //
 // blobs[i] and paths[i] correspond: paths[i] is the full path within
 // the tree (e.g. "ab/cd.../0/full.jsonl"), used later by the apply
 // walker to find each blob's redacted bytes in the cached map.
-func collectTreeBlobs(repo *git.Repository, tree *object.Tree, pathPrefix, shardPath string, blobs *[]redact.NamedBlob, paths *[]string) error {
+func collectTreeBlobs(repo *git.Repository, tree *object.Tree, pathPrefix string, blobs *[]redact.NamedBlob, paths *[]string) error {
 	for _, e := range tree.Entries {
 		switch e.Mode { //nolint:exhaustive // non-tree/blob modes are unreachable here
 		case filemode.Dir:
@@ -582,20 +561,14 @@ func collectTreeBlobs(repo *git.Repository, tree *object.Tree, pathPrefix, shard
 			if pathPrefix != "" {
 				subPath = pathPrefix + "/" + e.Name
 			}
-			if !shouldDescend(subPath, shardPath) {
-				continue
-			}
 			subTree, err := repo.TreeObject(e.Hash)
 			if err != nil {
 				return fmt.Errorf("load subtree %s/%s: %w", pathPrefix, e.Name, err)
 			}
-			if err := collectTreeBlobs(repo, subTree, subPath, shardPath, blobs, paths); err != nil {
+			if err := collectTreeBlobs(repo, subTree, subPath, blobs, paths); err != nil {
 				return err
 			}
 		case filemode.Regular, filemode.Executable:
-			if !insideShard(pathPrefix, shardPath) {
-				continue
-			}
 			if !isRedactableBlobName(e.Name) {
 				continue
 			}
@@ -614,21 +587,16 @@ func collectTreeBlobs(repo *git.Repository, tree *object.Tree, pathPrefix, shard
 	return nil
 }
 
-// rebuildTreeWithCachedRedaction walks tree and produces a new tree
-// using the precomputed redactedByPath map for redactable blobs.
+// rebuildTreeWithCachedRedaction walks the whole tree and produces a new
+// tree using the precomputed redactedByPath map for redactable blobs.
 // content_hash.txt files are recomputed in a second pass against the
 // new full.jsonl in the same directory.
 //
-// shardPath scopes the walk: only files at paths starting with
-// shardPath get redacted; other shards (and the root-level entries
-// outside the shard) are copied verbatim. Empty shardPath means walk
-// everything (used for bootstrap/unknown-subject commits).
-//
-// Path-specific behavior (when in the target shard):
+// Path-specific behavior:
 //   - content_hash.txt → SHA256 of the sibling full.jsonl's new bytes
 //     (deferred; not redacted itself)
 //   - everything else → bytes looked up in redactedByPath. The
-//     fail-closed policy redacts ANY regular file inside the shard,
+//     fail-closed policy redacts ANY regular file except content_hash.txt,
 //     not just a closed allowlist of suffixes — a future blob type
 //     (.md prose, agent dumps, no-extension transcript blobs) is
 //     covered by default rather than slipping through. The collect
@@ -641,7 +609,7 @@ func collectTreeBlobs(repo *git.Repository, tree *object.Tree, pathPrefix, shard
 // OR a concurrent storage mutation that changed the tree between
 // passes; we abort the rewrite rather than silently shipping
 // unredacted content with the OPF-applied trailer.
-func rebuildTreeWithCachedRedaction(repo *git.Repository, tree *object.Tree, pathPrefix, shardPath string, redactedByPath map[string][]byte) (plumbing.Hash, error) {
+func rebuildTreeWithCachedRedaction(repo *git.Repository, tree *object.Tree, pathPrefix string, redactedByPath map[string][]byte) (plumbing.Hash, error) {
 	entries := make([]object.TreeEntry, 0, len(tree.Entries))
 	// deferredHashes records indexes of content_hash.txt entries we
 	// need to recompute after the full.jsonl in the same dir is built.
@@ -660,38 +628,24 @@ func rebuildTreeWithCachedRedaction(repo *git.Repository, tree *object.Tree, pat
 			if pathPrefix != "" {
 				subPath = pathPrefix + "/" + e.Name
 			}
-			// Shard-scoping: only descend into directories that lead
-			// to the target shard, the shard itself, or its
-			// descendants. Other shard subtrees stay byte-identical.
-			if !shouldDescend(subPath, shardPath) {
-				entries = append(entries, e)
-				continue
-			}
 			subTree, err := repo.TreeObject(e.Hash)
 			if err != nil {
 				return plumbing.ZeroHash, fmt.Errorf("load subtree %s/%s: %w", pathPrefix, e.Name, err)
 			}
-			newSub, err := rebuildTreeWithCachedRedaction(repo, subTree, subPath, shardPath, redactedByPath)
+			newSub, err := rebuildTreeWithCachedRedaction(repo, subTree, subPath, redactedByPath)
 			if err != nil {
 				return plumbing.ZeroHash, err
 			}
 			entries = append(entries, object.TreeEntry{Name: e.Name, Mode: e.Mode, Hash: newSub})
 
 		case filemode.Regular, filemode.Executable:
-			// Outside the target shard: copy verbatim. Inside (or when
-			// shardPath is empty for the bootstrap fallback): redact
-			// per file type.
-			if !insideShard(pathPrefix, shardPath) {
-				entries = append(entries, e)
-				continue
-			}
 			switch e.Name {
 			case paths.ContentHashFileName:
 				deferredHashes = append(deferredHashes, deferred{idx: len(entries), entryName: e.Name, entryMode: e.Mode})
 				entries = append(entries, e) // placeholder; fixed in second pass
 			default:
-				// Inverted policy: every regular file inside the shard
-				// except content_hash.txt expects redacted bytes from the
+				// Inverted policy: every regular file except
+				// content_hash.txt expects redacted bytes from the
 				// collect pass. A missing key means the collect pass
 				// didn't visit this path — either the storage changed
 				// between passes or the two walkers disagree on which
@@ -745,40 +699,6 @@ func rebuildTreeWithCachedRedaction(repo *git.Repository, tree *object.Tree, pat
 		return plumbing.ZeroHash, fmt.Errorf("store tree: %w", err)
 	}
 	return hash, nil
-}
-
-// shouldDescend reports whether the walker should recurse into a
-// directory at path. With an empty shardPath we descend everywhere
-// (bootstrap fallback). Otherwise we descend only into the target
-// shard, its ancestors (so we can reach it), and its descendants.
-func shouldDescend(path, shardPath string) bool {
-	if shardPath == "" || path == "" {
-		// shardPath="" means "no scoping" (bootstrap fallback);
-		// path=="" is the root, which is the ancestor of every shard.
-		return true
-	}
-	if path == shardPath {
-		return true
-	}
-	// ancestor of shardPath: shardPath starts with path + "/"
-	if strings.HasPrefix(shardPath+"/", path+"/") {
-		return true
-	}
-	// descendant of shardPath: path starts with shardPath + "/"
-	return strings.HasPrefix(path+"/", shardPath+"/")
-}
-
-// insideShard reports whether file blobs at pathPrefix should be
-// redacted. Empty shardPath means "redact everywhere"; otherwise the
-// path must equal shardPath or be a descendant of it.
-func insideShard(pathPrefix, shardPath string) bool {
-	if shardPath == "" {
-		return true
-	}
-	if pathPrefix == shardPath {
-		return true
-	}
-	return strings.HasPrefix(pathPrefix+"/", shardPath+"/")
 }
 
 func readBlob(repo *git.Repository, hash plumbing.Hash) ([]byte, error) {
