@@ -585,7 +585,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		}
 	}
 
-	onDefault, currentBranch, _ := isOnDefaultBranchRepo(repo) //nolint:errcheck // best-effort detection; reuse the already-open repo
+	_, currentBranch, _ := isOnDefaultBranchRepo(repo) //nolint:errcheck // best-effort; reuse the open repo for the current branch name
 	interactive := !cmd.Flags().Changed("title") && !cmd.Flags().Changed("branch")
 
 	if interactive {
@@ -596,8 +596,8 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 	} else {
 		// Non-interactive: derive missing values from provided flags. With
 		// --branch omitted, use the checked-out branch (a feature branch); only
-		// slug a new branch from the title when starting work on the default branch.
-		branch = resolveCreateBranch(branch, currentBranch, title, onDefault, cmd.Flags().Changed("title"))
+		// slug a new branch from the title when the checked-out branch is the base.
+		branch = resolveCreateBranch(branch, currentBranch, base, title, cmd.Flags().Changed("title"))
 		if title == "" {
 			title = trail.HumanizeBranchName(branch)
 		}
@@ -1315,15 +1315,16 @@ func checkTrailResponse(resp *http.Response) error {
 
 // resolveCreateBranch picks the branch a non-interactive `trail create` targets.
 // An explicit --branch always wins. Otherwise, on a feature branch it uses the
-// checked-out branch; on the default branch it derives a new branch from the
-// title when one was given (starting fresh work), else falls back to current.
-func resolveCreateBranch(branchFlag, currentBranch, title string, onDefaultBranch, titleProvided bool) string {
+// checked-out branch; when the checked-out branch IS the base (the trail's
+// target/default branch) — or HEAD is detached — it derives a new branch from
+// the title when one was given (starting fresh work), else falls back to current.
+// Comparing against the already-resolved base keeps this consistent with how
+// `base` itself was detected (avoids a second, divergent default-branch lookup).
+func resolveCreateBranch(branchFlag, currentBranch, base, title string, titleProvided bool) string {
 	if branchFlag != "" {
 		return branchFlag
 	}
-	// On the default branch — or a detached HEAD, where there is no usable
-	// checked-out branch — start work on a branch derived from the title.
-	if titleProvided && (onDefaultBranch || currentBranch == "") {
+	if titleProvided && (currentBranch == base || currentBranch == "") {
 		return slugifyTitle(title)
 	}
 	return currentBranch
