@@ -9,9 +9,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -21,6 +24,13 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
+)
+
+const (
+	reviewTrailGranularityWholeChange = "whole_change"
+	reviewTrailGranularityFile        = "file"
+	reviewTrailGranularityLine        = "line"
+	reviewTrailGranularityRange       = "range"
 )
 
 // buildReviewDeps builds the review.Deps struct used by review.NewCommand.
@@ -46,6 +56,10 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 		return errors.New("no review output to post")
 	}
 	inputs := reviewTrailFindingInputs(profileName, verdict)
+	if len(inputs) == 0 {
+		fmt.Fprintln(out, "Nothing to report, so nothing was posted to the trail.")
+		return nil
+	}
 	return runAuthenticatedDataAPI(ctx, out, false, func(ctx context.Context, client *api.Client) error {
 		target, err := resolveTrailReviewTarget(ctx, client, "")
 		if err != nil {
@@ -78,19 +92,57 @@ func reviewTrailFindingInput(profileName, verdict string) api.TrailReviewComment
 	return reviewTrailFindingInputWithKind(profileName, verdict, "verdict")
 }
 
-// reviewTrailFindingInputs turns a final review verdict into trail findings. If
-// the verdict contains multiple top-level bullet findings, post them separately
-// so a custom or weak judge prompt cannot create one mega-finding on the trail.
+// reviewTrailFindingInputs turns a final review verdict into trail findings.
+// It first accepts the runner-style last JSON line format
+// {"summary":"","comments":[...]}; when absent, it falls back to splitting
+// top-level markdown bullets. This keeps trail output structurally correct even
+// when custom judge prompts produce prose.
 func reviewTrailFindingInputs(profileName, verdict string) []api.TrailReviewCommentInput {
+	if inputs, ok := reviewTrailFindingInputsFromJSON(verdict); ok {
+		return inputs
+	}
 	items := splitReviewVerdictFindings(verdict)
 	if len(items) <= 1 {
 		return []api.TrailReviewCommentInput{reviewTrailFindingInput(profileName, verdict)}
 	}
 	inputs := make([]api.TrailReviewCommentInput, 0, len(items))
 	for _, item := range items {
-		inputs = append(inputs, reviewTrailFindingInputWithKind(profileName, item, "finding"))
+		input := reviewTrailFindingInputWithKind(profileName, item, "finding")
+		enrichReviewTrailFindingInputFromMarkdown(&input, item)
+		inputs = append(inputs, input)
 	}
 	return inputs
+}
+
+func reviewTrailFindingInputsFromJSON(verdict string) ([]api.TrailReviewCommentInput, bool) {
+	line := lastNonEmptyLine(verdict)
+	if !strings.HasPrefix(line, "{") || !strings.Contains(line, "\"comments\"") {
+		return nil, false
+	}
+	var payload reviewTrailJSONOutput
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		return nil, false
+	}
+	inputs := make([]api.TrailReviewCommentInput, 0, len(payload.Comments))
+	for _, comment := range payload.Comments {
+		body := strings.TrimSpace(comment.Body)
+		if body == "" {
+			continue
+		}
+		input := api.TrailReviewCommentInput{
+			ClientID: generateTrailReviewClientID(),
+			Body:     stringPtr(body),
+			Location: reviewTrailLocationFromJSON(comment.Location),
+		}
+		if sev := normalizeReviewTrailSeverity(comment.Severity); sev != nil {
+			input.Severity = sev
+		}
+		if comment.Confidence != nil && *comment.Confidence >= 0 && *comment.Confidence <= 1 {
+			input.Confidence = comment.Confidence
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, true
 }
 
 func reviewTrailFindingInputWithKind(profileName, text, kind string) api.TrailReviewCommentInput {
@@ -101,7 +153,115 @@ func reviewTrailFindingInputWithKind(profileName, text, kind string) api.TrailRe
 	return api.TrailReviewCommentInput{
 		ClientID: generateTrailReviewClientID(),
 		Body:     stringPtr(body),
-		Location: api.TrailReviewLocationCreateRequest{Granularity: "whole_change"},
+		Location: api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityWholeChange},
+	}
+}
+
+type reviewTrailJSONOutput struct {
+	Summary  string                   `json:"summary"`
+	Comments []reviewTrailJSONComment `json:"comments"`
+}
+
+type reviewTrailJSONComment struct {
+	Severity   string                  `json:"severity"`
+	Confidence *float64                `json:"confidence"`
+	Body       string                  `json:"body"`
+	Location   reviewTrailJSONLocation `json:"location"`
+}
+
+type reviewTrailJSONLocation struct {
+	Granularity string `json:"granularity"`
+	FilePath    string `json:"file_path"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+}
+
+func reviewTrailLocationFromJSON(loc reviewTrailJSONLocation) api.TrailReviewLocationCreateRequest {
+	filePath := strings.TrimSpace(loc.FilePath)
+	switch strings.ToLower(strings.TrimSpace(loc.Granularity)) {
+	case reviewTrailGranularityLine:
+		if filePath != "" && loc.StartLine > 0 {
+			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine}
+		}
+	case reviewTrailGranularityRange:
+		if filePath != "" && loc.StartLine > 0 && loc.EndLine >= loc.StartLine {
+			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityRange, FilePath: stringPtr(filePath), StartLine: &loc.StartLine, EndLine: &loc.EndLine}
+		}
+	case reviewTrailGranularityFile:
+		if filePath != "" {
+			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityFile, FilePath: stringPtr(filePath)}
+		}
+	}
+	return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityWholeChange}
+}
+
+func enrichReviewTrailFindingInputFromMarkdown(input *api.TrailReviewCommentInput, body string) {
+	if input == nil {
+		return
+	}
+	if sev := inferReviewTrailSeverity(body); sev != nil {
+		input.Severity = sev
+	}
+	if loc, ok := inferReviewTrailLocation(body); ok {
+		input.Location = loc
+	}
+}
+
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+var reviewTrailLocationPattern = regexp.MustCompile(`(?:^|\s|\()([A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+):(\d+)`)
+
+func inferReviewTrailLocation(body string) (api.TrailReviewLocationCreateRequest, bool) {
+	match := reviewTrailLocationPattern.FindStringSubmatch(body)
+	if len(match) != 3 {
+		return api.TrailReviewLocationCreateRequest{}, false
+	}
+	line, err := strconv.Atoi(match[2])
+	if err != nil || line <= 0 {
+		return api.TrailReviewLocationCreateRequest{}, false
+	}
+	return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(match[1]), StartLine: &line}, true
+}
+
+func inferReviewTrailSeverity(body string) *string {
+	prefix := strings.ToLower(body)
+	if len(prefix) > 120 {
+		prefix = prefix[:120]
+	}
+	switch {
+	case strings.Contains(prefix, "[p0]") || strings.Contains(prefix, "[p1]") || strings.Contains(prefix, "[high]") || strings.Contains(prefix, "critical"):
+		return stringPtr("high")
+	case strings.Contains(prefix, "[p2]") || strings.Contains(prefix, "[medium]"):
+		return stringPtr("medium")
+	case strings.Contains(prefix, "[p3]") || strings.Contains(prefix, "[low]") || strings.Contains(prefix, "[nit]") || strings.Contains(prefix, "nit:"):
+		return stringPtr("low")
+	default:
+		return nil
+	}
+}
+
+func normalizeReviewTrailSeverity(raw string) *string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	s = strings.Trim(s, "[](){}:*_ ")
+	switch s {
+	case "high", "medium", "low":
+		return stringPtr(s)
+	case "p0", "p1", "critical":
+		return stringPtr("high")
+	case "p2":
+		return stringPtr("medium")
+	case "p3", "nit", "nits":
+		return stringPtr("low")
+	default:
+		return nil
 	}
 }
 

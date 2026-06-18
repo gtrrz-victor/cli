@@ -37,11 +37,11 @@ func TestReviewTrailFindingInput(t *testing.T) {
 func TestReviewTrailFindingInputsSplitsTopLevelBullets(t *testing.T) {
 	verdict := `REQUEST CHANGES - multiple issues.
 
-- **[P1] First issue:** fix the first thing
+- **[P1] First issue:** fix sandbox-runs-queue.ts:1144
   with continuation detail
-- **[P2] Second issue:** fix the second thing
+- **[P2] Second issue:** fix daytona.ts:919
   - nested detail stays with second
-- **[Low] Third issue:** remove the note`
+- **[Low] Third issue:** remove the note from daytona-command-native-plan.md:1`
 
 	inputs := reviewTrailFindingInputs("general", verdict)
 	if len(inputs) != 3 {
@@ -49,8 +49,14 @@ func TestReviewTrailFindingInputsSplitsTopLevelBullets(t *testing.T) {
 	}
 	bodies := make([]string, len(inputs))
 	for i, in := range inputs {
-		if in.Location.Granularity != testWholeChangeGranularity {
-			t.Fatalf("input %d granularity = %q, want whole_change", i, in.Location.Granularity)
+		if in.Location.Granularity != "line" {
+			t.Fatalf("input %d granularity = %q, want line", i, in.Location.Granularity)
+		}
+		if in.Location.FilePath == nil || in.Location.StartLine == nil {
+			t.Fatalf("input %d missing inferred line location: %+v", i, in.Location)
+		}
+		if in.Severity == nil {
+			t.Fatalf("input %d missing inferred severity", i)
 		}
 		if in.ClientID == "" {
 			t.Fatalf("input %d missing client id", i)
@@ -71,6 +77,34 @@ func TestReviewTrailFindingInputsSplitsTopLevelBullets(t *testing.T) {
 	}
 	if strings.Contains(bodies[0], "Second issue") || strings.Contains(bodies[1], "Third issue") {
 		t.Fatalf("bodies were not split cleanly: %#v", bodies)
+	}
+}
+
+func TestReviewTrailFindingInputsAcceptsRunnerStyleJSONLastLine(t *testing.T) {
+	verdict := `Intermediate prose that should be ignored for posting.
+{"summary":"","comments":[{"severity":"high","confidence":0.92,"body":"` + "`" + `daytona.ts` + "`" + ` rejects public repos without a token; allow public clones or mint a token.","location":{"granularity":"line","file_path":"daytona.ts","start_line":901}},{"severity":"P2","confidence":0.7,"body":"Delete failures are swallowed, orphaning provider snapshots.","location":{"granularity":"range","file_path":"daytona.ts","start_line":966,"end_line":970}}]}`
+
+	inputs := reviewTrailFindingInputs("general", verdict)
+	if len(inputs) != 2 {
+		t.Fatalf("inputs = %d, want 2", len(inputs))
+	}
+	if inputs[0].Body == nil || strings.Contains(*inputs[0].Body, "Review finding") {
+		t.Fatalf("structured JSON body should be the native comment body, got %v", inputs[0].Body)
+	}
+	if inputs[0].Severity == nil || *inputs[0].Severity != "high" {
+		t.Fatalf("severity[0] = %v, want high", inputs[0].Severity)
+	}
+	if inputs[0].Confidence == nil || *inputs[0].Confidence != 0.92 {
+		t.Fatalf("confidence[0] = %v, want 0.92", inputs[0].Confidence)
+	}
+	if inputs[0].Location.Granularity != "line" || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "daytona.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 901 {
+		t.Fatalf("location[0] = %+v, want daytona.ts:901", inputs[0].Location)
+	}
+	if inputs[1].Severity == nil || *inputs[1].Severity != "medium" {
+		t.Fatalf("severity[1] = %v, want normalized medium", inputs[1].Severity)
+	}
+	if inputs[1].Location.Granularity != "range" || inputs[1].Location.EndLine == nil || *inputs[1].Location.EndLine != 970 {
+		t.Fatalf("location[1] = %+v, want range ending 970", inputs[1].Location)
 	}
 }
 

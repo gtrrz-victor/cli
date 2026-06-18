@@ -746,19 +746,19 @@ func buildTrailReviewCommentLocation(opts trailReviewCommentAddOptions) (api.Tra
 		return api.TrailReviewLocationCreateRequest{}, errors.New("--end-line must be greater than or equal to the start line")
 	}
 
-	loc := api.TrailReviewLocationCreateRequest{Granularity: "whole_change"}
+	loc := api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityWholeChange}
 	if filePath == "" {
 		return loc, nil
 	}
-	loc.Granularity = "file"
+	loc.Granularity = reviewTrailGranularityFile
 	loc.FilePath = stringPtr(filePath)
 	if line > 0 {
-		loc.Granularity = "line"
+		loc.Granularity = reviewTrailGranularityLine
 		loc.StartLine = &line
 		if opts.EndLine > 0 {
 			loc.EndLine = &opts.EndLine
 			if opts.EndLine != line {
-				loc.Granularity = "range"
+				loc.Granularity = reviewTrailGranularityRange
 			}
 		}
 	}
