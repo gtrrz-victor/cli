@@ -21,7 +21,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/session"
-	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/cmd/entire/cli/validation"
@@ -54,21 +53,15 @@ type attachOptions struct {
 	// transcript's first user prompt. Used by `entire review attach` when a
 	// pending-review marker has the exact prompt the user was asked to run.
 	ReviewPromptOverride string
-	// entireSettings, when non-nil, supplies already-resolved settings.
-	entireSettings *settings.EntireSettings
 }
 
-// committedRefs resolves the topology, honoring an injected EntireSettings.
+// committedRefs resolves the committed metadata topology.
 func (opts attachOptions) committedRefs(ctx context.Context) cpkg.CommittedRefs {
-	if opts.entireSettings != nil {
-		return cpkg.ResolveCommittedRefsFromSettings(opts.entireSettings)
-	}
 	return cpkg.ResolveCommittedRefs(ctx)
 }
 
 // openAttachStore opens the committed store for the resolved topology. refs is
-// passed explicitly (not re-resolved from live settings) so attach preserves
-// any injected EntireSettings / PrimaryAsRead() pinning.
+// passed explicitly so attach preserves PrimaryAsRead() pinning.
 func openAttachStore(ctx context.Context, repo *git.Repository, refs cpkg.CommittedRefs) (*cpkg.GitStore, error) {
 	stores, err := cpkg.Open(ctx, repo, cpkg.OpenOptions{Refs: &refs})
 	if err != nil {
@@ -346,10 +339,6 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 
 	if err := store.WriteCommitted(ctx, writeOpts); err != nil {
 		return fmt.Errorf("failed to write checkpoint: %w", err)
-	}
-
-	if err := strategy.MirrorCommittedMetadataRef(ctx, repo, refs); err != nil {
-		return fmt.Errorf("checkpoint was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
 	}
 
 	// Create or update session state.

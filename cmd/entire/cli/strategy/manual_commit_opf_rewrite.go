@@ -379,7 +379,11 @@ const opfRewriteFetchTmpRef = FetchTmpRefPrefix + "opf-rewrite-v1"
 // blocking the user on a transient network issue.
 func resolveRemoteV1Tip(ctx context.Context, repo *git.Repository, target string) (plumbing.Hash, error) {
 	srcRef := "refs/heads/" + paths.MetadataBranchName
-	if err := fetchURLIntoTmpRef(ctx, target, srcRef, opfRewriteFetchTmpRef, "v1 for OPF rewrite", true); err != nil {
+	worktreeRoot := ""
+	if wt, wtErr := repo.Worktree(); wtErr == nil {
+		worktreeRoot = wt.Filesystem().Root()
+	}
+	if err := fetchURLIntoTmpRef(ctx, worktreeRoot, target, srcRef, opfRewriteFetchTmpRef, "v1 for OPF rewrite", true); err != nil {
 		if !remote.IsURL(target) {
 			logging.Warn(ctx, "OPF rewrite: failed to fetch remote v1; using local remote-tracking ref",
 				slog.String("remote", target),

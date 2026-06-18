@@ -94,8 +94,6 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		}
 	}
 
-	refreshMirrorBeforePush(ctx, refs)
-
 	// Thread the span's context into the push so the network push and any
 	// fetch+rebase recovery nest beneath it as child steps in the perf trace.
 	pushCtx, pushCheckpointsSpan := perf.Start(ctx, "push_checkpoint_refs")
@@ -123,20 +121,4 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 	}
 
 	return nil
-}
-
-// refreshMirrorBeforePush advances the mirror to the primary tip before
-// pushing. Best-effort: failures are logged, never blocking the push.
-func refreshMirrorBeforePush(ctx context.Context, refs checkpoint.CommittedRefs) {
-	if !refs.HasMirror() {
-		return
-	}
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		logging.Debug(ctx, "pre-push mirror refresh skipped: open repository failed",
-			slog.String("error", err.Error()))
-		return
-	}
-	defer repo.Close()
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, refs)
 }

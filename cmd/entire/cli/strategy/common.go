@@ -492,7 +492,7 @@ func EnsurePrimaryRef(ctx context.Context, repo *git.Repository) error {
 			}
 			if isEmpty {
 				// Empty orphan — just point to remote
-				if setErr := AdvanceCommittedPrimary(ctx, repo, refs, remoteRef.Hash()); setErr != nil {
+				if setErr := setRefHash(repo, refs.Primary, remoteRef.Hash()); setErr != nil {
 					return fmt.Errorf("failed to update metadata ref from remote: %w", setErr)
 				}
 				fmt.Fprintf(os.Stderr, "[entire] Updated local ref '%s' from origin\n", primaryName)
@@ -514,7 +514,7 @@ func EnsurePrimaryRef(ctx context.Context, repo *git.Repository) error {
 
 	// Local ref doesn't exist — create from remote if available
 	if remoteRef != nil {
-		if err := AdvanceCommittedPrimary(ctx, repo, refs, remoteRef.Hash()); err != nil {
+		if err := setRefHash(repo, refs.Primary, remoteRef.Hash()); err != nil {
 			return fmt.Errorf("failed to create metadata ref from remote: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "✓ Created local ref '%s' from origin\n", primaryName)
@@ -570,7 +570,7 @@ func EnsurePrimaryRef(ctx context.Context, repo *git.Repository) error {
 		return fmt.Errorf("failed to store orphan commit: %w", err)
 	}
 
-	if err := AdvanceCommittedPrimary(ctx, repo, refs, commitHash); err != nil {
+	if err := setRefHash(repo, refs.Primary, commitHash); err != nil {
 		return fmt.Errorf("failed to create metadata ref: %w", err)
 	}
 

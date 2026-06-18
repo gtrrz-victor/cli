@@ -482,11 +482,6 @@ func fetchMetadataFromOrigin(ctx context.Context, fopts fetchMetadataOpts) error
 	if err := strategy.SafelyAdvanceLocalRef(ctx, repo, refs.Primary, remoteRef.Hash()); err != nil {
 		return fmt.Errorf("failed to advance local %s branch: %w", branchName, err)
 	}
-	if err := strategy.MirrorCommittedMetadataRef(ctx, repo, refs); err != nil && !errors.Is(err, strategy.ErrPrimaryMetadataMissing) {
-		logging.Warn(ctx, "committed-ref mirror failed after origin fetch",
-			slog.String("ref", refs.Mirror.String()),
-			slog.String("error", err.Error()))
-	}
 	return nil
 }
 

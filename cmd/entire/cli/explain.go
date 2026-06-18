@@ -686,7 +686,7 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		if openErr != nil {
 			return fmt.Errorf("open checkpoint store: %w", openErr)
 		}
-		if err := generateCheckpointSummary(ctx, w, errW, writeStores, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
+		if err := generateCheckpointSummary(ctx, w, errW, writeStores.Primary, fullCheckpointID, summary, content, force, summaryTimeoutSeconds); err != nil {
 			return err
 		}
 		// Reload to get the updated summary.
@@ -888,6 +888,10 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 	return lookup, nil
 }
 
+type checkpointSummaryUpdater interface {
+	UpdateSummary(ctx context.Context, checkpointID id.CheckpointID, summary *checkpoint.Summary) error
+}
+
 // generateCheckpointSummary generates an AI summary for a checkpoint and persists it.
 // The summary is generated from the scoped transcript (only this checkpoint's portion),
 // not the entire session transcript.
@@ -895,7 +899,7 @@ func newExplainCheckpointLookup(ctx context.Context) (*explainCheckpointLookup, 
 // summaryTimeoutSeconds is the per-invocation --summary-timeout-seconds flag
 // value (0 = unset). Effective precedence for the deadline: flag > settings >
 // package default. See resolveSummaryTimeout for the resolution.
-func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, stores *checkpoint.Stores, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
+func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, store checkpointSummaryUpdater, checkpointID id.CheckpointID, cpSummary *checkpoint.CheckpointSummary, content *checkpoint.SessionContent, force bool, summaryTimeoutSeconds int) error {
 	// Check if summary already exists
 	if content.Metadata.Summary != nil && !force {
 		return renderExplainFailure(errW, "Summary already exists", []explainRow{
@@ -942,13 +946,8 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, stores *c
 	}
 	elapsed := time.Since(start)
 
-	if err := stores.Primary.UpdateSummary(ctx, checkpointID, summary); err != nil {
+	if err := store.UpdateSummary(ctx, checkpointID, summary); err != nil {
 		return fmt.Errorf("failed to save summary: %w", err)
-	}
-
-	refs := checkpoint.ResolveCommittedRefs(ctx)
-	if err := strategy.MirrorCommittedMetadataRef(ctx, stores.Repository(), refs); err != nil {
-		return fmt.Errorf("summary was written to %s, but failed to mirror to %s: %w", refs.Primary, refs.Mirror, err)
 	}
 
 	styles := newStatusStyles(w)

@@ -304,10 +304,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	// report the same count instead of the second showing 0.
 	state.PromptWindowResetPending = true
 
-	// Mirror the committed write to refs.Mirror when configured (best-effort;
-	// failures are logged, not fatal).
-	mirrorCommittedMetadataRefBestEffort(ctx, repo, store.Refs())
-
 	logging.Debug(logCtx, "condense timings",
 		slog.String("session_id", state.SessionID),
 		slog.String("checkpoint_id", checkpointID.String()),

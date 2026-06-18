@@ -202,9 +202,12 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 	}
 	defer repo.Close()
 
-	store := checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))
-	store.SetBlobFetcher(FetchBlobsByHash)
-	refs := store.Refs()
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
+	if err != nil {
+		return fmt.Errorf("open checkpoint store: %w", err)
+	}
+	store := stores.Primary
+	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
 		promoteRemoteTrackingPrimary(ctx, repo, refs)
 	}
@@ -215,7 +218,7 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("error", err.Error()),
 		)
-		return checkRemoteMetadata(ctx, w, errW, checkpointID, store.Refs())
+		return checkRemoteMetadata(ctx, w, errW, checkpointID, stores.Refs())
 	}
 
 	return resumeSession(ctx, w, errW, metadata, force)
@@ -682,8 +685,7 @@ func promptResumeFromOlderCheckpoint() (bool, error) {
 }
 
 // checkRemoteMetadata checks if checkpoint metadata exists on the remote and
-// fetches it if available. Skips when reads don't target a ref origin tracks
-// (e.g. the local-only v1.1 mirror).
+// fetches it if available. Skips when reads don't target a ref origin tracks.
 func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
