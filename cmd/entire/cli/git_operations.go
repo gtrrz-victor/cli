@@ -404,6 +404,13 @@ func FetchAndCheckoutRemoteBranch(ctx context.Context, branchName string) error 
 	return CheckoutBranch(ctx, branchName)
 }
 
+// metadataFetchDepth is the absolute --depth used when fetching the metadata
+// branch. It is far above any realistic checkpoint-branch length, so it fully
+// fetches the branch (and heals a prior --depth=1 shallow boundary on it),
+// while staying below math.MaxInt32 (2147483647) — which git special-cases as
+// a global unshallow that would also deepen an unrelated shallow source tree.
+const metadataFetchDepth = 1_000_000_000
+
 // FetchMetadataBranch fetches the entire/checkpoints/v1 branch from origin
 // with full blob content. Used as a fallback by resume/explain when the
 // tree-only probe is insufficient (e.g. the metadata.json blob is missing).
@@ -426,8 +433,9 @@ func FetchMetadataBranch(ctx context.Context) error {
 // remote-tracking ref connected; git fetches incrementally, so after the first
 // fetch only new commits/trees travel.
 //
-// It also unshallows a repo that an older CLI already shallowed, so the boundary
-// left by a prior --depth=1 fetch is removed rather than lingering forever.
+// It also heals a repo that an older CLI already shallowed: the ref-scoped deep
+// fetch removes the boundary left by a prior --depth=1 fetch rather than letting
+// it linger forever, without deepening an independently-shallow source tree.
 func FetchMetadataTreeOnly(ctx context.Context) error {
 	return fetchMetadataFromOrigin(ctx, false /* noFilter */)
 }
@@ -456,11 +464,11 @@ func fetchMetadataFromOrigin(ctx context.Context, noFilter bool) error {
 		NoFilter: noFilter,
 		// Heal a repo that an older CLI already shallowed with --depth=1: the
 		// metadata tip is grafted in .git/shallow, which breaks merge-base
-		// connectivity checks for the metadata branch. remote.Fetch only adds
-		// --unshallow when the repo is actually shallow, so this is a no-op on a
-		// normally-cloned repo and only does work where a prior shallow boundary
-		// needs removing.
-		Unshallow: true,
+		// connectivity checks for the metadata branch. A ref-scoped deep fetch
+		// removes that boundary without deepening an independently-shallow
+		// source-tree clone (unlike --unshallow), and is a no-op on a normally
+		// cloned repo.
+		Depth: metadataFetchDepth,
 	})
 	if fetchErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
