@@ -322,6 +322,12 @@ func TestResolvePushSettings_WithCheckpointRemote_HTTPS(t *testing.T) {
 		0o644,
 	))
 
+	// Seed the local v1 metadata branch so resolvePushSettings finds it and
+	// skips fetchMetadataBranchIfMissing. Without it the test fetches the
+	// resolved checkpoint URL from github.com for real — slow, flaky, and it
+	// triggers the OS keychain credential helper when GitHub returns 401.
+	runCheckpointRemoteGit(ctx, t, localDir, "branch", paths.MetadataBranchName)
+
 	t.Chdir(localDir)
 
 	ps := resolvePushSettings(ctx, "origin")
@@ -353,6 +359,12 @@ func TestResolvePushSettings_WithCheckpointRemote_SSH(t *testing.T) {
 		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": {"provider": "github", "repo": "org/checkpoints"}}}`),
 		0o644,
 	))
+
+	// Seed the local v1 metadata branch so resolvePushSettings finds it and
+	// skips fetchMetadataBranchIfMissing. Without it the test fetches the
+	// resolved checkpoint URL from github.com for real — slow, flaky, and it
+	// triggers the OS keychain credential helper when GitHub returns 401.
+	runCheckpointRemoteGit(ctx, t, localDir, "branch", paths.MetadataBranchName)
 
 	t.Chdir(localDir)
 
@@ -417,6 +429,12 @@ func TestResolvePushSettings_CheckpointURLDoesNotAffectRemoteField(t *testing.T)
 		[]byte(`{"enabled": true, "strategy_options": {"checkpoint_remote": {"provider": "github", "repo": "org/checkpoints"}}}`),
 		0o644,
 	))
+
+	// Seed the local v1 metadata branch so resolvePushSettings finds it and
+	// skips fetchMetadataBranchIfMissing. Without it the test fetches the
+	// resolved checkpoint URL from github.com for real — slow, flaky, and it
+	// triggers the OS keychain credential helper when GitHub returns 401.
+	runCheckpointRemoteGit(ctx, t, localDir, "branch", paths.MetadataBranchName)
 
 	t.Chdir(localDir)
 
