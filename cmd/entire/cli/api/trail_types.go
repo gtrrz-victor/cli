@@ -28,6 +28,7 @@ type TrailResource struct {
 	Title           string           `json:"title"`
 	Body            string           `json:"body"`
 	Status          string           `json:"status"`
+	Phase           string           `json:"phase,omitempty"`
 	Author          *trail.Author    `json:"author"`
 	Assignees       []string         `json:"assignees"`
 	Labels          []string         `json:"labels"`
@@ -53,6 +54,7 @@ func (r *TrailResource) ToMetadata() *trail.Metadata {
 		Title:     r.Title,
 		Body:      r.Body,
 		Status:    trail.Status(r.Status),
+		Phase:     r.Phase,
 		Author:    r.Author,
 		Assignees: r.Assignees,
 		Labels:    r.Labels,
@@ -116,4 +118,11 @@ type TrailUpdateRequest struct {
 // TrailUpdateResponse is the response from PATCH /api/v1/trails/:org/:repo/:trailId.
 type TrailUpdateResponse struct {
 	Trail TrailResource `json:"trail"`
+}
+
+// TrailDeleteResponse is the response from DELETE /api/v1/trails/:host/:owner/:repo/:number.
+// OK is the server's explicit success signal; a destructive delete should not be
+// reported as done unless it is true.
+type TrailDeleteResponse struct {
+	OK bool `json:"ok"`
 }
