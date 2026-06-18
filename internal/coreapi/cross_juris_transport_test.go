@@ -421,6 +421,43 @@ func TestValidateExchangeURL(t *testing.T) {
 	}
 }
 
+func TestEffectiveTokenTTL(t *testing.T) {
+	t.Parallel()
+	// No advertised lifetime → conservative cap.
+	if got := effectiveTokenTTL(0); got != cachedTokenTTL {
+		t.Errorf("expires_in=0: got %v, want %v", got, cachedTokenTTL)
+	}
+	if got := effectiveTokenTTL(-5); got != cachedTokenTTL {
+		t.Errorf("expires_in<0: got %v, want %v", got, cachedTokenTTL)
+	}
+	// Long-lived token is capped at cachedTokenTTL.
+	if got := effectiveTokenTTL(3600); got != cachedTokenTTL {
+		t.Errorf("long lifetime: got %v, want cap %v", got, cachedTokenTTL)
+	}
+	// Short-lived token honors expires_in minus the buffer.
+	if got := effectiveTokenTTL(180); got != 180*time.Second-tokenExpiryBuffer {
+		t.Errorf("short lifetime: got %v, want %v", got, 180*time.Second-tokenExpiryBuffer)
+	}
+	// Lifetime under the buffer yields <=0, which storeToken declines to cache.
+	if got := effectiveTokenTTL(30); got > 0 {
+		t.Errorf("sub-buffer lifetime: got %v, want <=0", got)
+	}
+}
+
+// TestStoreTokenDeclinesNonPositiveTTL: a <=0 TTL must not be cached.
+func TestStoreTokenDeclinesNonPositiveTTL(t *testing.T) {
+	t.Parallel()
+	rt := transportFor()
+	rt.storeToken("https://example.test", "tok", 0)
+	if _, ok := rt.lookupToken("https://example.test"); ok {
+		t.Error("zero TTL must not be cached")
+	}
+	rt.storeToken("https://example.test", "tok", -time.Second)
+	if _, ok := rt.lookupToken("https://example.test"); ok {
+		t.Error("negative TTL must not be cached")
+	}
+}
+
 // TestRoundTripper_TokenCacheReusesExchanged confirms the per-origin
 // cache: a second request to the same origin within TTL skips the
 // exchange and presents the cached token on the first attempt.
@@ -629,7 +666,7 @@ func TestRoundTripper_ExchangeAfter401Then421UsesOriginalSubjectToken(t *testing
 func TestCacheExpiresAfterTTL(t *testing.T) {
 	t.Parallel()
 	rt := transportFor()
-	rt.storeToken("https://example.test", "tok")
+	rt.storeToken("https://example.test", "tok", cachedTokenTTL)
 	if _, ok := rt.lookupToken("https://example.test"); !ok {
 		t.Fatal("fresh token must be a hit")
 	}

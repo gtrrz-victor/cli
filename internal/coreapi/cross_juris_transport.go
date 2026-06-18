@@ -102,6 +102,11 @@ type cachedExchangedToken struct {
 // see the same latency as a cold cache.
 const cachedTokenTTL = 4 * time.Minute
 
+// tokenExpiryBuffer is subtracted from a server-advertised expires_in so a
+// cached token is retired before it actually expires — same rationale as
+// cachedTokenTTL's margin below the 5m server-side lifetime.
+const tokenExpiryBuffer = 1 * time.Minute
+
 // crossJurisErrorBody is the wire shape entire-core's auth middleware
 // emits for the machine-readable 401.
 type crossJurisErrorBody struct {
@@ -272,12 +277,12 @@ func (t *crossJurisRoundTripper) send(req *http.Request, body []byte, originalAu
 		if !found || subjectToken == "" {
 			return resp, nil
 		}
-		exchanged, err := t.exchangeSubjectToken(req.Context(), hint, subjectToken)
+		exchanged, expiresIn, err := t.exchangeSubjectToken(req.Context(), hint, subjectToken)
 		if err != nil {
 			debugf("exchange failed: %v", err)
 			return resp, nil
 		}
-		t.storeToken(origin, exchanged)
+		t.storeToken(origin, exchanged, effectiveTokenTTL(expiresIn))
 		budget.triedExchange[origin] = true
 		_ = resp.Body.Close()
 		req.Header.Set("Authorization", "Bearer "+exchanged)
@@ -502,7 +507,7 @@ func drainAndRestoreBody(resp *http.Response, maxBytes int64) ([]byte, error) {
 // exchange and returns the issued access_token. Delegates the wire-
 // level details (form encode, lifting client_id into Basic auth,
 // response decode) to httputil.PostOAuthToken.
-func (t *crossJurisRoundTripper) exchangeSubjectToken(ctx context.Context, hint crossJurisErrorBody, subjectToken string) (string, error) {
+func (t *crossJurisRoundTripper) exchangeSubjectToken(ctx context.Context, hint crossJurisErrorBody, subjectToken string) (string, int, error) {
 	form := url.Values{}
 	form.Set("grant_type", httputil.GrantTypeTokenExchange)
 	form.Set("subject_token", subjectToken)
@@ -518,16 +523,17 @@ func (t *crossJurisRoundTripper) exchangeSubjectToken(ctx context.Context, hint 
 	form.Set("client_id", "entire-cli")
 	// PostOAuthToken expects a base core URL and appends /oauth/token
 	// itself; hint.TokenExchangeURL is already the full path (and
-	// validateExchangeURL has gated the origin), so strip the suffix.
+	// validateExchangeURL has gated both origin and path == oauthTokenPath),
+	// so stripping the suffix yields exactly the origin.
 	coreURL := strings.TrimSuffix(hint.TokenExchangeURL, oauthTokenPath)
 	// Exchange goes through the base transport so we don't re-enter our
 	// own retry logic — a non-200 here is terminal.
 	client := &http.Client{Transport: t.base}
-	token, _, err := httputil.PostOAuthToken(ctx, client, coreURL, form)
+	token, expiresIn, err := httputil.PostOAuthToken(ctx, client, coreURL, form)
 	if err != nil {
-		return "", fmt.Errorf("exchange: %w", err)
+		return "", 0, fmt.Errorf("exchange: %w", err)
 	}
-	return token, nil
+	return token, expiresIn, nil
 }
 
 func (t *crossJurisRoundTripper) lookupToken(origin string) (string, bool) {
@@ -543,14 +549,32 @@ func (t *crossJurisRoundTripper) lookupToken(origin string) (string, bool) {
 	return cached.token, true
 }
 
-func (t *crossJurisRoundTripper) storeToken(origin, token string) {
-	if origin == "" || token == "" {
+func (t *crossJurisRoundTripper) storeToken(origin, token string, ttl time.Duration) {
+	if origin == "" || token == "" || ttl <= 0 {
 		return
 	}
 	t.tokens.Store(origin, cachedExchangedToken{
 		token: token,
-		exp:   time.Now().Add(cachedTokenTTL),
+		exp:   time.Now().Add(ttl),
 	})
+}
+
+// effectiveTokenTTL picks how long an exchanged token may live in the
+// per-origin cache. It honors the exchange response's expires_in (less a
+// safety buffer so we never serve a token within seconds of expiry),
+// capped at cachedTokenTTL. A non-positive expires_in means the server
+// advertised no lifetime, so we fall back to the conservative cap; a
+// lifetime shorter than the buffer yields <=0, which storeToken declines
+// to cache (the triggering request still succeeds via the live retry).
+func effectiveTokenTTL(expiresIn int) time.Duration {
+	if expiresIn <= 0 {
+		return cachedTokenTTL
+	}
+	ttl := time.Duration(expiresIn)*time.Second - tokenExpiryBuffer
+	if ttl > cachedTokenTTL {
+		return cachedTokenTTL
+	}
+	return ttl
 }
 
 // bufferBody reads req.Body once into memory and sets GetBody so each
