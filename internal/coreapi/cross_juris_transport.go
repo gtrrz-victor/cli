@@ -482,12 +482,12 @@ func readCrossJurisHint(resp *http.Response) (crossJurisErrorBody, bool, error) 
 // readable. Cap is conservative — control-plane error envelopes are
 // always small.
 func drainAndRestoreBody(resp *http.Response, maxBytes int64) ([]byte, error) {
-	body, err := io.ReadAll(http.MaxBytesReader(nil, resp.Body, maxBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body)) // restore even on error
 	if err != nil {
 		return nil, fmt.Errorf("drain response body: %w", err)
 	}
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return body, nil
 }
 

@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+// Bearer tokens the fixtures assert on, hoisted to consts so goconst is happy.
+const (
+	bearerExchanged     = "Bearer exchanged-jwt"
+	bearerHomeExchanged = "Bearer home-exchanged-jwt"
+)
+
 // authRecorder collects values captured inside an httptest handler
 // goroutine for assertion in the test goroutine. HTTP completion isn't a
 // happens-before edge the race detector recognises (see
@@ -168,7 +174,7 @@ func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 			return
 		}
 		homeAPIAuths.add(r.Header.Get("Authorization"))
-		if r.Header.Get("Authorization") == "Bearer home-exchanged-jwt" {
+		if r.Header.Get("Authorization") == bearerHomeExchanged {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"ok":true}`)) //nolint:errcheck // test
 			return
@@ -203,7 +209,7 @@ func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 	if subs := homeExchangeSubjects.snapshot(); len(subs) != 1 || subs[0] != "original-eu-login-jwt" {
 		t.Fatalf("exchange subject_token = %v, want [original-eu-login-jwt]", subs)
 	}
-	if auths := homeAPIAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer original-eu-login-jwt" || auths[1] != "Bearer home-exchanged-jwt" {
+	if auths := homeAPIAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer original-eu-login-jwt" || auths[1] != bearerHomeExchanged {
 		t.Fatalf("home API auths = %v", auths)
 	}
 }
@@ -282,7 +288,7 @@ func TestRoundTripper_401ExchangeAndRetry(t *testing.T) {
 	if exchangeHits.Load() != 1 {
 		t.Fatalf("exchanges=%d", exchangeHits.Load())
 	}
-	if auths := apiAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer user-jwt" || auths[1] != "Bearer exchanged-jwt" {
+	if auths := apiAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer user-jwt" || auths[1] != bearerExchanged {
 		t.Fatalf("api auths = %v", auths)
 	}
 }
@@ -409,6 +415,210 @@ func TestValidateExchangeURL(t *testing.T) {
 	}
 	if err := validateExchangeURL("http://localhost:1234/oauth/token", mustParse("http://localhost:1234/api")); err != nil {
 		t.Errorf("loopback http must pass: %v", err)
+	}
+}
+
+// TestRoundTripper_TokenCacheReusesExchanged confirms the per-origin
+// cache: a second request to the same origin within TTL skips the
+// exchange and presents the cached token on the first attempt.
+func TestRoundTripper_TokenCacheReusesExchanged(t *testing.T) {
+	t.Parallel()
+	exchangeHits := atomic.Int32{}
+	apiHits := atomic.Int32{}
+	var apiAuths authRecorder
+	var apiServer *httptest.Server
+	apiServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == oauthTokenPath {
+			exchangeHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"access_token":"exchanged-jwt"}`)) //nolint:errcheck // test
+			return
+		}
+		apiHits.Add(1)
+		apiAuths.add(r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") == bearerExchanged {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"cross_juris_token_required","token_exchange_url":"` + apiServer.URL + `/oauth/token","audience":"` + apiServer.URL + `"}`)) //nolint:errcheck // test
+	}))
+	t.Cleanup(apiServer.Close)
+
+	client := &http.Client{Transport: transportFor()}
+	for i := range 2 {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, apiServer.URL+"/api/v1/me", nil) //nolint:errcheck // test
+		req.Header.Set("Authorization", "Bearer user-jwt")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: got %d", i, resp.StatusCode)
+		}
+	}
+	if exchangeHits.Load() != 1 {
+		t.Fatalf("exchange must run once across both requests, got %d", exchangeHits.Load())
+	}
+	if auths := apiAuths.snapshot(); len(auths) != 3 || auths[2] != bearerExchanged {
+		t.Fatalf("second request must present the cached token on its first attempt: %v", auths)
+	}
+}
+
+// TestRoundTripper_NoInfiniteLoopOn421Chain confirms the redirect budget
+// cap: a home core that itself 421s gets the second response passed
+// through, not followed again.
+func TestRoundTripper_NoInfiniteLoopOn421Chain(t *testing.T) {
+	t.Parallel()
+	var second *crossJurisTestServer
+	first := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
+		s.record(r)
+		w.WriteHeader(http.StatusMisdirectedRequest)
+		w.Write([]byte(`{"home_core_url":"` + second.srv.URL + `"}`)) //nolint:errcheck // test
+	})
+	second = newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
+		s.record(r)
+		w.WriteHeader(http.StatusMisdirectedRequest)
+		// Loopback host so the test exercises the budget cap, not the
+		// federation/scheme reject path.
+		w.Write([]byte(`{"home_core_url":"http://127.0.0.1:1"}`)) //nolint:errcheck // test
+	})
+	first.peers = []string{second.srv.URL}
+
+	client := &http.Client{Transport: transportFor()}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, first.srv.URL+"/api/v1/mirrors", nil) //nolint:errcheck // test
+	req.Header.Set("Authorization", "Bearer user-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("got %d, want the second 421 passed through after budget exhaustion", resp.StatusCode)
+	}
+	if first.hits.Load() != 1 || second.hits.Load() != 1 {
+		t.Fatalf("first=%d second=%d, want 1/1 (no third hop)", first.hits.Load(), second.hits.Load())
+	}
+}
+
+// TestRoundTripper_ExchangeFailurePropagates401: a non-200 exchange leaves
+// the original 401 (and its hint body) visible to the caller.
+func TestRoundTripper_ExchangeFailurePropagates401(t *testing.T) {
+	t.Parallel()
+	apiHits := atomic.Int32{}
+	var api *httptest.Server
+	api = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == oauthTokenPath {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"invalid_grant"}`)) //nolint:errcheck // test
+			return
+		}
+		apiHits.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"cross_juris_token_required","token_exchange_url":"` + api.URL + `/oauth/token","audience":"` + api.URL + `"}`)) //nolint:errcheck // test
+	}))
+	t.Cleanup(api.Close)
+
+	client := &http.Client{Transport: transportFor()}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, api.URL+"/api/v1/me", nil) //nolint:errcheck // test
+	req.Header.Set("Authorization", "Bearer user-jwt")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("got %d, want original 401 surfaced", resp.StatusCode)
+	}
+	if apiHits.Load() != 1 {
+		t.Fatalf("no retry when exchange fails, got %d hits", apiHits.Load())
+	}
+	body, _ := io.ReadAll(resp.Body) //nolint:errcheck // test
+	if !strings.Contains(string(body), "cross_juris_token_required") {
+		t.Errorf("original hint body must survive the failed exchange: %q", body)
+	}
+}
+
+// TestRoundTripper_ExchangeAfter401Then421UsesOriginalSubjectToken is the
+// regression for the chained-exchange case: 401-hint at the misdirected
+// core → exchange → retry → 421 to home → 401-hint at home. The home
+// exchange must reuse the ORIGINAL login JWT as subject_token, not the
+// misdirected core's foreign-session token (which already carries
+// foreign_iss; the server rejects chained cross-juris hops).
+func TestRoundTripper_ExchangeAfter401Then421UsesOriginalSubjectToken(t *testing.T) {
+	t.Parallel()
+	const originalLoginJWT = "original-eu-login-jwt"
+
+	homeExchangeHits := atomic.Int32{}
+	var homeExchangeSubjects, homeAPIAuths authRecorder
+	var homeAPI *httptest.Server
+	homeAPI = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == oauthTokenPath {
+			_ = r.ParseForm() //nolint:errcheck // test
+			homeExchangeSubjects.add(r.PostForm.Get("subject_token"))
+			homeExchangeHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"access_token":"home-exchanged-jwt"}`)) //nolint:errcheck // test
+			return
+		}
+		homeAPIAuths.add(r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") == bearerHomeExchanged {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"cross_juris_token_required","token_exchange_url":"` + homeAPI.URL + `/oauth/token","audience":"` + homeAPI.URL + `"}`)) //nolint:errcheck // test
+	}))
+	t.Cleanup(homeAPI.Close)
+
+	misdirectedExchangeHits := atomic.Int32{}
+	misdirectedHits := atomic.Int32{}
+	var misdirected *httptest.Server
+	misdirected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case federationWellKnownPath:
+			writeTestFederation(w, []string{homeAPI.URL})
+			return
+		case oauthTokenPath:
+			misdirectedExchangeHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"access_token":"misdirected-exchanged-jwt"}`)) //nolint:errcheck // test
+			return
+		}
+		if misdirectedHits.Add(1) == 1 {
+			// First hop: middleware sees the EU-aud JWT, emits the hint.
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"cross_juris_token_required","token_exchange_url":"` + misdirected.URL + `/oauth/token","audience":"` + misdirected.URL + `"}`)) //nolint:errcheck // test
+			return
+		}
+		// Retry accepted; handler finds the cluster is in another
+		// jurisdiction and 421s to home.
+		w.WriteHeader(http.StatusMisdirectedRequest)
+		w.Write([]byte(`{"home_core_url":"` + homeAPI.URL + `"}`)) //nolint:errcheck // test
+	}))
+	t.Cleanup(misdirected.Close)
+
+	client := &http.Client{Transport: transportFor()}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, misdirected.URL+"/api/v1/mirrors", strings.NewReader(`{}`)) //nolint:errcheck // test
+	req.Header.Set("Authorization", "Bearer "+originalLoginJWT)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("got %d, want home core to accept the home-audience exchanged token", resp.StatusCode)
+	}
+	if misdirectedExchangeHits.Load() != 1 || homeExchangeHits.Load() != 1 {
+		t.Fatalf("misdirected=%d home=%d exchanges, want 1/1", misdirectedExchangeHits.Load(), homeExchangeHits.Load())
+	}
+	if subs := homeExchangeSubjects.snapshot(); len(subs) != 1 || subs[0] != originalLoginJWT {
+		t.Fatalf("REGRESSION: home exchange must reuse the ORIGINAL login JWT as subject_token, got %v", subs)
+	}
+	if auths := homeAPIAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer "+originalLoginJWT || auths[1] != bearerHomeExchanged {
+		t.Fatalf("home API auths = %v", auths)
 	}
 }
 
