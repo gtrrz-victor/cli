@@ -128,7 +128,7 @@ Full settings reference:
 
 - `command` — path or PATH-resolvable name of the `opf` binary. Defaults to `opf`.
 - `timeout_seconds` — per-invocation timeout. Defaults to `30`.
-- `prompt_default` — `"ask"` (default), `"always"`, or `"never"`. Controls whether the pre-push hook surfaces an interactive prompt before running OPF. `ENTIRE_OPF=yes` or `ENTIRE_OPF=no` on a single `git push` invocation overrides this for that push only.
+- `prompt_default` — `"ask"` (default), `"never"`, or `"always"`. Controls whether the pre-push hook surfaces an interactive prompt before running OPF. `ENTIRE_OPF=yes` or `ENTIRE_OPF=no` on a single `git push` invocation overrides this for that push only.
 
 The interactive prompt offers three options and reacts to **Ctrl-C** for cancellation:
 

@@ -41,10 +41,10 @@ func resolveOPFDecision(env, promptDefault string, hasTTY bool, prompter func() 
 		return OPFSkip, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(promptDefault)) {
-	case settings.OPFPromptAlways:
-		return OPFRun, nil
 	case settings.OPFPromptNever:
 		return OPFSkip, nil
+	case settings.OPFPromptAlways:
+		return OPFRun, nil
 	}
 	if !hasTTY {
 		// Non-interactive context: run OPF (matches the user's "if
