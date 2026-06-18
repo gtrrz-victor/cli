@@ -585,7 +585,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		}
 	}
 
-	onDefault, currentBranch, _ := IsOnDefaultBranch(ctx) //nolint:errcheck // best-effort detection
+	onDefault, currentBranch, _ := isOnDefaultBranchRepo(repo) //nolint:errcheck // best-effort detection; reuse the already-open repo
 	interactive := !cmd.Flags().Changed("title") && !cmd.Flags().Changed("branch")
 
 	if interactive {
