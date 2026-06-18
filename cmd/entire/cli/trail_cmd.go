@@ -642,24 +642,13 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		fmt.Fprintf(w, "Note: trail will be created for branch %q (not the current branch)\n", branch)
 	}
 
-	// Delivering the branch to origin is a PRECONDITION for trail creation, not
-	// an optional follow-up. A trail binds to a *remote* branch; if the branch
-	// never reaches origin the server has nothing to anchor to and backfills it
-	// at the base tip, producing a trail whose backing branch does not reflect
-	// the user's work (local branch, remote branch, and actual work all differ).
-	// We therefore always push and hard-fail on error, regardless of whether we
-	// created the branch locally. (Previously this was gated on needsCreation,
-	// so `git checkout -b foo && entire trail create --branch foo` created the
-	// trail without ever pushing foo.)
+	// Always push the branch first: the trail binds to a remote branch, so
+	// deliver it before creating the trail rather than letting the server
+	// backfill it at the base tip.
 	{
-		// branchExistsOnOrigin tells us whether origin already has this branch
-		// (e.g. a teammate pushed it, or we pushed it on a previous run). In that
-		// case our push may merely fast-forward it and we must not delete it
-		// during cleanup. Only treat the remote branch as created-by-us when it
-		// did not already exist before our push.
+		// Don't delete a remote branch we didn't create during cleanup.
 		existedOnOrigin, existErr := branchExistsOnOrigin(branch)
 		if existErr != nil {
-			// Be conservative: if we cannot tell, do not delete the remote branch.
 			fmt.Fprintf(errW, "Warning: could not check whether branch %s already exists on origin: %v\n", branch, existErr)
 			existedOnOrigin = true
 		}
@@ -675,8 +664,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		Title:      title,
 		Body:       body,
 		BranchName: branch,
-		// We pushed the branch to origin above, so ask the server to link the
-		// already-delivered branch rather than backfill it at the base tip.
+		// Branch already pushed above; link it instead of backfilling at base.
 		BranchAction: "link",
 		Base:         base,
 		Status:       statusStr,

@@ -79,12 +79,8 @@ type TrailCreateRequest struct {
 	Title      string `json:"title"`
 	Body       string `json:"body,omitempty"`
 	BranchName string `json:"branch_name"`
-	// BranchAction tells the server how to bind BranchName. The CLI always
-	// pushes the branch to the remote before creating the trail, so it sends
-	// "link" to attach the already-delivered branch. This prevents the server
-	// from backfilling a backing branch at the base tip when the branch was
-	// never delivered (which would silently anchor the trail to empty/diverged
-	// content). Valid values: "create" (default, server-side) or "link".
+	// BranchAction is "create" (default) or "link". The CLI sends "link" to
+	// attach the already-pushed branch instead of backfilling it at base.
 	BranchAction string   `json:"branch_action,omitempty"`
 	Base         string   `json:"base,omitempty"`
 	Status       string   `json:"status,omitempty"`
