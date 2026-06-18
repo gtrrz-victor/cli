@@ -1898,6 +1898,72 @@ func TestAddCheckpointTokenUsageSaturatesOverflow(t *testing.T) {
 	}
 }
 
+func TestCheckpointTokensReport_UsesRootSummaryWhenNoSessionMetadataReadable(t *testing.T) {
+	t.Parallel()
+
+	cpID := id.MustCheckpointID("abc123def456")
+	report := buildCheckpointTokensReport(
+		cpID,
+		&checkpoint.CheckpointSummary{
+			CheckpointID: cpID,
+			Sessions: []checkpoint.SessionFilePaths{
+				{Metadata: "0/metadata.json"},
+				{Metadata: "1/metadata.json"},
+			},
+			TokenUsage: &agent.TokenUsage{
+				InputTokens:  1000,
+				OutputTokens: 500,
+				APICallCount: 7,
+			},
+		},
+		nil,
+		2,
+	)
+
+	if report.Tokens == nil {
+		t.Fatalf("expected token data, got nil")
+	}
+	if report.Tokens.Total != 1500 || report.Tokens.APICalls != 7 {
+		t.Fatalf("expected root summary tokens, got %+v", report.Tokens)
+	}
+}
+
+type cancelingCheckpointMetadataReader struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (r *cancelingCheckpointMetadataReader) ReadSessionMetadata(
+	_ context.Context,
+	_ id.CheckpointID,
+	_ int,
+) (*checkpoint.CommittedMetadata, error) {
+	r.calls++
+	if r.calls == 1 {
+		r.cancel()
+		return &checkpoint.CommittedMetadata{SessionID: "read-before-cancel"}, nil
+	}
+	return &checkpoint.CommittedMetadata{SessionID: "read-after-cancel"}, nil
+}
+
+func TestReadCheckpointTokenSessionMetadataStopsBetweenReadsWhenContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &cancelingCheckpointMetadataReader{cancel: cancel}
+
+	metas, warnings, err := readCheckpointTokenSessionMetadata(ctx, reader, id.MustCheckpointID("abc123abc123"), 2)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got metas=%+v warnings=%d err=%v", metas, warnings, err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("expected one metadata read before cancellation, got %d", reader.calls)
+	}
+	if metas != nil || warnings != 0 {
+		t.Fatalf("expected canceled read to return no partial results, got metas=%+v warnings=%d", metas, warnings)
+	}
+}
+
 func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 	repo, _ := runExplainAutoTestRepo(t)
 	ctx := context.Background()

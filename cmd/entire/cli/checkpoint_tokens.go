@@ -137,10 +137,13 @@ func loadCheckpointTokensReport(ctx context.Context, cmd *cobra.Command, checkpo
 	return buildCheckpointTokensReport(cpID, summary, metas, metadataWarnings), lookup, nil
 }
 
-func readCheckpointTokenSessionMetadata(ctx context.Context, store checkpoint.CommittedListReader, cpID id.CheckpointID, sessionCount int) ([]*checkpoint.CommittedMetadata, int, error) {
+func readCheckpointTokenSessionMetadata(ctx context.Context, store checkpointSessionMetadataReader, cpID id.CheckpointID, sessionCount int) ([]*checkpoint.CommittedMetadata, int, error) {
 	metas := make([]*checkpoint.CommittedMetadata, 0, sessionCount)
 	var warnings int
 	for i := range sessionCount {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, warnings, ctxErr //nolint:wrapcheck // Propagating context cancellation.
+		}
 		meta, err := store.ReadSessionMetadata(ctx, cpID, i)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
