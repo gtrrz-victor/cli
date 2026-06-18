@@ -559,7 +559,7 @@ func newTrailCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&body, "body", "", "Trail body")
 	cmd.Flags().StringVar(&base, "base", "", "Base branch (defaults to detected default branch)")
 	cmd.Flags().StringVar(&branch, "branch", "", "Branch for the trail (defaults to current branch)")
-	cmd.Flags().StringVar(&status, "status", "", "Initial status (defaults to draft)")
+	cmd.Flags().StringVar(&status, "status", "", "Initial status (defaults to open)")
 	cmd.Flags().BoolVar(&checkout, "checkout", false, "Check out the branch after creating it")
 
 	return cmd
@@ -613,7 +613,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		return errors.New("branch name is required")
 	}
 	if statusStr == "" {
-		statusStr = string(trail.StatusDraft)
+		statusStr = string(trail.StatusOpen)
 	}
 	if status := trail.Status(statusStr); !status.IsValid() {
 		return fmt.Errorf("invalid status %q: valid values are %s", statusStr, formatValidStatuses())
@@ -1149,7 +1149,7 @@ func runTrailCreateInteractive(title, body, branch, statusStr *string) error {
 		statusOptions = append(statusOptions, huh.NewOption(string(s), string(s)))
 	}
 	if *statusStr == "" {
-		*statusStr = string(trail.StatusDraft)
+		*statusStr = string(trail.StatusOpen)
 	}
 
 	form = NewAccessibleForm(
