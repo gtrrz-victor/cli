@@ -582,6 +582,25 @@ func TestRun_SinkFanOut(t *testing.T) {
 	}
 }
 
+func TestInspectorDeadlineFiredFallbackAllowsEqualParentDeadline(t *testing.T) {
+	t.Parallel()
+	deadline := time.Now().Add(20 * time.Millisecond)
+	parentCtx, cancelParent := context.WithDeadline(context.Background(), deadline)
+	defer cancelParent()
+	agentCtx, cancelAgent := context.WithDeadline(parentCtx, deadline)
+	defer cancelAgent()
+
+	select {
+	case <-agentCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("agent context deadline did not fire")
+	}
+	waitErr := errors.New("agent failed: " + context.DeadlineExceeded.Error())
+	if !inspectorDeadlineFired(parentCtx, agentCtx, waitErr) {
+		t.Fatal("equal parent/agent deadlines should still classify as inspector deadline fallback")
+	}
+}
+
 func TestRun_InspectorTimeout(t *testing.T) {
 	t.Parallel()
 	rec := &stubSinkRecorder{}

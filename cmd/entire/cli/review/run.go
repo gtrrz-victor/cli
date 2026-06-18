@@ -77,7 +77,7 @@ func inspectorDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) 
 		return false
 	}
 	parentDeadline, parentHasDeadline := parentCtx.Deadline()
-	return !parentHasDeadline || agentDeadline.Before(parentDeadline)
+	return !parentHasDeadline || !agentDeadline.After(parentDeadline)
 }
 
 // timedOutError reports the per-inspector timeout as a user-facing error.
