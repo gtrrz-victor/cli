@@ -1344,6 +1344,16 @@ func TestTokenCommandError_SuppressesCancellation(t *testing.T) {
 	}
 }
 
+func TestRoundedPercentAvoidsIntermediateOverflow(t *testing.T) {
+	t.Parallel()
+
+	maxInt := int(^uint(0) >> 1)
+
+	if got := roundedPercent(maxInt/2, maxInt); got != 50 {
+		t.Fatalf("roundedPercent() = %d, want 50", got)
+	}
+}
+
 // --- checkpoint tokens tests ---
 
 func TestCheckpointTokensCmd_TextOutputWithRealCheckpointShape(t *testing.T) {

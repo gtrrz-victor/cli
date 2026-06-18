@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/bits"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -236,7 +237,23 @@ func roundedPercent(value, total int) int {
 	if total <= 0 {
 		return 0
 	}
-	return (value*100 + total/2) / total
+	if value <= 0 {
+		return 0
+	}
+
+	hi, lo := bits.Mul64(uint64(value), 100)
+	lo, carry := bits.Add64(lo, uint64(total)/2, 0)
+	hi += carry
+	divisor := uint64(total)
+	if hi >= divisor {
+		return int(^uint(0) >> 1)
+	}
+	quotient, _ := bits.Div64(hi, lo, divisor)
+	maxInt := uint64(^uint(0) >> 1)
+	if quotient > maxInt {
+		return int(maxInt)
+	}
+	return int(quotient)
 }
 
 func recommendationRules(signals tokenRecommendationSignals) []sessionTokensRecommendation {
