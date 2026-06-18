@@ -56,6 +56,10 @@ const (
 	checkpointComparisonStatusObservedReduction = "observed_reduction"
 	checkpointComparisonStatusObservedIncrease  = "observed_increase"
 	checkpointComparisonStatusObservedNoChange  = "observed_no_change"
+
+	checkpointDeltaDirectionDown      = "down"
+	checkpointDeltaDirectionUp        = "up"
+	checkpointDeltaDirectionUnchanged = "unchanged"
 )
 
 func newCheckpointTokensCmd() *cobra.Command {
@@ -394,11 +398,12 @@ func buildCheckpointTokensComparison(target, baseline checkpointTokensReport) *c
 }
 
 func buildCheckpointMetricDelta(baseline, current int) *checkpointTokensMetricDelta {
+	change := saturatingIntSub(current, baseline)
 	delta := &checkpointTokensMetricDelta{
 		Baseline:  baseline,
 		Current:   current,
-		Change:    current - baseline,
-		Direction: checkpointDeltaDirection(current - baseline),
+		Change:    change,
+		Direction: checkpointDeltaDirection(change),
 	}
 	if baseline != 0 {
 		percent := float64(delta.Change) * 100 / float64(baseline)
@@ -407,14 +412,32 @@ func buildCheckpointMetricDelta(baseline, current int) *checkpointTokensMetricDe
 	return delta
 }
 
+func saturatingIntSub(a, b int) int {
+	if b < 0 && a > maxInt()+b {
+		return maxInt()
+	}
+	if b > 0 && a < minInt()+b {
+		return minInt()
+	}
+	return a - b
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func minInt() int {
+	return -maxInt() - 1
+}
+
 func checkpointDeltaDirection(change int) string {
 	switch {
 	case change < 0:
-		return "down"
+		return checkpointDeltaDirectionDown
 	case change > 0:
-		return "up"
+		return checkpointDeltaDirectionUp
 	default:
-		return "unchanged"
+		return checkpointDeltaDirectionUnchanged
 	}
 }
 
@@ -423,9 +446,9 @@ func checkpointComparisonStatus(total *checkpointTokensMetricDelta) string {
 		return checkpointComparisonStatusUnavailable
 	}
 	switch total.Direction {
-	case "down":
+	case checkpointDeltaDirectionDown:
 		return checkpointComparisonStatusObservedReduction
-	case "up":
+	case checkpointDeltaDirectionUp:
 		return checkpointComparisonStatusObservedIncrease
 	default:
 		return checkpointComparisonStatusObservedNoChange
@@ -515,7 +538,7 @@ func formatCheckpointMetricDelta(delta *checkpointTokensMetricDelta, formatValue
 	}
 	from := formatValue(delta.Baseline)
 	to := formatValue(delta.Current)
-	if delta.Direction == "unchanged" {
+	if delta.Direction == checkpointDeltaDirectionUnchanged {
 		return fmt.Sprintf("unchanged (%s -> %s)", from, to)
 	}
 	if delta.ChangePercent == nil {
