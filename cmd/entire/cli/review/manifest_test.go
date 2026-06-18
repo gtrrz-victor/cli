@@ -807,6 +807,22 @@ func TestReviewRunModelMatches(t *testing.T) {
 // normalize identically (claude-sonnet:high / :low -> claude-sonnet), with
 // sessions that start in the same second, must still link to distinct sessions
 // rather than both grabbing the most recent match.
+func TestComponentsEqualAtBoundsChecks(t *testing.T) {
+	t.Parallel()
+	long := []string{"claude", "sonnet"}
+	short := []string{"sonnet", "4"}
+
+	if componentsEqualAt(long, short, -1) {
+		t.Fatal("negative offset should not match")
+	}
+	if componentsEqualAt(long, short, 1) {
+		t.Fatal("span that overruns long should not match")
+	}
+	if !componentsEqualAt(long, []string{"sonnet"}, 1) {
+		t.Fatal("in-bounds span should match")
+	}
+}
+
 func TestBuildLocalReviewManifestFromSummary_DisambiguatesSameModelDifferentThinking(t *testing.T) {
 	started := time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC)
 	summary := reviewtypes.RunSummary{

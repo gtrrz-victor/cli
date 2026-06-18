@@ -521,6 +521,9 @@ func modelComponentsMatch(short, long []string) bool {
 }
 
 func componentsEqualAt(long, short []string, i int) bool {
+	if i < 0 || i+len(short) > len(long) {
+		return false
+	}
 	for k := range short {
 		if long[i+k] != short[k] {
 			return false
