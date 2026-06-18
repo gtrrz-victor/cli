@@ -8,10 +8,33 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// authRecorder collects values captured inside an httptest handler
+// goroutine for assertion in the test goroutine. HTTP completion isn't a
+// happens-before edge the race detector recognises (see
+// client_test.go:160-189), so the mutex makes the cross-goroutine reads
+// race-safe under `-race`.
+type authRecorder struct {
+	mu   sync.Mutex
+	vals []string
+}
+
+func (a *authRecorder) add(v string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.vals = append(a.vals, v)
+}
+
+func (a *authRecorder) snapshot() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.vals...)
+}
 
 // crossJurisTestServer scripts responses keyed by the caller-controlled
 // handler and records the Authorization header per request so tests can
@@ -19,14 +42,14 @@ import (
 // GET /.well-known/entire-federation with the hosts in `peers`.
 type crossJurisTestServer struct {
 	hits  atomic.Int32
-	auths []string
+	auths authRecorder
 	peers []string
 	srv   *httptest.Server
 }
 
 func (s *crossJurisTestServer) record(r *http.Request) {
 	s.hits.Add(1)
-	s.auths = append(s.auths, r.Header.Get("Authorization"))
+	s.auths.add(r.Header.Get("Authorization"))
 }
 
 func newCrossJurisTestServer(t *testing.T, handler func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request)) *crossJurisTestServer {
@@ -119,8 +142,8 @@ func TestRoundTripper_421FollowsToHomeCore(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("got %d", resp.StatusCode)
 	}
-	if homeCore.auths[0] != "Bearer user-jwt" {
-		t.Fatalf("home core first hop auth = %q", homeCore.auths[0])
+	if got := homeCore.auths.snapshot(); len(got) == 0 || got[0] != "Bearer user-jwt" {
+		t.Fatalf("home core first hop auth = %v", got)
 	}
 }
 
@@ -131,18 +154,17 @@ func TestRoundTripper_421FollowsToHomeCore(t *testing.T) {
 // at the home core's same-origin /oauth/token and retrying.
 func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 	homeExchangeHits := atomic.Int32{}
-	homeExchangeSubjects := []string{}
-	homeAPIAuths := []string{}
+	var homeExchangeSubjects, homeAPIAuths authRecorder
 	homeCore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth/token" {
+		if r.URL.Path == oauthTokenPath {
 			_ = r.ParseForm() //nolint:errcheck // test
-			homeExchangeSubjects = append(homeExchangeSubjects, r.PostForm.Get("subject_token"))
+			homeExchangeSubjects.add(r.PostForm.Get("subject_token"))
 			homeExchangeHits.Add(1)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"access_token":"home-exchanged-jwt"}`)) //nolint:errcheck // test
 			return
 		}
-		homeAPIAuths = append(homeAPIAuths, r.Header.Get("Authorization"))
+		homeAPIAuths.add(r.Header.Get("Authorization"))
 		if r.Header.Get("Authorization") == "Bearer home-exchanged-jwt" {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"ok":true}`)) //nolint:errcheck // test
@@ -175,11 +197,11 @@ func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 	if homeExchangeHits.Load() != 1 {
 		t.Fatalf("home exchange hits=%d", homeExchangeHits.Load())
 	}
-	if len(homeExchangeSubjects) != 1 || homeExchangeSubjects[0] != "original-eu-login-jwt" {
-		t.Fatalf("exchange subject_token = %v, want [original-eu-login-jwt]", homeExchangeSubjects)
+	if subs := homeExchangeSubjects.snapshot(); len(subs) != 1 || subs[0] != "original-eu-login-jwt" {
+		t.Fatalf("exchange subject_token = %v, want [original-eu-login-jwt]", subs)
 	}
-	if len(homeAPIAuths) != 2 || homeAPIAuths[0] != "Bearer original-eu-login-jwt" || homeAPIAuths[1] != "Bearer home-exchanged-jwt" {
-		t.Fatalf("home API auths = %v", homeAPIAuths)
+	if auths := homeAPIAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer original-eu-login-jwt" || auths[1] != "Bearer home-exchanged-jwt" {
+		t.Fatalf("home API auths = %v", auths)
 	}
 }
 
@@ -188,7 +210,7 @@ func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 func TestRoundTripper_BareUnauthorizedNoRedirectPassesThrough(t *testing.T) {
 	exchangeHits := atomic.Int32{}
 	srv := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth/token" {
+		if r.URL.Path == oauthTokenPath {
 			exchangeHits.Add(1)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"access_token":"x"}`)) //nolint:errcheck // test
@@ -220,17 +242,17 @@ func TestRoundTripper_BareUnauthorizedNoRedirectPassesThrough(t *testing.T) {
 func TestRoundTripper_401ExchangeAndRetry(t *testing.T) {
 	exchangeHits := atomic.Int32{}
 	apiHits := atomic.Int32{}
-	apiAuths := []string{}
+	var apiAuths authRecorder
 	var apiServer *httptest.Server
 	apiServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth/token" {
+		if r.URL.Path == oauthTokenPath {
 			exchangeHits.Add(1)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"access_token":"exchanged-jwt","token_type":"Bearer","expires_in":300}`)) //nolint:errcheck // test
 			return
 		}
 		n := apiHits.Add(1)
-		apiAuths = append(apiAuths, r.Header.Get("Authorization"))
+		apiAuths.add(r.Header.Get("Authorization"))
 		if n == 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"error":"cross_juris_token_required","token_exchange_url":"` + apiServer.URL + `/oauth/token","audience":"` + apiServer.URL + `"}`)) //nolint:errcheck // test
@@ -255,8 +277,8 @@ func TestRoundTripper_401ExchangeAndRetry(t *testing.T) {
 	if exchangeHits.Load() != 1 {
 		t.Fatalf("exchanges=%d", exchangeHits.Load())
 	}
-	if len(apiAuths) != 2 || apiAuths[0] != "Bearer user-jwt" || apiAuths[1] != "Bearer exchanged-jwt" {
-		t.Fatalf("api auths = %v", apiAuths)
+	if auths := apiAuths.snapshot(); len(auths) != 2 || auths[0] != "Bearer user-jwt" || auths[1] != "Bearer exchanged-jwt" {
+		t.Fatalf("api auths = %v", auths)
 	}
 }
 

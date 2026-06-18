@@ -143,6 +143,10 @@ const federationLookupTimeout = 3 * time.Second
 // secret — it names siblings any user can already enumerate via login).
 const federationWellKnownPath = "/.well-known/entire-federation"
 
+// oauthTokenPath is entire-core's RFC 8693 token-exchange endpoint,
+// always same-origin with the core that emitted the 401 / 421.
+const oauthTokenPath = "/oauth/token" //nolint:gosec // G101: a URL path, not a credential
+
 func newCrossJurisRoundTripper(base http.RoundTripper) *crossJurisRoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -247,7 +251,7 @@ func (t *crossJurisRoundTripper) send(req *http.Request, body []byte, originalAu
 			}
 			hint = crossJurisErrorBody{
 				Error:            "cross_juris_token_required",
-				TokenExchangeURL: origin + "/oauth/token",
+				TokenExchangeURL: origin + oauthTokenPath,
 				Audience:         origin,
 			}
 		}
@@ -405,7 +409,10 @@ func (t *crossJurisRoundTripper) federationHostsFor(ctx context.Context, origin 
 func (t *crossJurisRoundTripper) fetchFederationHosts(ctx context.Context, origin string) map[string]struct{} {
 	ctx, cancel := context.WithTimeout(ctx, federationLookupTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+federationWellKnownPath, nil)
+	// origin is the scheme://host of a core the CLI is already configured to
+	// talk to (or one it just received a response from), and the path is a
+	// fixed public well-known endpoint — not attacker-controlled SSRF.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+federationWellKnownPath, nil) //nolint:gosec // G704: origin is a core the CLI already dials; fixed well-known path
 	if err != nil {
 		debugf("build federation request: %v", err)
 		return nil
@@ -505,7 +512,7 @@ func (t *crossJurisRoundTripper) exchangeSubjectToken(ctx context.Context, hint 
 	// PostOAuthToken expects a base core URL and appends /oauth/token
 	// itself; hint.TokenExchangeURL is already the full path (and
 	// validateExchangeURL has gated the origin), so strip the suffix.
-	coreURL := strings.TrimSuffix(hint.TokenExchangeURL, "/oauth/token")
+	coreURL := strings.TrimSuffix(hint.TokenExchangeURL, oauthTokenPath)
 	// Exchange goes through the base transport so we don't re-enter our
 	// own retry logic — a non-200 here is terminal.
 	client := &http.Client{Transport: t.base}
