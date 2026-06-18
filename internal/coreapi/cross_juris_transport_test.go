@@ -93,6 +93,7 @@ func transportFor() *crossJurisRoundTripper {
 
 // TestRoundTripper_PassThrough: a 2xx is returned unchanged.
 func TestRoundTripper_PassThrough(t *testing.T) {
+	t.Parallel()
 	srv := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
 		s.record(r)
 		w.WriteHeader(http.StatusOK)
@@ -119,6 +120,7 @@ func TestRoundTripper_PassThrough(t *testing.T) {
 // TestRoundTripper_421FollowsToHomeCore: 421 with home_core_url is
 // followed; the home core gets the original bearer on the first hop.
 func TestRoundTripper_421FollowsToHomeCore(t *testing.T) {
+	t.Parallel()
 	homeCore := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
 		s.record(r)
 		w.WriteHeader(http.StatusOK)
@@ -153,6 +155,7 @@ func TestRoundTripper_421FollowsToHomeCore(t *testing.T) {
 // The transport must still recover by exchanging the original login JWT
 // at the home core's same-origin /oauth/token and retrying.
 func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
+	t.Parallel()
 	homeExchangeHits := atomic.Int32{}
 	var homeExchangeSubjects, homeAPIAuths authRecorder
 	homeCore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +211,7 @@ func TestRoundTripper_421ThenBareUnauthorizedProactiveExchange(t *testing.T) {
 // TestRoundTripper_BareUnauthorizedNoRedirectPassesThrough: a bare 401
 // on a non-redirected request is a genuine failure — no exchange.
 func TestRoundTripper_BareUnauthorizedNoRedirectPassesThrough(t *testing.T) {
+	t.Parallel()
 	exchangeHits := atomic.Int32{}
 	srv := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == oauthTokenPath {
@@ -240,6 +244,7 @@ func TestRoundTripper_BareUnauthorizedNoRedirectPassesThrough(t *testing.T) {
 
 // TestRoundTripper_401ExchangeAndRetry covers the structured-hint path.
 func TestRoundTripper_401ExchangeAndRetry(t *testing.T) {
+	t.Parallel()
 	exchangeHits := atomic.Int32{}
 	apiHits := atomic.Int32{}
 	var apiAuths authRecorder
@@ -285,6 +290,7 @@ func TestRoundTripper_401ExchangeAndRetry(t *testing.T) {
 // TestRoundTripper_Rejects421OffFederation: a 421 to a host not in the
 // responding core's federation manifest is not followed.
 func TestRoundTripper_Rejects421OffFederation(t *testing.T) {
+	t.Parallel()
 	homeHits := atomic.Int32{}
 	homeCore := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
 		homeHits.Add(1)
@@ -318,6 +324,7 @@ func TestRoundTripper_Rejects421OffFederation(t *testing.T) {
 // TestRoundTripper_RejectsOffOrigin401ExchangeURL: a hint pointing
 // token_exchange_url off-origin must not leak the JWT.
 func TestRoundTripper_RejectsOffOrigin401ExchangeURL(t *testing.T) {
+	t.Parallel()
 	attackerHits := atomic.Int32{}
 	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attackerHits.Add(1)
@@ -351,6 +358,7 @@ func TestRoundTripper_RejectsOffOrigin401ExchangeURL(t *testing.T) {
 
 // TestRoundTripper_BodyReplayedOnRetry: a retried request replays its body.
 func TestRoundTripper_BodyReplayedOnRetry(t *testing.T) {
+	t.Parallel()
 	const payload = `{"provider":"github","owner":"acme","repo":"widget"}`
 	homeCore := newCrossJurisTestServer(t, func(s *crossJurisTestServer, w http.ResponseWriter, r *http.Request) {
 		s.record(r)
@@ -382,6 +390,7 @@ func TestRoundTripper_BodyReplayedOnRetry(t *testing.T) {
 
 // TestValidateExchangeURL pins the scheme / same-origin rules.
 func TestValidateExchangeURL(t *testing.T) {
+	t.Parallel()
 	mustParse := func(raw string) *url.URL {
 		u, err := url.Parse(raw)
 		if err != nil {
@@ -405,6 +414,7 @@ func TestValidateExchangeURL(t *testing.T) {
 
 // TestCacheExpiresAfterTTL: expired entries are evicted on lookup.
 func TestCacheExpiresAfterTTL(t *testing.T) {
+	t.Parallel()
 	rt := transportFor()
 	rt.storeToken("https://example.test", "tok")
 	if _, ok := rt.lookupToken("https://example.test"); !ok {
