@@ -30,7 +30,7 @@ import (
 )
 
 // GetRewindPoints returns available rewind points.
-// Uses checkpoint.GitStore.ListTemporaryCheckpoints for reading from shadow branches.
+// Uses checkpoint.TemporaryStore for reading from shadow branches.
 func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) ([]RewindPoint, error) {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
@@ -38,10 +38,11 @@ func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) (
 	}
 	defer repo.Close()
 
-	store, err := s.getCheckpointStore(ctx, repo)
+	stores, err := s.getCheckpointStores(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
+	store := stores.Temporary()
 
 	// Get current HEAD to find matching shadow branch
 	head, err := repo.Head()
@@ -58,7 +59,7 @@ func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) (
 
 	var allPoints []RewindPoint
 
-	// Collect checkpoint points from active sessions using checkpoint.GitStore
+	// Collect checkpoint points from active sessions using temporary storage.
 	// Cache session prompts by session ID to avoid re-reading the same prompt file
 	sessionPrompts := make(map[string]string)
 

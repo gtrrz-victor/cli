@@ -4210,7 +4210,9 @@ func TestCondenseSession_RedactionFailure_DropsTranscriptButWritesMetadata(t *te
 	}
 	require.True(t, found, "checkpoint metadata should be written even when transcript redaction fails")
 
-	_, err = store.ReadLatestSessionContent(context.Background(), checkpointID)
+	summary, err := checkpoint.ReadCommittedCheckpoint(context.Background(), store, checkpointID)
+	require.NoError(t, err)
+	_, err = checkpoint.ReadLatestSessionContent(context.Background(), store, checkpointID, summary)
 	require.ErrorIs(t, err, checkpoint.ErrNoTranscript, "transcript should be dropped when redaction fails")
 }
 

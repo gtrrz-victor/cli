@@ -329,7 +329,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 
 // resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
 // the checkpoint with the latest CreatedAt.
-func resolveLatestCheckpoint(ctx context.Context, store *checkpoint.GitStore, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, error) {
+func resolveLatestCheckpoint(ctx context.Context, store checkpoint.CommittedListReader, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, error) {
 	infoMap := make(map[id.CheckpointID]strategy.CheckpointInfo, len(checkpointIDs))
 	for _, cpID := range checkpointIDs {
 		metadata, readErr := readCheckpointInfoFromStore(ctx, store, cpID)

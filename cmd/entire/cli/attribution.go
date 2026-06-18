@@ -114,10 +114,15 @@ type attributionSummary struct {
 	MixedPercentage  int `json:"mixed_percentage"`
 }
 
+type attributionSessionMetadataPromptsReader interface {
+	checkpoint.CommittedReader
+	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.SessionContent, error)
+}
+
 type attributionResolver struct {
 	ctx         context.Context
 	repo        *git.Repository
-	store       *checkpoint.GitStore
+	store       attributionSessionMetadataPromptsReader
 	fetchOnMiss bool
 
 	commitCache     map[string]*object.Commit
