@@ -1,15 +1,18 @@
 package strategy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,8 +49,8 @@ func TestResolveOPFDecision_Precedence(t *testing.T) {
 		{name: "env_yes_case_insensitive", env: "YES", promptDefault: "", hasTTY: false, prompter: promptNever, want: OPFRun},
 		{name: "env_no_with_whitespace", env: "  no  ", promptDefault: "", hasTTY: false, prompter: promptNever, want: OPFSkip},
 		// Setting wins over prompt
-		{name: "setting_always_skips_prompt", env: "", promptDefault: settings.OPFPromptAlways, hasTTY: true, prompter: promptNever, want: OPFRun},
 		{name: "setting_never_skips_prompt", env: "", promptDefault: settings.OPFPromptNever, hasTTY: true, prompter: promptNever, want: OPFSkip},
+		{name: "setting_always_skips_prompt", env: "", promptDefault: settings.OPFPromptAlways, hasTTY: true, prompter: promptNever, want: OPFRun},
 		// Non-TTY fallback: run (matches the "if enabled, just run" semantics)
 		{name: "no_tty_auto_runs", env: "", promptDefault: "", hasTTY: false, prompter: promptNever, want: OPFRun},
 		{name: "no_tty_ignores_ask_setting", env: "", promptDefault: settings.OPFPromptAsk, hasTTY: false, prompter: promptNever, want: OPFRun},
@@ -147,4 +150,42 @@ func TestPersistOPFPromptDefaultAlways_CreatesFileFromScratch(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(got, &parsed))
 	require.Equal(t, settings.OPFPromptAlways, parsed.Redaction.OPF.PromptDefault)
+}
+
+// TestPrePush_OPFProgressUsesConfiguredWriter pins the test-noise escape hatch:
+// PrePush still emits the non-interactive OPF progress notice in production,
+// but tests can redirect it away from process stderr.
+func TestPrePush_OPFProgressUsesConfiguredWriter(t *testing.T) {
+	tmpDir := t.TempDir()
+	testutil.InitRepo(t, tmpDir)
+	testutil.WriteFile(t, tmpDir, "f.txt", "init")
+	testutil.GitAdd(t, tmpDir, "f.txt")
+	testutil.GitCommit(t, tmpDir, "init")
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, paths.EntireDir), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, paths.EntireDir, "settings.json"), []byte(`{
+  "enabled": true,
+  "redaction": {
+    "openai_privacy_filter": {
+      "enabled": true,
+      "categories": {"private_person": true}
+    }
+  }
+}`), 0o644))
+	t.Chdir(tmpDir)
+	configureFakeOPF(t, &fakeOPFForRewrite{})
+
+	var out bytes.Buffer
+	withOPFPrePushProgressWriterForTest(t, &out)
+
+	require.NoError(t, (&ManualCommitStrategy{}).PrePush(t.Context(), "origin"))
+	require.Contains(t, out.String(), "OpenAI Privacy Filter: scanning checkpoints before push")
+}
+
+func withOPFPrePushProgressWriterForTest(t testing.TB, w io.Writer) {
+	t.Helper()
+	previous := opfPrePushProgressWriter
+	opfPrePushProgressWriter = w
+	t.Cleanup(func() {
+		opfPrePushProgressWriter = previous
+	})
 }

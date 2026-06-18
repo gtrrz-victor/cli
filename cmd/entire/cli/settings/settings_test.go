@@ -955,7 +955,7 @@ func TestLoadFromBytes_OPFSettings_RejectsOnFailureField(t *testing.T) {
 
 // TestLoadFromBytes_OPFSettings_PromptDefault covers parsing + validation
 // of the prompt_default field added for the pre-push prompt UX. Empty is
-// allowed (treated as "ask"); ask/always/never are the only valid values.
+// allowed (treated as "ask"); ask/never/always are the only valid values.
 func TestLoadFromBytes_OPFSettings_PromptDefault(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -965,8 +965,8 @@ func TestLoadFromBytes_OPFSettings_PromptDefault(t *testing.T) {
 		wantVal string
 	}{
 		{name: "ask", value: `"ask"`, wantVal: "ask"},
-		{name: "always", value: `"always"`, wantVal: "always"},
 		{name: "never", value: `"never"`, wantVal: "never"},
+		{name: "always", value: `"always"`, wantVal: "always"},
 		{name: "empty_string_allowed_as_ask", value: `""`, wantVal: ""},
 		{name: "bogus_value_rejected", value: `"sometimes"`, wantErr: true},
 	}

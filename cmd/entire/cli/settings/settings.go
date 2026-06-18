@@ -243,8 +243,8 @@ type OPFSettings struct {
 
 	// PromptDefault controls whether the pre-push hook asks the user
 	// before running OPF. "" (default) and "ask" both surface the
-	// interactive prompt; "always" runs without asking; "never" skips
-	// OPF and pushes 7-layer content. ENTIRE_OPF=yes|no on the push
+	// interactive prompt; "never" skips OPF and pushes 7-layer content;
+	// "always" runs without asking. ENTIRE_OPF=yes|no on the push
 	// invocation overrides this setting per-push.
 	PromptDefault string `json:"prompt_default,omitempty"`
 }
@@ -252,8 +252,8 @@ type OPFSettings struct {
 // Valid PromptDefault values. Empty == OPFPromptAsk.
 const (
 	OPFPromptAsk    = "ask"
-	OPFPromptAlways = "always"
 	OPFPromptNever  = "never"
+	OPFPromptAlways = "always"
 )
 
 // GetCommitLinking returns the effective commit linking mode.
@@ -993,11 +993,11 @@ func validateOPFSettings(opf *OPFSettings) error {
 		return fmt.Errorf("openai_privacy_filter.timeout_seconds must be greater than or equal to 0 (got %d)", opf.TimeoutSeconds)
 	}
 	switch opf.PromptDefault {
-	case "", OPFPromptAsk, OPFPromptAlways, OPFPromptNever:
+	case "", OPFPromptAsk, OPFPromptNever, OPFPromptAlways:
 		// ok
 	default:
 		return fmt.Errorf("openai_privacy_filter.prompt_default must be one of %q, %q, %q (got %q)",
-			OPFPromptAsk, OPFPromptAlways, OPFPromptNever, opf.PromptDefault)
+			OPFPromptAsk, OPFPromptNever, OPFPromptAlways, opf.PromptDefault)
 	}
 	return nil
 }

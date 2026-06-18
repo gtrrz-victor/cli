@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 
@@ -17,6 +18,8 @@ import (
 // Ctrl-C) at the OPF prompt. PrePush returns it verbatim; the hook
 // command propagates the non-zero exit code so git push aborts.
 var errOPFAbortedByUser = errors.New("OPF prompt aborted by user; push cancelled")
+
+var opfPrePushProgressWriter io.Writer = os.Stderr
 
 // PrePush is called by the git pre-push hook before pushing to a remote.
 // It pushes each ref in refs.Push alongside the user's push.
@@ -53,7 +56,7 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 		if cfg != nil && cfg.Redaction != nil {
 			opfCfg = cfg.Redaction.OpenAIPrivacyFilter
 		}
-		decision, decisionErr := resolveOPFDecisionForPrePush(ctx, opfCfg, os.Stderr)
+		decision, decisionErr := resolveOPFDecisionForPrePush(ctx, opfCfg, opfPrePushProgressWriter)
 		if decisionErr != nil {
 			logging.Warn(ctx, "OPF pre-push decision failed; aborting push",
 				slog.String("error", decisionErr.Error()),
