@@ -28,6 +28,7 @@ const (
 	defaultTrailReviewLimit     = 100
 	trailReviewStatusAny        = "any"
 	trailReviewFreshnessCurrent = "current"
+	trailReviewFreshnessStale   = "stale"
 	trailReviewFreshnessAny     = "any"
 	trailReviewStatusOpen       = "open"
 	trailReviewStatusResolved   = "resolved"
@@ -533,7 +534,7 @@ func normalizeTrailReviewListOptions(opts trailReviewListOptions) (trailReviewLi
 	opts.Severity = severity
 	if freshness := strings.TrimSpace(opts.Freshness); freshness != "" {
 		switch freshness {
-		case trailReviewFreshnessCurrent, "stale", trailReviewFreshnessAny:
+		case trailReviewFreshnessCurrent, trailReviewFreshnessStale, trailReviewFreshnessAny:
 		default:
 			return opts, fmt.Errorf("invalid freshness filter %q: valid values are current, stale, any", opts.Freshness)
 		}
@@ -1370,7 +1371,7 @@ func countTrailReviewComments(comments []api.TrailReviewComment) trailReviewComm
 				counts.OpenLow++
 			}
 		}
-		if comment.StaleOutcome == "stale" {
+		if comment.StaleOutcome == trailReviewFreshnessStale {
 			counts.Stale++
 		}
 	}
