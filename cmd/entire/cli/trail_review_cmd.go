@@ -245,7 +245,11 @@ func newTrailReviewApplyCmd(targetOpts *trailReviewTargetOptions) *cobra.Command
 	cmd := &cobra.Command{
 		Use:   "apply [<trail>] <finding-id>",
 		Short: "Apply a finding's unified-diff suggestion",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Apply a finding's unified-diff suggestion to the current worktree.
+
+By default this only changes files. Pass --resolve to update the finding's
+lifecycle status after the patch applies successfully.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selector, commentID, err := parseTrailSelectorAndCommentID(args, targetOpts.Selector)
 			if err != nil {
@@ -255,10 +259,6 @@ func newTrailReviewApplyCmd(targetOpts *trailReviewTargetOptions) *cobra.Command
 		},
 	}
 	cmd.Flags().BoolVar(&opts.Resolve, "resolve", false, "Mark the finding resolved after applying")
-	cmd.Long = `Apply a finding's unified-diff suggestion to the current worktree.
-
-By default this only changes files. Pass --resolve to update the finding's
-lifecycle status after the patch applies successfully.`
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "Only check whether the patch applies; do not modify files")
 	return cmd
 }
@@ -1283,10 +1283,11 @@ func printTrailReviewComments(w io.Writer, comments []api.TrailReviewComment, ha
 }
 
 func printTrailReviewCommentsTable(w io.Writer, comments []api.TrailReviewComment) {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ID\tSEV\tSTATUS\tFRESHNESS\tLOCATION\tSUMMARY")
+	var table bytes.Buffer
+	tw := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSEV\tSTATUS\tFRESHNESS\tLOCATION\tSUMMARY")
 	for _, comment := range comments {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			abbreviate12(comment.ID),
 			severityTableDisplay(comment.Severity),
 			comment.Status,
@@ -1296,6 +1297,13 @@ func printTrailReviewCommentsTable(w io.Writer, comments []api.TrailReviewCommen
 		)
 	}
 	_ = tw.Flush()
+	printIndentedBlock(w, table.String(), "  ")
+}
+
+func printIndentedBlock(w io.Writer, block, indent string) {
+	for line := range strings.SplitSeq(strings.TrimRight(block, "\n"), "\n") {
+		fmt.Fprintln(w, indent+line)
+	}
 }
 
 func printTrailReviewCommentCreated(w io.Writer, target trailReviewTarget, comment api.TrailReviewComment) {
