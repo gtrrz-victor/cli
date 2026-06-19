@@ -74,9 +74,12 @@ func reviewerDeadlineFired(parentCtx, agentCtx context.Context, waitErr error) b
 		return true
 	}
 	// Fallback only for adapters that formatted ctx.Err() without %w (for
-	// example "agent failed: context deadline exceeded"). Do not classify an
-	// unrelated non-nil Wait error as a timeout just because the reviewer
-	// deadline fired while/after Wait was returning.
+	// example "agent failed: context deadline exceeded"). Do not treat
+	// context.Canceled as a timeout signal here: a context whose own deadline
+	// fired reports context.DeadlineExceeded, while context.Canceled commonly
+	// means parent/user cancellation. Do not classify an unrelated non-nil Wait
+	// error as a timeout just because the reviewer deadline fired while/after Wait
+	// was returning.
 	if !strings.Contains(waitErr.Error(), context.DeadlineExceeded.Error()) {
 		return false
 	}

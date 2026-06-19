@@ -619,6 +619,25 @@ func TestReviewerDeadlineFired_EarlierAgentDeadlineIsReviewerTimeout(t *testing.
 	}
 }
 
+func TestReviewerDeadlineFired_ContextCanceledIsNotReviewerTimeout(t *testing.T) {
+	t.Parallel()
+	parentCtx := context.Background()
+	agentCtx, cancelAgent := context.WithTimeout(parentCtx, 20*time.Millisecond)
+	defer cancelAgent()
+
+	select {
+	case <-agentCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("agent context deadline did not fire")
+	}
+	if errors.Is(agentCtx.Err(), context.Canceled) {
+		t.Fatal("deadline-fired context should report DeadlineExceeded, not Canceled")
+	}
+	if reviewerDeadlineFired(parentCtx, agentCtx, context.Canceled) {
+		t.Fatal("context.Canceled wait error should not classify as reviewer timeout")
+	}
+}
+
 func TestRun_ReviewerTimeout(t *testing.T) {
 	t.Parallel()
 	rec := &stubSinkRecorder{}
