@@ -501,11 +501,11 @@ The phase state machine, metadata directory layout, sharded checkpoint format, m
 - Test with `mise run test` - strategy tests are in `*_test.go` files
 - Keep this file and `docs/architecture/sessions-and-checkpoints.md` current when changing strategy behavior (`AGENTS.md` is a symlink to this file)
 
-### `entire inspect` Command (aliased as `entire review`)
+### `entire review` Command
 
-`entire inspect` runs a named review profile: a set of **inspector** agents run a shared task in parallel, then a single **judge** consolidates their reports into the final verdict in a closing round. Inspector sessions are immutable facts attached to checkpoints; the final verdict is stored locally in the review manifest. On the next `git commit`, inspector sessions are condensed into the checkpoint metadata, permanently recording that the code was reviewed and which skills were run.
+`entire review` runs a set of configured review skills inside an agent session. The review session is an immutable fact attached to a checkpoint — no verdict, no status tracking, no empty commits. On the next `git commit`, the review session is condensed into the checkpoint metadata alongside normal sessions, permanently recording that the code was reviewed and which skills were run.
 
-Profiles live under `review_profiles` in `.entire/settings.json` (shared) or `.entire/settings.local.json` (per-developer), merged per profile name by `settings.Load`; setup lets the user choose the destination. Adapter-backed inspectors (claude-code, codex, gemini-cli) receive `ENTIRE_REVIEW_*` env vars that the `UserPromptSubmit` hook reads to tag the session as `Kind = "agent_review"`. Multi-agent runs use a TUI dashboard + automatic single-judge synthesis.
+Configured per-agent in `.entire/settings.json` (`EntireSettings.Review`); launchable agents (claude-code, codex, gemini-cli) receive `ENTIRE_REVIEW_*` env vars that the `UserPromptSubmit` hook reads to tag the session as `Kind = "agent_review"`. Multi-agent runs use a TUI dashboard + opt-in cross-agent synthesis.
 
 See [Review Command](docs/architecture/review-command.md) for the full command surface, settings schema, env-var handshake, multi-agent UI, anti-features (do NOT recreate), and key-file map.
 
