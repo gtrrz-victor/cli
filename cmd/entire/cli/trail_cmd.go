@@ -1010,7 +1010,7 @@ func runTrailCheckout(ctx context.Context, w, errW io.Writer, insecureHTTP bool,
 
 		branch := strings.TrimSpace(found.Branch)
 		if branch == "" {
-			return fmt.Errorf("trail %q has no branch to check out", found.Title)
+			return fmt.Errorf("%s has no branch to check out", describeTrailRef(found))
 		}
 
 		currentBranch, _ := GetCurrentBranch(ctx) //nolint:errcheck // best-effort; a detached HEAD just means "not already on the branch"
@@ -1022,11 +1022,16 @@ func runTrailCheckout(ctx context.Context, w, errW io.Writer, insecureHTTP bool,
 		fmt.Fprintf(w, "Checking out %s\n", describeTrailRef(found))
 		// switchToBranchForResume handles local vs. remote-only branches, the
 		// uncommitted-changes guard, and the fetch prompt; reuse it rather than
-		// re-deriving that logic here. proceed=false (user declined the fetch) is
-		// a clean stop, not an error.
+		// re-deriving that logic here.
 		proceed, err := switchToBranchForResume(ctx, w, errW, branch, force)
-		if err != nil || !proceed {
+		if err != nil {
 			return err
+		}
+		if !proceed {
+			// The user declined to fetch a remote-only branch — a clean stop, not
+			// an error. Say so explicitly so the preceding "Checking out …" line
+			// doesn't read as a successful switch.
+			fmt.Fprintf(w, "Checkout of branch %s cancelled.\n", branch)
 		}
 		return nil
 	})
