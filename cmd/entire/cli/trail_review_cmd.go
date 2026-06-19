@@ -689,18 +689,20 @@ func loadTrailReviewCommentPatchFile(opts trailReviewCommentAddOptions, stdin io
 func buildTrailReviewCommentPatchRequest(opts trailReviewUpdateOptions) (api.TrailReviewCommentPatchRequest, error) {
 	var req api.TrailReviewCommentPatchRequest
 	if opts.BodyChanged {
-		req.Body = stringPtr(strings.TrimSpace(opts.Body))
+		body := strings.TrimSpace(opts.Body)
+		if body == "" {
+			return req, errors.New("finding body is required (pass --body)")
+		}
+		req.Body = stringPtr(body)
 	}
 	if opts.SeverityChanged {
 		severity := strings.ToLower(strings.TrimSpace(opts.Severity))
-		if severity != "" {
-			switch severity {
-			case trailReviewSeverityHigh, trailReviewSeverityMedium, trailReviewSeverityLow:
-			default:
-				return req, fmt.Errorf("invalid severity %q: valid values are high, medium, low", opts.Severity)
-			}
+		switch severity {
+		case trailReviewSeverityHigh, trailReviewSeverityMedium, trailReviewSeverityLow:
+			req.Severity = stringPtr(severity)
+		default:
+			return req, fmt.Errorf("invalid severity %q: valid values are high, medium, low", opts.Severity)
 		}
-		req.Severity = stringPtr(severity)
 	}
 	if opts.ConfidenceChanged {
 		if opts.Confidence < 0 || opts.Confidence > 1 {

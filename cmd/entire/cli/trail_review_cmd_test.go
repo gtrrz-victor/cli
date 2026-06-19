@@ -214,6 +214,12 @@ func TestBuildTrailReviewCommentPatchRequest(t *testing.T) {
 	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: "urgent", SeverityChanged: true}); err == nil {
 		t.Fatal("expected an error for invalid severity")
 	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Body: " ", BodyChanged: true}); err == nil {
+		t.Fatal("expected an error for empty body")
+	}
+	if _, err := buildTrailReviewCommentPatchRequest(trailReviewUpdateOptions{Severity: " ", SeverityChanged: true}); err == nil {
+		t.Fatal("expected an error for empty severity")
+	}
 }
 
 func TestBuildTrailReviewCommentInput(t *testing.T) {
