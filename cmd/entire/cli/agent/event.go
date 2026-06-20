@@ -148,6 +148,10 @@ type Event struct {
 	// handlers prefer this over transcript-based calculation when populated.
 	TokenUsage *TokenUsage
 
+	// SkillEvents records native agent skill signals surfaced by hooks.
+	// The lifecycle layer persists these to session state and later checkpoint metadata.
+	SkillEvents []SkillEvent
+
 	// Metadata holds agent-specific state that the framework stores and makes available
 	// on subsequent events. Examples: Pi's activeLeafId, Cursor's is_background_agent.
 	Metadata map[string]string

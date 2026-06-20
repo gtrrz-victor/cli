@@ -54,18 +54,14 @@ const (
 
 ## Interface
 
-### Session Operations
+### Session Access
 
-Sessions are accessed via standalone functions in `strategy/session.go`:
-
-```go
-// ListSessions returns all sessions from entire/checkpoints/v1,
-// plus additional sessions from strategies implementing SessionSource.
-func ListSessions() ([]Session, error)
-
-// GetSession finds a session by ID (supports prefix matching).
-func GetSession(sessionID string) (*Session, error)
-```
+`strategy/session.go` keeps the `Session` and `Checkpoint` data types used by
+status/explain formatting. Active session state is read from `.git/entire-sessions/`
+through `session.StateStore`; committed checkpoint/session content is read
+through a `checkpoint.GitStore` built with resolved committed refs (for example,
+`checkpoint.NewGitStore(repo, checkpoint.ResolveCommittedRefs(ctx))`) and
+command-specific strategy methods such as `GetSessionInfo`.
 
 ### Checkpoint Storage (Low-Level)
 
@@ -78,7 +74,8 @@ type Store interface {
     ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error)
     ListTemporary(ctx context.Context) ([]TemporaryInfo, error)
 
-    // Committed checkpoint operations (entire/checkpoints/v1 branch - metadata only)
+    // Committed checkpoint operations (metadata only)
+    // Writes target v1. Reads use the configured committed-read ref.
     WriteCommitted(ctx context.Context, opts WriteCommittedOptions) error
     ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
     ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
@@ -159,6 +156,13 @@ Location: `.git/entire-sessions/<session-id>.json`
 
 Stored in git common dir (shared across worktrees). Tracks active session info.
 
+The state records `Branch` — the branch HEAD pointed at on the session's last turn
+(captured each turn start, so it follows branches created/renamed after the
+session began). `entire resume` (bare, no arg) uses it to list stopped sessions
+and map each back to its branch; for sessions recorded before the field existed
+it falls back to deriving the branch from the session's last checkpoint ID found
+in branch-only commit trailers.
+
 ### Temporary Checkpoints
 
 Branch: `entire/<commit[:7]>-<worktreeHash[:6]>`
@@ -230,6 +234,24 @@ Metadata only, sharded by checkpoint ID. Supports **multiple sessions per checkp
   }
 }
 ```
+
+`checkpoints_count` in the root summary is the aggregate displayed "steps" count: the sum of per-session prompt-window counts. Despite the historical name, it is not a count of checkpoint records.
+
+**Session-level metadata.json (`CommittedMetadata`, abbreviated):**
+```json
+{
+  "checkpoint_id": "abc123def456",
+  "session_id": "2025-12-01-8f76b0e8-b8f1-4a87-9186-848bdd83d62e",
+  "strategy": "manual-commit",
+  "created_at": "2025-12-01T12:34:56Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 3,
+  "files_touched": ["file1.txt", "file2.txt"]
+}
+```
+
+In session metadata, `checkpoints_count` is the displayed prompt-window count for that session. `save_step_count` records SaveStep-created shadow-branch commits and is the conservative "real checkpoint work happened" signal; it is omitted when zero (for example, commit-only/fallback sessions). `save_step_count` is not aggregated into the root `CheckpointSummary`.
 
 When condensing multiple concurrent sessions:
 - All sessions are stored in numbered subdirectories using 0-based indexing (`0/`, `1/`, `2/`, ...)
@@ -319,7 +341,7 @@ The checkpoint ID creates a **bidirectional link**: user commits can find their 
 
 ```
 strategy/
-├── session.go           # Session and Checkpoint types, ListSessions(), GetSession()
+├── session.go           # Session and Checkpoint types
 
 session/
 ├── state.go             # Active session state (StateStore, .git/entire-sessions/)

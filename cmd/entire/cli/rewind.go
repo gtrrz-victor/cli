@@ -18,6 +18,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/gitrepo"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -49,8 +50,9 @@ func newRewindCmd() *cobra.Command {
 	var resetFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "rewind",
-		Short: "Browse checkpoints and rewind your session",
+		Use:        "rewind",
+		Short:      "Browse checkpoints and rewind your session",
+		Deprecated: "and will be removed in a future release",
 		Long: `Interactive command for rewinding and managing agent sessions.
 
 This command will show you an interactive list of recent checkpoints.  You'll be
@@ -318,7 +320,7 @@ func runRewindInteractive(ctx context.Context, w, errW io.Writer) error { //noli
 		if sessionID == "" {
 			sessionID = filepath.Base(selectedPoint.MetadataDir)
 		}
-		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+		transcriptFile = legacyFallbackTranscriptPath(selectedPoint.MetadataDir)
 	}
 
 	// Try to restore transcript using the appropriate method:
@@ -342,7 +344,7 @@ func runRewindInteractive(ctx context.Context, w, errW io.Writer) error { //noli
 		}
 	}
 
-	if !restored {
+	if !restored && transcriptFile != "" {
 		// Fall back to local file
 		if err := restoreSessionTranscript(ctx, w, transcriptFile, sessionID, agent); err != nil {
 			fmt.Fprintf(errW, "Warning: failed to restore session transcript: %v\n", err)
@@ -521,7 +523,7 @@ func runRewindToInternal(ctx context.Context, w, errW io.Writer, commitID string
 		if sessionID == "" {
 			sessionID = filepath.Base(selectedPoint.MetadataDir)
 		}
-		transcriptFile = filepath.Join(selectedPoint.MetadataDir, paths.TranscriptFileNameLegacy)
+		transcriptFile = legacyFallbackTranscriptPath(selectedPoint.MetadataDir)
 	}
 
 	// Try to restore transcript using the appropriate method:
@@ -545,7 +547,7 @@ func runRewindToInternal(ctx context.Context, w, errW io.Writer, commitID string
 		}
 	}
 
-	if !restored {
+	if !restored && transcriptFile != "" {
 		// Fall back to local file
 		if err := restoreSessionTranscript(ctx, w, transcriptFile, sessionID, agent); err != nil {
 			fmt.Fprintf(errW, "Warning: failed to restore session transcript: %v\n", err)
@@ -663,6 +665,30 @@ func handleLogsOnlyResetNonInteractive(ctx context.Context, w, errW io.Writer, s
 	return nil
 }
 
+// legacyFallbackTranscriptPath builds the local-disk fallback transcript path
+// (<metadataDir>/full.log) used when checkpoint-storage and shadow-branch
+// restores are unavailable. metadataDir originates from the Entire-Metadata
+// commit trailer, which is attacker-influenceable, and the result is read via
+// copyFile -> os.ReadFile with no root containment on the source.
+//
+// Legitimate values are always Entire-owned metadata under .entire/metadata/, so
+// require the cleaned path to stay within that subtree. paths.IsSubpath also
+// rejects absolute, volume-relative, and traversing paths, so a crafted trailer
+// cannot redirect the read to arbitrary in-repo or CWD-relative locations (e.g.
+// "notes/full.log" or "."). Returns "" when the metadata dir is empty or unsafe,
+// which makes the local-file fallback fail closed. filepath.Join cleans the
+// result, avoiding surprising ".//a/../b" forms.
+func legacyFallbackTranscriptPath(metadataDir string) string {
+	if metadataDir == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(metadataDir)
+	if !paths.IsSubpath(paths.EntireMetadataDir, cleaned) {
+		return ""
+	}
+	return filepath.Join(cleaned, paths.TranscriptFileNameLegacy)
+}
+
 func restoreSessionTranscript(ctx context.Context, w io.Writer, transcriptFile, sessionID string, agent agentpkg.Agent) error {
 	sessionFile, err := resolveTranscriptPath(ctx, sessionID, agent)
 	if err != nil {
@@ -690,12 +716,13 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 	if err != nil {
 		return "", fmt.Errorf("failed to open git repository: %w", err)
 	}
+	defer repo.Close()
 
-	store, err := checkpoint.NewCommittedReader(ctx, repo, checkpoint.CommittedReaderOptions{})
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
 	if err != nil {
-		return "", fmt.Errorf("prepare checkpoint store: %w", err)
+		return "", fmt.Errorf("open checkpoint store: %w", err)
 	}
-	content, returnedSessionID, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, store, cpID)
+	content, returnedSessionID, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Primary, cpID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get session log: %w", err)
 	}
@@ -729,10 +756,11 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 // This is used for uncommitted checkpoints where the transcript is stored in the shadow branch tree.
 func restoreSessionTranscriptFromShadow(ctx context.Context, commitHash, metadataDir, sessionID string, agent agentpkg.Agent) (string, error) {
 	// Open repository
-	repo, err := git.PlainOpenWithOptions(".", &git.PlainOpenOptions{DetectDotGit: true})
+	repo, err := gitrepo.OpenCurrent(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to open repository: %w", err)
 	}
+	defer repo.Close()
 
 	// Parse commit hash
 	hash := plumbing.NewHash(commitHash)
@@ -741,8 +769,11 @@ func restoreSessionTranscriptFromShadow(ctx context.Context, commitHash, metadat
 	}
 
 	// Get transcript from shadow branch commit tree
-	store := checkpoint.NewGitStore(repo)
-	content, err := store.GetTranscriptFromCommit(ctx, hash, metadataDir, agent.Type())
+	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{})
+	if err != nil {
+		return "", fmt.Errorf("open checkpoint store: %w", err)
+	}
+	content, err := stores.Temporary().GetTranscriptFromCommit(ctx, hash, metadataDir, agent.Type())
 	if err != nil {
 		return "", fmt.Errorf("failed to get transcript from shadow branch: %w", err)
 	}
@@ -1069,6 +1100,7 @@ func getCurrentHeadHash(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer repo.Close()
 
 	head, err := repo.Head()
 	if err != nil {
@@ -1088,6 +1120,7 @@ func checkResetSafety(ctx context.Context, targetCommitHash string, uncommittedC
 	if err != nil {
 		return nil, err
 	}
+	defer repo.Close()
 
 	// Check for uncommitted changes
 	if uncommittedChangesWarning != "" {

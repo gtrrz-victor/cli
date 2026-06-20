@@ -12,15 +12,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/redact"
 )
 
 const (
@@ -30,13 +29,6 @@ const (
 	EntireSettingsLocalFile = ".entire/settings.local.json"
 	// ClonePreferencesFile is the path inside the git common dir for clone-local preferences.
 	ClonePreferencesFile = "entire/preferences.json"
-	// defaultGenerationRetentionDays is the default retention window for archived
-	// checkpoints v2 raw-transcript generations when no override is configured.
-	defaultGenerationRetentionDays = 14
-)
-
-var (
-	checkpointsVersionWarningOnce sync.Once
 )
 
 type worktreeRootContextKey struct{}
@@ -101,6 +93,10 @@ type EntireSettings struct {
 	// multi-agent review findings with `entire review --fix`.
 	ReviewFixAgent string `json:"review_fix_agent,omitempty"`
 
+	// Investigate holds configuration for `entire investigate`. Empty means
+	// `entire investigate` triggers the first-run picker.
+	Investigate *InvestigateConfig `json:"investigate,omitempty"`
+
 	// CommitLinking controls how commits are linked to agent sessions.
 	// "always" = auto-link without prompting, "prompt" = ask on each commit.
 	// Defaults to "prompt" (preserves existing user behavior).
@@ -150,6 +146,12 @@ type ClonePreferences struct {
 	// Once true, `entire review` stops prompting on every invocation; the
 	// user can re-enable by editing this file or deleting the key.
 	ReviewMigrationDismissed bool `json:"review_migration_dismissed,omitempty"`
+
+	// TrailsEnabled caches whether trails are enabled for this repository on the
+	// API. Pointer shape distinguishes "unknown/not refreshed yet" (nil) from a
+	// definitive false. This is clone-local and not committed so hook-time agent
+	// context injection can avoid network/auth work on the prompt path.
+	TrailsEnabled *bool `json:"trails_enabled,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
@@ -209,6 +211,10 @@ type RedactionSettings struct {
 	// "[REDACTED_<LABEL>]" token used by PII. Failed regex compilations are
 	// logged via slog.Warn and the rule is skipped.
 	CustomRedactions map[string]string `json:"custom_redactions,omitempty"`
+
+	// OpenAIPrivacyFilter is the optional 8th redaction layer (opt-in).
+	// See docs/security-and-privacy.md.
+	OpenAIPrivacyFilter *OPFSettings `json:"openai_privacy_filter,omitempty"`
 }
 
 // PIISettings configures PII detection categories.
@@ -220,6 +226,35 @@ type PIISettings struct {
 	Address        *bool             `json:"address,omitempty"`
 	CustomPatterns map[string]string `json:"custom_patterns,omitempty"`
 }
+
+// OPFSettings configures the optional OpenAI Privacy Filter detection layer.
+// Disabled by default. Runs only at condensation/export boundaries — see
+// docs/security-and-privacy.md.
+//
+// There is intentionally no "on_failure" field: warn-only is the only mode
+// the runtime currently supports, and DisallowUnknownFields will reject any
+// future user who tries to set it. Adding the field again should land in
+// lockstep with the runtime enforcement.
+type OPFSettings struct {
+	Enabled        bool            `json:"enabled,omitempty"`
+	Categories     map[string]bool `json:"categories,omitempty"`
+	Command        string          `json:"command,omitempty"`
+	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
+
+	// PromptDefault controls whether the pre-push hook asks the user
+	// before running OPF. "" (default) and "ask" both surface the
+	// interactive prompt; "never" skips OPF and pushes 7-layer content;
+	// "always" runs without asking. ENTIRE_OPF=yes|no on the push
+	// invocation overrides this setting per-push.
+	PromptDefault string `json:"prompt_default,omitempty"`
+}
+
+// Valid PromptDefault values. Empty == OPFPromptAsk.
+const (
+	OPFPromptAsk    = "ask"
+	OPFPromptNever  = "never"
+	OPFPromptAlways = "always"
+)
 
 // GetCommitLinking returns the effective commit linking mode.
 // Returns the explicit value if set, otherwise defaults to "prompt"
@@ -278,6 +313,45 @@ func (s *EntireSettings) ReviewConfigFor(agentName string) ReviewConfig {
 		return ReviewConfig{}
 	}
 	return s.Review[agentName]
+}
+
+// InvestigateConfig holds the configuration for `entire investigate`.
+// Unlike ReviewConfig, investigate runs the same shared prompt across
+// all configured agents, so the schema is a flat agent list with global
+// loop knobs rather than per-agent skill lists.
+type InvestigateConfig struct {
+	// Agents is the ordered list of agent names to round-robin during the loop.
+	Agents []string `json:"agents,omitempty"`
+
+	// MaxTurns is the per-agent turn budget. Defaults to 2 when zero
+	// (see investigate.defaultMaxTurns).
+	MaxTurns int `json:"max_turns,omitempty"`
+
+	// Quorum is the count of `approve` stances needed to terminate the loop.
+	// Zero means "all agents must approve" (matches marvin's default).
+	Quorum int `json:"quorum,omitempty"`
+
+	// AlwaysPrompt is appended to every turn's composed prompt, parallel
+	// to ReviewConfig.Prompt.
+	AlwaysPrompt string `json:"always_prompt,omitempty"`
+}
+
+// IsZero reports whether the config is effectively unset.
+func (c *InvestigateConfig) IsZero() bool {
+	if c == nil {
+		return true
+	}
+	return len(c.Agents) == 0 && c.MaxTurns == 0 && c.Quorum == 0 && c.AlwaysPrompt == ""
+}
+
+// InvestigateConfig returns the configured investigate config. Returns nil
+// when no configuration is present; callers should check IsZero (or guard
+// for nil) to decide whether configuration is present.
+func (s *EntireSettings) InvestigateConfig() *InvestigateConfig {
+	if s == nil {
+		return nil
+	}
+	return s.Investigate
 }
 
 // Load loads the Entire settings from .entire/settings.json, then applies
@@ -462,6 +536,25 @@ func SaveProjectRaw(path string, raw map[string]json.RawMessage) error {
 	return nil
 }
 
+// SaveLocalRaw writes a generic JSON object back to .entire/settings.local.json
+// atomically (temp file + rename). Mirrors SaveProjectRaw for the per-developer
+// overrides file; the only difference is the error wording, which says "local
+// settings" so failure messages match the file actually being written.
+//
+// Pair with LoadLocalRaw for read-modify-write flows that target the local
+// override (e.g. persisting an interactive prompt's "always" choice without
+// touching the project-wide settings file).
+func SaveLocalRaw(path string, raw map[string]json.RawMessage) error {
+	data, err := jsonutil.MarshalIndentWithNewline(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal local settings: %w", err)
+	}
+	if err := jsonutil.WriteFileAtomic(path, data, 0o644); err != nil {
+		return fmt.Errorf("writing local settings: %w", err)
+	}
+	return nil
+}
+
 // ClonePreferencesPath returns the clone-local preferences path in the git common dir.
 func ClonePreferencesPath(ctx context.Context) (string, error) {
 	commonDir, err := session.GetGitCommonDir(ctx)
@@ -498,6 +591,11 @@ func LoadFromBytes(data []byte) (*EntireSettings, error) {
 	if err := dec.Decode(s); err != nil {
 		return nil, fmt.Errorf("parsing settings: %w", err)
 	}
+	if s.Redaction != nil {
+		if err := validateOPFSettings(s.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -530,6 +628,12 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 	// SummaryGeneration is NOT validated here — individual files may
 	// legitimately contain only a model (provider comes from another file).
 	// Validation happens after merge in Load().
+
+	if settings.Redaction != nil {
+		if err := validateOPFSettings(settings.Redaction.OpenAIPrivacyFilter); err != nil {
+			return nil, err
+		}
+	}
 
 	return settings, nil
 }
@@ -643,6 +747,26 @@ func mergeJSON(settings *EntireSettings, data []byte) error {
 		}
 	}
 
+	if err := mergeInvestigate(settings, raw); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// mergeInvestigate replaces the investigate config from the override (whole-object
+// replacement, parallel to how summary_generation is handled but simpler — the
+// investigate schema is small and lacks per-field merge semantics).
+func mergeInvestigate(settings *EntireSettings, raw map[string]json.RawMessage) error {
+	investigateRaw, ok := raw["investigate"]
+	if !ok {
+		return nil
+	}
+	var cfg InvestigateConfig
+	if err := unmarshalField("investigate", investigateRaw, &cfg); err != nil {
+		return err
+	}
+	settings.Investigate = &cfg
 	return nil
 }
 
@@ -842,7 +966,83 @@ func mergeRedaction(dst *RedactionSettings, data json.RawMessage) error {
 			}
 		}
 	}
+	if opfRaw, ok := raw["openai_privacy_filter"]; ok {
+		if dst.OpenAIPrivacyFilter == nil {
+			dst.OpenAIPrivacyFilter = &OPFSettings{}
+		}
+		if err := mergeOPFSettings(dst.OpenAIPrivacyFilter, opfRaw); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// validateOPFSettings rejects unknown category names so typos surface at
+// parse time. Silent zero-detection of a privacy category is effectively
+// a correctness bug — the user thinks they're protected but they're not.
+func validateOPFSettings(opf *OPFSettings) error {
+	if opf == nil {
+		return nil
+	}
+	for name := range opf.Categories {
+		if !redact.IsKnownOPFCategory(name) {
+			return fmt.Errorf("openai_privacy_filter.categories has unknown key %q (see docs/security-and-privacy.md for the supported set)", name)
+		}
+	}
+	if opf.TimeoutSeconds < 0 {
+		return fmt.Errorf("openai_privacy_filter.timeout_seconds must be greater than or equal to 0 (got %d)", opf.TimeoutSeconds)
+	}
+	switch opf.PromptDefault {
+	case "", OPFPromptAsk, OPFPromptNever, OPFPromptAlways:
+		// ok
+	default:
+		return fmt.Errorf("openai_privacy_filter.prompt_default must be one of %q, %q, %q (got %q)",
+			OPFPromptAsk, OPFPromptNever, OPFPromptAlways, opf.PromptDefault)
+	}
+	return nil
+}
+
+// mergeOPFSettings merges OPF overrides into existing OPFSettings. Only
+// fields present in the override JSON are applied; missing fields preserve
+// the base value.
+func mergeOPFSettings(dst *OPFSettings, data json.RawMessage) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing openai_privacy_filter: %w", err)
+	}
+	if v, ok := raw["enabled"]; ok {
+		if err := json.Unmarshal(v, &dst.Enabled); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.enabled: %w", err)
+		}
+	}
+	if v, ok := raw["categories"]; ok {
+		var cats map[string]bool
+		if err := json.Unmarshal(v, &cats); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.categories: %w", err)
+		}
+		if dst.Categories == nil {
+			dst.Categories = make(map[string]bool, len(cats))
+		}
+		for k, b := range cats {
+			dst.Categories[k] = b
+		}
+	}
+	if v, ok := raw["command"]; ok {
+		if err := json.Unmarshal(v, &dst.Command); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.command: %w", err)
+		}
+	}
+	if v, ok := raw["timeout_seconds"]; ok {
+		if err := json.Unmarshal(v, &dst.TimeoutSeconds); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.timeout_seconds: %w", err)
+		}
+	}
+	if v, ok := raw["prompt_default"]; ok {
+		if err := json.Unmarshal(v, &dst.PromptDefault); err != nil {
+			return fmt.Errorf("parsing openai_privacy_filter.prompt_default: %w", err)
+		}
+	}
+	return validateOPFSettings(dst)
 }
 
 // mergePIISettings merges PII overrides into existing PIISettings.
@@ -903,7 +1103,7 @@ func IsSetUp(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(settingsFileAbs)
+	_, err = os.Lstat(settingsFileAbs)
 	return err == nil
 }
 
@@ -934,50 +1134,6 @@ func IsSetUpAndEnabled(ctx context.Context) bool {
 		return false
 	}
 	return s.Enabled
-}
-
-// IsCheckpointsV2Enabled checks if checkpoints v2 is enabled in settings.
-// Returns false by default if settings cannot be loaded or the key is missing.
-func IsCheckpointsV2Enabled(ctx context.Context) bool {
-	settings, err := Load(ctx)
-	if err != nil {
-		return false
-	}
-	return settings.IsCheckpointsV2Enabled()
-}
-
-// CheckpointsVersion returns the configured checkpoints format version, or 1
-// if settings cannot be loaded or the value is unset/invalid.
-func CheckpointsVersion(ctx context.Context) int {
-	s, err := Load(ctx)
-	if err != nil {
-		return 1
-	}
-	version := s.CheckpointsVersion()
-	if s.StrategyOptions != nil {
-		if configured, ok := s.StrategyOptions["checkpoints_version"]; ok {
-			if _, supported := parseCheckpointsVersion(configured); !supported {
-				checkpointsVersionWarningOnce.Do(func() {
-					fmt.Fprintf(os.Stderr,
-						"[entire] unsupported strategy_options.checkpoints_version %v detected in settings. Falling back to the default version (1).\n",
-						configured,
-					)
-				})
-			}
-		}
-	}
-	return version
-}
-
-// WarnIfCheckpointsV2Disallowed emits the user-facing fallback warning when a
-// settings file still requests checkpoints v2. Call this from push-time flows
-// so users learn why v1 metadata is being pushed instead.
-func WarnIfCheckpointsV2Disallowed(ctx context.Context) {
-	s, err := Load(ctx)
-	if err != nil {
-		return
-	}
-	s.WarnIfCheckpointsV2Disallowed()
 }
 
 // IsFilteredFetchesEnabled checks if filtered fetches should be used.
@@ -1059,122 +1215,6 @@ func (s *EntireSettings) GetCheckpointRemote() *CheckpointRemoteConfig {
 		return nil
 	}
 	return &CheckpointRemoteConfig{Provider: provider, Repo: repo}
-}
-
-// IsCheckpointsV2Enabled checks if checkpoints v2 is enabled for read paths.
-// Existing v2 checkpoint metadata remains readable while new writes use v1.
-func (s *EntireSettings) IsCheckpointsV2Enabled() bool {
-	if s.StrategyOptions == nil {
-		return false
-	}
-	if val, ok := s.StrategyOptions["checkpoints_version"]; ok {
-		version, supported := parseCheckpointsVersion(val)
-		if supported && version == 2 {
-			return true
-		}
-	}
-	val, ok := s.StrategyOptions["checkpoints_v2"].(bool)
-	return ok && val
-}
-
-// CheckpointsVersion returns the configured checkpoints format version from
-// strategy_options.checkpoints_version. Returns 1 when unset, invalid, or
-// unsupported. Version 2 is no longer an exclusive storage mode; reads use
-// IsCheckpointsV2Enabled to enable dual v2/v1 lookup when legacy settings are
-// present.
-func (s *EntireSettings) CheckpointsVersion() int {
-	if s.StrategyOptions == nil {
-		return 1
-	}
-	val, ok := s.StrategyOptions["checkpoints_version"]
-	if !ok {
-		return 1
-	}
-	version, ok := parseCheckpointsVersion(val)
-	if ok && version == 1 {
-		return 1
-	}
-	return 1
-}
-
-// WarnIfCheckpointsV2Disallowed emits the v2 fallback warning when any legacy
-// settings key requests v2 writes or pushes.
-func (s *EntireSettings) WarnIfCheckpointsV2Disallowed() {
-	if val, ok := s.disallowedCheckpointsV2Value(); ok {
-		warnCheckpointsV2Disallowed(val)
-	}
-}
-
-func (s *EntireSettings) disallowedCheckpointsV2Value() (any, bool) {
-	if s.StrategyOptions == nil {
-		return nil, false
-	}
-	if val, ok := s.StrategyOptions["checkpoints_version"]; ok {
-		version, supported := parseCheckpointsVersion(val)
-		if supported && version == 2 {
-			return val, true
-		}
-	}
-	for _, key := range []string{"checkpoints_v2", "push_v2_refs", "push_v2"} {
-		if val, ok := s.StrategyOptions[key].(bool); ok && val {
-			return 2, true
-		}
-	}
-	return nil, false
-}
-
-func warnCheckpointsV2Disallowed(val any) {
-	fmt.Fprintf(os.Stderr,
-		"[entire] strategy_options.checkpoints_version %v is no longer supported. Falling back to version 1\n",
-		val,
-	)
-}
-
-func parseCheckpointsVersion(val any) (int, bool) {
-	v, ok := val.(int)
-	if ok && (v == 1 || v == 2) {
-		return v, true
-	}
-	floatV, ok := val.(float64)
-	if ok && (floatV == 1 || floatV == 2) {
-		return int(floatV), true
-	}
-	stringV, ok := val.(string)
-	if ok {
-		parsed, err := strconv.Atoi(stringV)
-		if err == nil && (parsed == 1 || parsed == 2) {
-			return parsed, true
-		}
-	}
-	return 1, false
-}
-
-// GetFullTranscriptGenerationRetentionDays returns the retention window for
-// archived checkpoints v2 /full/* generations. Invalid, missing, or
-// non-positive values fall back to the documented default.
-func (s *EntireSettings) GetFullTranscriptGenerationRetentionDays() int {
-	if s.StrategyOptions == nil {
-		return defaultGenerationRetentionDays
-	}
-
-	val, ok := s.StrategyOptions["full_transcript_generation_retention_days"]
-	if !ok {
-		return defaultGenerationRetentionDays
-	}
-
-	switch days := val.(type) {
-	case int:
-		if days > 0 {
-			return days
-		}
-	case float64:
-		intDays := int(days)
-		if intDays > 0 && days == float64(intDays) {
-			return intDays
-		}
-	}
-
-	return defaultGenerationRetentionDays
 }
 
 // IsFilteredFetchesEnabled checks if fetches should use --filter=blob:none.

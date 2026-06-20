@@ -82,7 +82,7 @@ func TestLocalMode_ExplicitRepoUsesTargetRepoCheckpointSettings(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(cwdDir, ".entire", "settings.json"),
-		[]byte(`{"enabled": true, "strategy_options": {"checkpoints_version": 2}}`),
+		[]byte(`{"enabled": true, "strategy_options": {"filtered_fetches": true}}`),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -320,7 +320,7 @@ func TestLocalMode_ImplicitCurrentBranchUsesHEADReachability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	parsedID, err := checkpointid.NewCheckpointID(cpID)
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +387,7 @@ func TestLocalMode_ExplicitBranchesRemainExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	parsedID, err := checkpointid.NewCheckpointID(cpID)
 	if err != nil {
 		t.Fatal(err)
@@ -828,7 +828,7 @@ func seedCommittedCheckpoint(t *testing.T, repoDir string, cp seededCheckpoint) 
 		t.Fatal(err)
 	}
 
-	store := checkpoint.NewGitStore(repo)
+	store := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs())
 	cpID, err := checkpointid.NewCheckpointID(cp.id)
 	if err != nil {
 		t.Fatal(err)

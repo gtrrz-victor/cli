@@ -13,6 +13,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
@@ -34,9 +35,10 @@ func setupCleanTestRepo(t *testing.T) (*git.Repository, plumbing.Hash) {
 	t.Helper()
 
 	dir := t.TempDir()
-	repo, err := git.PlainInit(dir, false)
+	testutil.InitRepo(t, dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+		t.Fatalf("failed to open git repo: %v", err)
 	}
 
 	t.Chdir(dir)
@@ -133,10 +135,7 @@ func TestCleanLongDescription_DefaultIsGeneric(t *testing.T) {
 
 	writeCleanSettingsFile(t, repoRoot, `{"enabled": true, "strategy_options": {}}`)
 
-	description := cleanLongDescription(context.Background())
-	if strings.Contains(description, "checkpoints v2") {
-		t.Fatalf("did not expect v2-specific help text by default, got: %s", description)
-	}
+	description := cleanLongDescription()
 	if strings.Contains(description, "entire/checkpoints/v1") {
 		t.Fatalf("did not expect stale v1 preservation text, got: %s", description)
 	}
@@ -580,7 +579,7 @@ func TestCleanCmd_All_NotGitRepository(t *testing.T) {
 	}
 }
 
-func TestCleanCmd_All_InvalidSettingsWarnsAndContinues(t *testing.T) {
+func TestCleanCmd_All_InvalidSettingsIgnoredWithoutV2Scan(t *testing.T) {
 	repo, _ := setupCleanTestRepo(t)
 
 	wt, err := repo.Worktree()
@@ -601,8 +600,8 @@ func TestCleanCmd_All_InvalidSettingsWarnsAndContinues(t *testing.T) {
 		t.Fatalf("clean --all --dry-run error = %v", err)
 	}
 
-	if !strings.Contains(stderr.String(), "Warning: failed to load settings") {
-		t.Fatalf("expected settings warning, got stderr=%q", stderr.String())
+	if stderr.String() != "" {
+		t.Fatalf("expected no settings warning, got stderr=%q", stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "No items to clean up.") {
 		t.Fatalf("expected command to continue cleanup flow, got stdout=%q", stdout.String())
