@@ -50,7 +50,7 @@ func envConnectTimeout() (time.Duration, bool) {
 	}
 	secs, err := strconv.Atoi(v)
 	if err != nil || secs <= 0 {
-		fmt.Fprintf(os.Stderr, "httpclient: ignoring invalid %s=%q, using defaults\n", EnvConnectTimeout, v)
+		fmt.Fprintf(os.Stderr, "httpclient: ignoring invalid %s=%q, using defaults (%s failover, %s discovery)\n", EnvConnectTimeout, v, DefaultDialTimeout, DefaultDiscoveryDialTimeout)
 		return 0, false
 	}
 	return time.Duration(secs) * time.Second, true
