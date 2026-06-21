@@ -106,8 +106,9 @@ func run(args []string) int {
 	// This client drives the auth path only: cluster /.well-known discovery
 	// and the token exchange. Both talk to a single control-plane host with no
 	// failover to fall back on, so they get the patient discovery dial budget
-	// (DefaultDiscoveryDialTimeout) rather than the short failover one — a slow
-	// cold connect here would otherwise fail the whole clone/fetch.
+	// (DiscoveryDialTimeout, i.e. DefaultDiscoveryDialTimeout unless
+	// ENTIRE_CONNECT_TIMEOUT_SECONDS overrides it) rather than the short failover
+	// one — a slow cold connect here would otherwise fail the whole clone/fetch.
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &httpclient.UserAgentTransport{
