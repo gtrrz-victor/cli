@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -300,6 +301,41 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "Entire-Checkpoint:") {
 		t.Fatalf("commit message = %q, want Entire-Checkpoint trailer", string(content))
+	}
+}
+
+func TestSessionAdopt_ClearsLegacyTranscriptOffsets(t *testing.T) {
+	targetRepo := setupAdoptRepo(t)
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	adopted, _, err := buildAdoptedSessionState(context.Background(), &session.State{
+		SessionID:                 "test-adopt-legacy-offsets",
+		AgentType:                 agent.AgentTypeClaudeCode,
+		StartedAt:                 time.Now().Add(-5 * time.Minute),
+		Phase:                     session.PhaseActive,
+		BaseCommit:                "source-head",
+		WorktreePath:              "/source/repo",
+		CheckpointTranscriptStart: 9,
+		CondensedTranscriptLines:  9,
+		TranscriptLinesAtStart:    9,
+	})
+	if err != nil {
+		t.Fatalf("buildAdoptedSessionState failed: %v", err)
+	}
+	if adopted.CheckpointTranscriptStart != 0 {
+		t.Fatalf("CheckpointTranscriptStart = %d, want 0", adopted.CheckpointTranscriptStart)
+	}
+
+	encoded, err := json.Marshal(adopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("condensed_transcript_lines")) {
+		t.Fatalf("adopted state JSON contains condensed_transcript_lines: %s", encoded)
+	}
+	if bytes.Contains(encoded, []byte("transcript_lines_at_start")) {
+		t.Fatalf("adopted state JSON contains transcript_lines_at_start: %s", encoded)
 	}
 }
 

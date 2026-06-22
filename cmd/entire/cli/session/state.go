@@ -364,8 +364,7 @@ func (s *State) NormalizeAfterLoad(ctx context.Context) {
 	// will see 0 for these fields and fall back to scoping from the transcript start.
 	// This is acceptable since CLI upgrades are monotonic and the worst case is
 	// redundant transcript content in a condensation, not data loss.
-	s.CondensedTranscriptLines = 0
-	s.TranscriptLinesAtStart = 0
+	s.ClearLegacyTranscriptOffsets()
 
 	// Backfill AttributionBaseCommit for sessions created before this field existed.
 	// Without this, a mid-turn commit would migrate BaseCommit and the fallback in
@@ -380,6 +379,14 @@ func (s *State) NormalizeAfterLoad(ctx context.Context) {
 	if s.DivergenceNoticeShown && s.AttributionBaseCommit == s.BaseCommit {
 		s.DivergenceNoticeShown = false
 	}
+}
+
+// ClearLegacyTranscriptOffsets clears deprecated transcript offset fields so
+// callers that intentionally reset CheckpointTranscriptStart do not re-persist
+// stale legacy state.
+func (s *State) ClearLegacyTranscriptOffsets() {
+	s.CondensedTranscriptLines = 0
+	s.TranscriptLinesAtStart = 0
 }
 
 // RealignAttributionBase sets AttributionBaseCommit to newBase and clears any
