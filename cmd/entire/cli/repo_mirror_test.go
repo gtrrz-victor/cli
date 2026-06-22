@@ -314,6 +314,45 @@ func TestMirrorRow(t *testing.T) {
 	}
 }
 
+func TestAvailableMirrorRow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		repo coreapi.AvailableMirror
+		want []string
+	}{
+		{
+			name: "onboardable org repo",
+			repo: coreapi.AvailableMirror{Owner: "acme", Repo: "web", Access: "write", Status: "available"},
+			want: []string{"acme/web", "write", "available"},
+		},
+		{
+			name: "already mirrored",
+			repo: coreapi.AvailableMirror{Owner: "acme", Repo: "api", Access: "admin", Status: "mirrored"},
+			want: []string{"acme/api", "admin", "mirrored"},
+		},
+		{
+			name: "someone else's personal repo",
+			repo: coreapi.AvailableMirror{Owner: "alice", Repo: "secret", Access: "read", Status: "owner-only"},
+			want: []string{"alice/secret", "read", "owner-only"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := availableMirrorRow(tt.repo)
+			if len(got) != len(tt.want) {
+				t.Fatalf("availableMirrorRow len = %d, want %d (%v)", len(got), len(tt.want), got)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("availableMirrorRow[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestClusterArg(t *testing.T) {
 	t.Parallel()
 	if got := clusterArg([]string{"github.com/o/r", "eu-west-1.entire.io"}); got != "eu-west-1.entire.io" {
