@@ -488,12 +488,14 @@ func (s *GitStore) writeCheckpointSummary(opts WriteCommittedOptions, basePath s
 	}
 
 	combinedAttribution := opts.CombinedAttribution
+	checkpointVersion := CheckpointVersionBranchV1
 	hasReview := opts.HasReview
 	hasInvestigation := opts.HasInvestigation
 	rootMetadataPath := basePath + paths.MetadataFileName
 	if entry, exists := entries[rootMetadataPath]; exists {
 		existingSummary, readErr := s.readSummaryFromBlob(entry.Hash)
 		if readErr == nil {
+			checkpointVersion = existingSummary.CheckpointVersion
 			if combinedAttribution == nil {
 				combinedAttribution = existingSummary.CombinedAttribution
 			}
@@ -509,7 +511,7 @@ func (s *GitStore) writeCheckpointSummary(opts WriteCommittedOptions, basePath s
 	summary := CheckpointSummary{
 		CheckpointID:        opts.CheckpointID,
 		CLIVersion:          versioninfo.Version,
-		CheckpointVersion:   CheckpointVersionBranchV1,
+		CheckpointVersion:   checkpointVersion,
 		Strategy:            opts.Strategy,
 		Branch:              opts.Branch,
 		CheckpointsCount:    checkpointsCount,

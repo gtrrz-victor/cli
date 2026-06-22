@@ -468,6 +468,36 @@ func TestUpdateCheckpointSummaryPreservesExplicitCheckpointVersion(t *testing.T)
 	}
 }
 
+func TestWriteCommittedPreservesExplicitCheckpointVersion(t *testing.T) {
+	t.Parallel()
+	_, store, cpID := setupRepoForUpdate(t)
+	const futureVersion = "refs-v1"
+
+	rewriteRootSummary(t, store, cpID, func(summary *CheckpointSummary) {
+		summary.CheckpointVersion = futureVersion
+	})
+
+	if err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		CheckpointID: cpID,
+		SessionID:    "session-002",
+		Strategy:     "manual-commit",
+		Transcript:   redact.AlreadyRedacted([]byte("second session\n")),
+		Prompts:      []string{"second prompt"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+
+	rawSummary := readSummaryFromBranch(t, store.repo, cpID)
+	if rawSummary.CheckpointVersion != futureVersion {
+		t.Fatalf("raw checkpoint_version = %q, want %q", rawSummary.CheckpointVersion, futureVersion)
+	}
+	if len(rawSummary.Sessions) != 2 {
+		t.Fatalf("len(Sessions) = %d, want 2", len(rawSummary.Sessions))
+	}
+}
+
 func isValidContentHash(hash string) bool {
 	return len(hash) > 10 && hash[:7] == "sha256:"
 }
