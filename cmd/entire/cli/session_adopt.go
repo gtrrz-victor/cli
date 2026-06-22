@@ -243,6 +243,10 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	// at metadata in another repository or checkpoint branch; carrying them into
 	// this repo would let amend and turn-finalization paths operate on unrelated
 	// checkpoints.
+	adopted.StepCount = 0
+	adopted.CheckpointTranscriptStart = 0
+	adopted.CheckpointTranscriptSize = 0
+	adopted.TranscriptIdentifierAtStart = ""
 	adopted.TurnCheckpointIDs = nil
 	adopted.LastCheckpointID = id.EmptyCheckpointID
 	adopted.LastCheckpointCommitHash = ""

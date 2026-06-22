@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -159,6 +160,115 @@ func TestSessionAdopt_EnablesPrepareCommitMsgTrailer(t *testing.T) {
 		t.Fatalf("PrepareCommitMsg failed: %v", err)
 	}
 
+	content, err := os.ReadFile(commitMsgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Entire-Checkpoint:") {
+		t.Fatalf("commit message = %q, want Entire-Checkpoint trailer", string(content))
+	}
+}
+
+func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-reset-window"
+	targetRelPath := "src/feature.go"
+	targetAbsPath := filepath.Join(targetRepo, targetRelPath)
+
+	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	transcript := `{"type":"human","message":{"content":"first source prompt"},"uuid":"source-user"}
+{"type":"assistant","message":{"content":"source response"},"uuid":"source-assistant"}
+{"type":"human","message":{"content":"write target feature"},"uuid":"target-user"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"` + targetAbsPath + `","content":"package src\n"}}]},"uuid":"target-assistant"}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:                   sessionID,
+		AgentType:                   agent.AgentTypeClaudeCode,
+		StartedAt:                   time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:         &lastInteraction,
+		Phase:                       session.PhaseActive,
+		BaseCommit:                  testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit:       testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:                sourceRepo,
+		TranscriptPath:              transcriptPath,
+		LastPrompt:                  "write target feature",
+		StepCount:                   4,
+		CheckpointTranscriptStart:   2,
+		CheckpointTranscriptSize:    1234,
+		CondensedTranscriptLines:    2,
+		TranscriptLinesAtStart:      2,
+		TranscriptIdentifierAtStart: "source-assistant",
+		TurnCheckpointIDs:           []string{"abc123def456"},
+		LastCheckpointID:            id.MustCheckpointID("abc123def456"),
+		LastCheckpointCommitHash:    "source-commit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, targetRelPath, "package src\n")
+	testutil.GitAdd(t, targetRepo, targetRelPath)
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
+	}
+
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted == nil {
+		t.Fatal("expected adopted session state in target repo")
+	}
+	if adopted.StepCount != 0 {
+		t.Fatalf("StepCount = %d, want 0 for first target checkpoint", adopted.StepCount)
+	}
+	if adopted.CheckpointTranscriptStart != 0 {
+		t.Fatalf("CheckpointTranscriptStart = %d, want 0", adopted.CheckpointTranscriptStart)
+	}
+	if adopted.CheckpointTranscriptSize != 0 {
+		t.Fatalf("CheckpointTranscriptSize = %d, want 0", adopted.CheckpointTranscriptSize)
+	}
+	if adopted.TranscriptIdentifierAtStart != "" {
+		t.Fatalf("TranscriptIdentifierAtStart = %q, want empty", adopted.TranscriptIdentifierAtStart)
+	}
+	if len(adopted.TurnCheckpointIDs) != 0 {
+		t.Fatalf("TurnCheckpointIDs = %v, want empty", adopted.TurnCheckpointIDs)
+	}
+	if !adopted.LastCheckpointID.IsEmpty() {
+		t.Fatalf("LastCheckpointID = %s, want empty", adopted.LastCheckpointID.String())
+	}
+	if adopted.LastCheckpointCommitHash != "" {
+		t.Fatalf("LastCheckpointCommitHash = %q, want empty", adopted.LastCheckpointCommitHash)
+	}
+
+	commitMsgFile := filepath.Join(targetRepo, "COMMIT_EDITMSG")
+	if err := os.WriteFile(commitMsgFile, []byte("add target feature\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := strategy.NewManualCommitStrategy().PrepareCommitMsg(context.Background(), commitMsgFile, ""); err != nil {
+		t.Fatalf("PrepareCommitMsg failed: %v", err)
+	}
 	content, err := os.ReadFile(commitMsgFile)
 	if err != nil {
 		t.Fatal(err)
