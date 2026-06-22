@@ -1200,7 +1200,7 @@ func formatSummaryTimeout(d time.Duration) string {
 // Searches ALL shadow branches, not just the one for current HEAD, to find checkpoints
 // created from different base commits (e.g., if HEAD advanced since session start).
 // The writer w is used for raw transcript output to bypass the pager.
-func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *git.Repository, store checkpoint.TemporaryStore, shaPrefix string, verbose, full, rawTranscript bool) (string, bool, error) {
+func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *git.Repository, store checkpoint.EphemeralStore, shaPrefix string, verbose, full, rawTranscript bool) (string, bool, error) {
 	// List temporary checkpoints from ALL shadow branches
 	// This ensures we find checkpoints even if HEAD has advanced since the session started
 	tempCheckpoints, err := store.ListAllTemporaryCheckpoints(ctx, "", branchCheckpointsLimit)
@@ -1209,7 +1209,7 @@ func explainTemporaryCheckpoint(ctx context.Context, w, errW io.Writer, repo *gi
 	}
 
 	// Find checkpoints matching the SHA prefix - check for ambiguity
-	var matches []checkpoint.TemporaryCheckpointInfo
+	var matches []checkpoint.EphemeralCheckpointInfo
 	for _, tc := range tempCheckpoints {
 		if strings.HasPrefix(tc.CommitHash.String(), shaPrefix) {
 			matches = append(matches, tc)
@@ -2179,7 +2179,7 @@ func readLatestCommittedSessionPrompt(ctx context.Context, store checkpoint.Pers
 // whose base commit is reachable from the given HEAD hash and that belong to this worktree.
 // For default branches, all shadow branches for this worktree are included.
 // For feature branches, only shadow branches whose base commit is in HEAD's history are included.
-func getReachableTemporaryCheckpoints(ctx context.Context, repo *git.Repository, store checkpoint.TemporaryStore, headHash plumbing.Hash, isOnDefault bool, limit int) []strategy.RewindPoint {
+func getReachableTemporaryCheckpoints(ctx context.Context, repo *git.Repository, store checkpoint.EphemeralStore, headHash plumbing.Hash, isOnDefault bool, limit int) []strategy.RewindPoint {
 	var points []strategy.RewindPoint
 
 	// Compute current worktree's hash for filtering shadow branches
@@ -2235,14 +2235,14 @@ func isShadowBranchReachable(ctx context.Context, repo *git.Repository, baseComm
 	return found
 }
 
-// convertTemporaryCheckpoint converts a TemporaryCheckpointInfo to a RewindPoint.
+// convertTemporaryCheckpoint converts a EphemeralCheckpointInfo to a RewindPoint.
 // Returns nil if the checkpoint should be skipped (no tree changes or can't be read).
 //
 // Filtering uses hasAnyChanges (O(1) tree hash comparison) rather than hasCodeChanges
 // (O(files) full diff). This means metadata-only checkpoints (.entire/ changes without
 // code changes) are kept — only true no-ops (identical tree as parent) are dropped.
 // This trade-off is intentional for list-view performance.
-func convertTemporaryCheckpoint(repo *git.Repository, tc checkpoint.TemporaryCheckpointInfo) *strategy.RewindPoint {
+func convertTemporaryCheckpoint(repo *git.Repository, tc checkpoint.EphemeralCheckpointInfo) *strategy.RewindPoint {
 	shadowCommit, commitErr := repo.CommitObject(tc.CommitHash)
 	if commitErr != nil {
 		return nil

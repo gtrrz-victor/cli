@@ -54,15 +54,15 @@ func HashWorktreeID(worktreeID string) string {
 // Returns the result containing commit hash and whether it was skipped.
 // If the new tree hash matches the last checkpoint's tree hash, the checkpoint
 // is skipped to avoid duplicate commits (deduplication).
-func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporaryOptions) (WriteTemporaryResult, error) {
+func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteEphemeralOptions) (WriteEphemeralResult, error) {
 	// Validate base commit - required for shadow branch naming
 	if opts.BaseCommit == "" {
-		return WriteTemporaryResult{}, errors.New("BaseCommit is required for temporary checkpoint")
+		return WriteEphemeralResult{}, errors.New("BaseCommit is required for temporary checkpoint")
 	}
 
 	// Validate session ID to prevent path traversal
 	if err := validation.ValidateSessionID(opts.SessionID); err != nil {
-		return WriteTemporaryResult{}, fmt.Errorf("invalid temporary checkpoint options: %w", err)
+		return WriteEphemeralResult{}, fmt.Errorf("invalid temporary checkpoint options: %w", err)
 	}
 
 	// Get shadow branch name
@@ -80,7 +80,7 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 		// all unchanged tracked files. We also capture user's pre-existing deletions.
 		result, err := collectChangedFiles(ctx, s.repo)
 		if err != nil {
-			return WriteTemporaryResult{}, fmt.Errorf("failed to collect changed files: %w", err)
+			return WriteEphemeralResult{}, fmt.Errorf("failed to collect changed files: %w", err)
 		}
 		allFiles = result.Changed
 		// Merge user's pre-existing deletions with agent's deletions
@@ -102,10 +102,10 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 
 	repoRoot, commonDir, err := s.repoDirs(ctx)
 	if err != nil {
-		return WriteTemporaryResult{}, fmt.Errorf("failed to resolve repo dirs: %w", err)
+		return WriteEphemeralResult{}, fmt.Errorf("failed to resolve repo dirs: %w", err)
 	}
 
-	var result WriteTemporaryResult
+	var result WriteEphemeralResult
 	// withShadowBranchFlock serializes all writers targeting this shadow
 	// branch — across goroutines and across processes — so the inner CAS
 	// only sees contention from external `git update-ref` callers (rare).
@@ -134,7 +134,7 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 
 			// Deduplication: skip if tree hash matches the current shadow tip.
 			if lastTreeHash != plumbing.ZeroHash && treeHash == lastTreeHash {
-				result = WriteTemporaryResult{
+				result = WriteEphemeralResult{
 					CommitHash: parentHash,
 					Skipped:    true,
 				}
@@ -148,7 +148,7 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 
 			refErr := casUpdateShadowBranchRef(ctx, repoRoot, shadowBranchName, commitHash, parentHash)
 			if refErr == nil {
-				result = WriteTemporaryResult{
+				result = WriteEphemeralResult{
 					CommitHash: commitHash,
 					Skipped:    false,
 				}
@@ -175,7 +175,7 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 		return fmt.Errorf("failed to update shadow branch reference after %d CAS retries: %w", shadowRefMaxRetries, ErrShadowRefBusy)
 	})
 	if err != nil {
-		return WriteTemporaryResult{}, err
+		return WriteEphemeralResult{}, err
 	}
 	return result, nil
 }
@@ -183,7 +183,7 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteTemporary
 // ReadTemporary reads the latest checkpoint from a shadow branch.
 // Returns nil if the shadow branch doesn't exist.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadTemporaryResult, error) {
+func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadEphemeralResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -205,7 +205,7 @@ func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktree
 	sessionID, _ := trailers.ParseSession(commit.Message)
 	metadataDir, _ := trailers.ParseMetadata(commit.Message)
 
-	return &ReadTemporaryResult{
+	return &ReadEphemeralResult{
 		CommitHash:  ref.Hash(),
 		TreeHash:    commit.TreeHash,
 		SessionID:   sessionID,
@@ -215,7 +215,7 @@ func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktree
 }
 
 // ListTemporary lists all shadow branches with their checkpoint info.
-func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, error) {
+func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]EphemeralInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -225,7 +225,7 @@ func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, er
 		return nil, fmt.Errorf("failed to list branches: %w", err)
 	}
 
-	var results []TemporaryInfo
+	var results []EphemeralInfo
 	err = iter.ForEach(func(ref *plumbing.Reference) error {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Propagating context cancellation
@@ -252,7 +252,7 @@ func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, er
 		// Extract base commit from branch name (handles new "entire/<commit>-<worktreeHash>" format)
 		baseCommit, _, _ := ParseShadowBranchName(branchName)
 
-		results = append(results, TemporaryInfo{
+		results = append(results, EphemeralInfo{
 			BranchName:   branchName,
 			BaseCommit:   baseCommit,
 			LatestCommit: ref.Hash(),
@@ -273,7 +273,7 @@ func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]TemporaryInfo, er
 // WriteTemporaryTask writes a task checkpoint to a shadow branch.
 // Task checkpoints include both code changes and task-specific metadata.
 // Returns the commit hash of the created checkpoint.
-func (s *ephemeralStore) WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
+func (s *ephemeralStore) WriteTemporaryTask(ctx context.Context, opts WriteEphemeralTaskOptions) (plumbing.Hash, error) {
 	// Validate base commit - required for shadow branch naming
 	if opts.BaseCommit == "" {
 		return plumbing.ZeroHash, errors.New("BaseCommit is required for task checkpoint")
@@ -361,7 +361,7 @@ func (s *ephemeralStore) WriteTemporaryTask(ctx context.Context, opts WriteTempo
 //
 // Uses ApplyTreeChanges (tree surgery) instead of FlattenTree+BuildTreeFromEntries,
 // so only affected subtrees are read/rebuilt.
-func (s *ephemeralStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash plumbing.Hash, opts WriteTemporaryTaskOptions) (plumbing.Hash, error) {
+func (s *ephemeralStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash plumbing.Hash, opts WriteEphemeralTaskOptions) (plumbing.Hash, error) {
 	// Compute metadata paths
 	sessionMetadataDir := paths.EntireMetadataDir + "/" + opts.SessionID
 	taskMetadataDir := sessionMetadataDir + "/tasks/" + opts.ToolUseID
@@ -489,7 +489,7 @@ func (s *ephemeralStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash
 // This returns individual commits (rewind points), not just branch info.
 // The sessionID filter, if provided, limits results to commits from that session.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *ephemeralStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
 	return s.listCheckpointsForBranch(ctx, shadowBranchName, sessionID, limit)
 }
@@ -497,13 +497,13 @@ func (s *ephemeralStore) ListTemporaryCheckpoints(ctx context.Context, baseCommi
 // ListCheckpointsForBranch lists checkpoint commits for a shadow branch by name.
 // Use this when you already have the full branch name (e.g., from ListTemporary).
 // The sessionID filter, if provided, limits results to commits from that session.
-func (s *ephemeralStore) ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	return s.listCheckpointsForBranch(ctx, branchName, sessionID, limit)
 }
 
 // listCheckpointsForBranch lists checkpoint commits for a specific shadow branch name.
 // This is an internal helper used by ListTemporaryCheckpoints, ListCheckpointsForBranch, and ListAllTemporaryCheckpoints.
-func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBranchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBranchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -520,7 +520,7 @@ func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBra
 		return nil, fmt.Errorf("failed to get commit log: %w", err)
 	}
 
-	var results []TemporaryCheckpointInfo
+	var results []EphemeralCheckpointInfo
 	count := 0
 
 	err = iter.ForEach(func(c *object.Commit) error {
@@ -547,7 +547,7 @@ func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBra
 			message = message[:idx]
 		}
 
-		info := TemporaryCheckpointInfo{
+		info := EphemeralCheckpointInfo{
 			CommitHash: c.Hash,
 			Message:    message,
 			SessionID:  commitSessionID,
@@ -585,7 +585,7 @@ func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBra
 // ListAllTemporaryCheckpoints lists checkpoint commits from ALL shadow branches.
 // This is used for checkpoint lookup when the base commit is unknown (e.g., HEAD advanced since session start).
 // The sessionID filter, if provided, limits results to commits from that session.
-func (s *ephemeralStore) ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]TemporaryCheckpointInfo, error) {
+func (s *ephemeralStore) ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -596,7 +596,7 @@ func (s *ephemeralStore) ListAllTemporaryCheckpoints(ctx context.Context, sessio
 		return nil, fmt.Errorf("failed to list shadow branches: %w", err)
 	}
 
-	var results []TemporaryCheckpointInfo
+	var results []EphemeralCheckpointInfo
 
 	// Iterate through each shadow branch and collect checkpoints
 	for _, branch := range branches {

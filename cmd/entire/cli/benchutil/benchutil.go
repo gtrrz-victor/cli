@@ -42,7 +42,7 @@ type BenchRepo struct {
 	Store *checkpoint.GitStore
 
 	// Ephemeral is the shadow-branch (temporary) checkpoint store for this repo.
-	Ephemeral checkpoint.TemporaryStore
+	Ephemeral checkpoint.EphemeralStore
 
 	// HeadHash is the current HEAD commit hash string.
 	HeadHash string
@@ -361,7 +361,7 @@ func (br *BenchRepo) SeedShadowBranch(b *testing.B, sessionID string, checkpoint
 			b.Fatalf("write transcript: %v", err)
 		}
 
-		_, err := br.Ephemeral.WriteTemporary(context.Background(), checkpoint.WriteTemporaryOptions{
+		_, err := br.Ephemeral.WriteTemporary(context.Background(), checkpoint.WriteEphemeralOptions{
 			SessionID:         sessionID,
 			BaseCommit:        br.HeadHash,
 			WorktreeID:        br.WorktreeID,

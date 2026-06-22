@@ -91,7 +91,7 @@ func TestAddTaskMetadataToTree_EquivalenceWithFlattenRebuild(t *testing.T) {
 
 	// Test without transcripts — the tree structure equivalence is what matters.
 	// Transcript processing (chunking, redaction) is covered by integration tests.
-	opts := WriteTemporaryTaskOptions{
+	opts := WriteEphemeralTaskOptions{
 		SessionID:      "sess-001",
 		ToolUseID:      "tool-001",
 		AgentID:        "agent-001",
@@ -131,7 +131,7 @@ func TestAddTaskMetadataToTree_IncrementalPath(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	opts := WriteTemporaryTaskOptions{
+	opts := WriteEphemeralTaskOptions{
 		SessionID:           "sess-002",
 		ToolUseID:           "tool-002",
 		IsIncremental:       true,
@@ -286,7 +286,7 @@ func flattenRebuildTree(
 func flattenRebuildTaskMetadata(
 	t *testing.T, repo *gogit.Repository,
 	baseTreeHash plumbing.Hash,
-	opts WriteTemporaryTaskOptions,
+	opts WriteEphemeralTaskOptions,
 ) plumbing.Hash {
 	t.Helper()
 

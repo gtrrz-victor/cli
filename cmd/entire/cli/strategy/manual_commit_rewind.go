@@ -30,7 +30,7 @@ import (
 )
 
 // GetRewindPoints returns available rewind points.
-// Uses checkpoint.TemporaryStore for reading from shadow branches.
+// Uses checkpoint.EphemeralStore for reading from shadow branches.
 func (s *ManualCommitStrategy) GetRewindPoints(ctx context.Context, limit int) ([]RewindPoint, error) {
 	repo, err := OpenRepository(ctx)
 	if err != nil {

@@ -26,7 +26,7 @@ type Stores struct {
 	// Primary is the committed store that serves committed reads and writes.
 	Primary PersistentStore
 
-	temporary TemporaryStore
+	temporary EphemeralStore
 	refs      CommittedRefs
 }
 
@@ -55,7 +55,7 @@ func resolveOpenRefs(ctx context.Context, opts OpenOptions) CommittedRefs {
 }
 
 // Temporary returns the git-backed temporary shadow-branch store.
-func (s *Stores) Temporary() TemporaryStore { return s.temporary } //nolint:ireturn // temporary store capability is the abstraction boundary
+func (s *Stores) Temporary() EphemeralStore { return s.temporary } //nolint:ireturn // temporary store capability is the abstraction boundary
 
 // Refs returns the resolved committed-ref topology.
 func (s *Stores) Refs() CommittedRefs { return s.refs }

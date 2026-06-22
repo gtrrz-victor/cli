@@ -59,20 +59,20 @@ const (
 	Committed
 )
 
-// TemporaryStore provides the production shadow-branch checkpoint surface.
-type TemporaryStore interface {
-	WriteTemporary(ctx context.Context, opts WriteTemporaryOptions) (WriteTemporaryResult, error)
-	WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTaskOptions) (plumbing.Hash, error)
-	ListTemporary(ctx context.Context) ([]TemporaryInfo, error)
-	ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]TemporaryCheckpointInfo, error)
-	ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]TemporaryCheckpointInfo, error)
-	ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]TemporaryCheckpointInfo, error)
+// EphemeralStore provides the production shadow-branch checkpoint surface.
+type EphemeralStore interface {
+	WriteTemporary(ctx context.Context, opts WriteEphemeralOptions) (WriteEphemeralResult, error)
+	WriteTemporaryTask(ctx context.Context, opts WriteEphemeralTaskOptions) (plumbing.Hash, error)
+	ListTemporary(ctx context.Context) ([]EphemeralInfo, error)
+	ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
+	ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
+	ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
 	GetTranscriptFromCommit(ctx context.Context, commitHash plumbing.Hash, metadataDir string, agentType types.AgentType) ([]byte, error)
 	ShadowBranchExists(baseCommit, worktreeID string) bool
 }
 
-// WriteTemporaryResult contains the result of writing a temporary checkpoint.
-type WriteTemporaryResult struct {
+// WriteEphemeralResult contains the result of writing a temporary checkpoint.
+type WriteEphemeralResult struct {
 	// CommitHash is the hash of the created or existing checkpoint commit
 	CommitHash plumbing.Hash
 
@@ -81,8 +81,8 @@ type WriteTemporaryResult struct {
 	Skipped bool
 }
 
-// WriteTemporaryOptions contains options for writing a temporary checkpoint.
-type WriteTemporaryOptions struct {
+// WriteEphemeralOptions contains options for writing a temporary checkpoint.
+type WriteEphemeralOptions struct {
 	// SessionID is the session identifier
 	SessionID string
 
@@ -122,8 +122,8 @@ type WriteTemporaryOptions struct {
 	IsFirstCheckpoint bool
 }
 
-// ReadTemporaryResult contains the result of reading a temporary checkpoint.
-type ReadTemporaryResult struct {
+// ReadEphemeralResult contains the result of reading a temporary checkpoint.
+type ReadEphemeralResult struct {
 	// CommitHash is the hash of the checkpoint commit
 	CommitHash plumbing.Hash
 
@@ -140,8 +140,8 @@ type ReadTemporaryResult struct {
 	Timestamp time.Time
 }
 
-// TemporaryInfo contains summary information about a shadow branch.
-type TemporaryInfo struct {
+// EphemeralInfo contains summary information about a shadow branch.
+type EphemeralInfo struct {
 	// BranchName is the full branch name (e.g., "entire/abc1234")
 	BranchName string
 
@@ -651,10 +651,10 @@ type Info struct {
 	Message string
 }
 
-// WriteTemporaryTaskOptions contains options for writing a task checkpoint.
+// WriteEphemeralTaskOptions contains options for writing a task checkpoint.
 // Task checkpoints are created when a subagent completes and contain both
 // code changes and task-specific metadata.
-type WriteTemporaryTaskOptions struct {
+type WriteEphemeralTaskOptions struct {
 	// SessionID is the session identifier
 	SessionID string
 
@@ -711,9 +711,9 @@ type WriteTemporaryTaskOptions struct {
 	IncrementalData []byte
 }
 
-// TemporaryCheckpointInfo contains information about a single commit on a shadow branch.
+// EphemeralCheckpointInfo contains information about a single commit on a shadow branch.
 // Used by ListTemporaryCheckpoints to provide rewind point data.
-type TemporaryCheckpointInfo struct {
+type EphemeralCheckpointInfo struct {
 	// CommitHash is the hash of the checkpoint commit
 	CommitHash plumbing.Hash
 

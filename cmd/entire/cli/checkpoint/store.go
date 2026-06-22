@@ -11,7 +11,7 @@ var (
 	_ PersistentStore = (*GitStore)(nil)
 	_ AuthorReader    = (*GitStore)(nil)
 	_ Writer          = (*GitStore)(nil)
-	_ TemporaryStore  = (*ephemeralStore)(nil)
+	_ EphemeralStore  = (*ephemeralStore)(nil)
 )
 
 // GitStore is the committed (persistent) checkpoint store. Writes target
@@ -41,7 +41,7 @@ func newEphemeralStore(repo *git.Repository, refs CommittedRefs) *ephemeralStore
 // store. Most callers reach it via Open(...).Temporary(); this direct
 // constructor exists for benchmarks and tests that exercise the shadow-branch
 // surface without the full facade.
-func NewEphemeralStore(repo *git.Repository, refs CommittedRefs) TemporaryStore { //nolint:ireturn // temporary store capability is the abstraction boundary
+func NewEphemeralStore(repo *git.Repository, refs CommittedRefs) EphemeralStore { //nolint:ireturn // temporary store capability is the abstraction boundary
 	return newEphemeralStore(repo, refs)
 }
 
