@@ -181,7 +181,9 @@ func reviewTrailLocationFromJSON(loc reviewTrailJSONLocation) api.TrailReviewLoc
 		if filePath != "" && loc.StartLine > 0 && loc.EndLine > loc.StartLine {
 			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityRange, FilePath: stringPtr(filePath), StartLine: &loc.StartLine, EndLine: &loc.EndLine}
 		}
-		if filePath != "" && loc.StartLine > 0 && loc.EndLine == loc.StartLine {
+		if filePath != "" && loc.StartLine > 0 {
+			// Preserve the precise start-line anchor for malformed, missing, or
+			// single-line ranges instead of silently degrading to whole-change.
 			return api.TrailReviewLocationCreateRequest{Granularity: reviewTrailGranularityLine, FilePath: stringPtr(filePath), StartLine: &loc.StartLine}
 		}
 	case reviewTrailGranularityFile:

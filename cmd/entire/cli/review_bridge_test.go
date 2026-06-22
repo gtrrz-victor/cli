@@ -125,13 +125,13 @@ func TestReviewTrailFindingInputsAcceptsRunnerStyleJSONLastLine(t *testing.T) {
 	if inputs[0].Confidence == nil || *inputs[0].Confidence != 0.92 {
 		t.Fatalf("confidence[0] = %v, want 0.92", inputs[0].Confidence)
 	}
-	if inputs[0].Location.Granularity != "line" || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "daytona.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 901 {
+	if inputs[0].Location.Granularity != reviewTrailGranularityLine || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "daytona.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 901 {
 		t.Fatalf("location[0] = %+v, want daytona.ts:901", inputs[0].Location)
 	}
 	if inputs[1].Severity == nil || *inputs[1].Severity != "medium" {
 		t.Fatalf("severity[1] = %v, want normalized medium", inputs[1].Severity)
 	}
-	if inputs[1].Location.Granularity != "range" || inputs[1].Location.EndLine == nil || *inputs[1].Location.EndLine != 970 {
+	if inputs[1].Location.Granularity != reviewTrailGranularityRange || inputs[1].Location.EndLine == nil || *inputs[1].Location.EndLine != 970 {
 		t.Fatalf("location[1] = %+v, want range ending 970", inputs[1].Location)
 	}
 }
@@ -148,16 +148,31 @@ func TestReviewTrailFindingInputsSingleVerdictUnchanged(t *testing.T) {
 
 func TestReviewTrailLocationFromJSON_SingleLineRangeBecomesLine(t *testing.T) {
 	loc := reviewTrailLocationFromJSON(reviewTrailJSONLocation{
-		Granularity: "range",
+		Granularity: reviewTrailGranularityRange,
 		FilePath:    "src/app.ts",
 		StartLine:   42,
 		EndLine:     42,
 	})
-	if loc.Granularity != "line" {
+	if loc.Granularity != reviewTrailGranularityLine {
 		t.Fatalf("granularity = %q, want line", loc.Granularity)
 	}
 	if loc.FilePath == nil || *loc.FilePath != "src/app.ts" || loc.StartLine == nil || *loc.StartLine != 42 || loc.EndLine != nil {
 		t.Fatalf("location = %+v, want single-line location at src/app.ts:42", loc)
+	}
+}
+
+func TestReviewTrailLocationFromJSON_InvertedRangeBecomesLine(t *testing.T) {
+	loc := reviewTrailLocationFromJSON(reviewTrailJSONLocation{
+		Granularity: reviewTrailGranularityRange,
+		FilePath:    "src/app.ts",
+		StartLine:   42,
+		EndLine:     40,
+	})
+	if loc.Granularity != reviewTrailGranularityLine {
+		t.Fatalf("granularity = %q, want line", loc.Granularity)
+	}
+	if loc.FilePath == nil || *loc.FilePath != "src/app.ts" || loc.StartLine == nil || *loc.StartLine != 42 || loc.EndLine != nil {
+		t.Fatalf("location = %+v, want line location preserving start line", loc)
 	}
 }
 
