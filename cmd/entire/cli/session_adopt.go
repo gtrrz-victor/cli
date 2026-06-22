@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -112,9 +113,11 @@ func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.S
 	}
 
 	cmd := exec.CommandContext(ctx, "git", "-C", absWorktree, "rev-parse", "--show-toplevel", "--git-common-dir")
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		msg := strings.TrimSpace(string(output))
+		msg := strings.TrimSpace(stderr.String())
 		if msg != "" {
 			return nil, "", "", fmt.Errorf("resolve source git directory: %s: %w", msg, err)
 		}
@@ -147,7 +150,7 @@ func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, so
 		if sourceState == nil {
 			return nil, fmt.Errorf("session %s was not found in %s", sessionID, sourceWorktree)
 		}
-		if sourceState.Phase == session.PhaseEnded || sourceState.FullyCondensed {
+		if !isAdoptableSourceSession(sourceState) {
 			return nil, fmt.Errorf("session %s is ended or fully condensed and cannot be adopted", sessionID)
 		}
 		return sourceState, nil
@@ -183,7 +186,7 @@ func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, so
 }
 
 func isRecentAdoptCandidate(state *session.State) bool {
-	if state == nil || state.Phase == session.PhaseEnded || state.FullyCondensed {
+	if !isAdoptableSourceSession(state) {
 		return false
 	}
 	lastSeen := sessionLastSeen(state)
@@ -191,6 +194,13 @@ func isRecentAdoptCandidate(state *session.State) bool {
 		return false
 	}
 	return time.Since(lastSeen) <= adoptRecentWindow
+}
+
+func isAdoptableSourceSession(state *session.State) bool {
+	return state != nil &&
+		state.Phase != session.PhaseEnded &&
+		state.EndedAt == nil &&
+		!state.FullyCondensed
 }
 
 func sessionLastSeen(state *session.State) time.Time {
@@ -244,6 +254,8 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.WorktreeID = worktreeID
 	adopted.Branch = branch
 	adopted.LastInteractionTime = &now
+	adopted.Phase = session.PhaseActive
+	adopted.EndedAt = nil
 	adopted.FilesTouched = filesTouched
 
 	// Reset target-local checkpoint bookkeeping. Source checkpoint IDs can point

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,134 @@ func TestSessionAdopt_EnablesPrepareCommitMsgTrailer(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "Entire-Checkpoint:") {
 		t.Fatalf("commit message = %q, want Entire-Checkpoint trailer", string(content))
+	}
+}
+
+func TestSessionAdopt_IdleSourceSurvivesPrepareCommitMsgTrailer(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-idle-source"
+	targetRelPath := "src/idle.go"
+	targetAbsPath := filepath.Join(targetRepo, targetRelPath)
+	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	transcript := `{"type":"human","message":{"content":"write idle.go"}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"` + targetAbsPath + `","content":"package src\n"}}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseIdle,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		TranscriptPath:        transcriptPath,
+		LastPrompt:            "write idle.go",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, targetRelPath, "package src\n")
+	testutil.GitAdd(t, targetRepo, targetRelPath)
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
+	}
+
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted == nil {
+		t.Fatal("expected adopted session state")
+	}
+	if adopted.Phase != session.PhaseActive {
+		t.Fatalf("Phase = %q, want active so commit hooks do not sweep adopted state", adopted.Phase)
+	}
+	if adopted.EndedAt != nil {
+		t.Fatalf("EndedAt = %v, want nil", adopted.EndedAt)
+	}
+
+	commitMsgFile := filepath.Join(targetRepo, "COMMIT_EDITMSG")
+	if err := os.WriteFile(commitMsgFile, []byte("add idle feature\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := strategy.NewManualCommitStrategy().PrepareCommitMsg(context.Background(), commitMsgFile, ""); err != nil {
+		t.Fatalf("PrepareCommitMsg failed: %v", err)
+	}
+	content, err := os.ReadFile(commitMsgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Entire-Checkpoint:") {
+		t.Fatalf("commit message = %q, want Entire-Checkpoint trailer", string(content))
+	}
+}
+
+func TestSessionAdopt_RejectsEndedAtSourceSession(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-ended-at"
+	endedAt := time.Now().Add(-30 * time.Second)
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		EndedAt:               &endedAt,
+		Phase:                 session.PhaseIdle,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err == nil {
+		t.Fatal("runAdopt succeeded, want ended-session refusal")
+	}
+	if !strings.Contains(err.Error(), "ended or fully condensed") {
+		t.Fatalf("runAdopt error = %v, want ended-session refusal", err)
+	}
+
+	_, err = selectAdoptSourceSession(context.Background(), sourceStore, sourceRepo, "")
+	if err == nil {
+		t.Fatal("selectAdoptSourceSession succeeded, want no recent active sessions")
+	}
+	if !strings.Contains(err.Error(), "no recent active sessions") {
+		t.Fatalf("selectAdoptSourceSession error = %v, want no recent active sessions", err)
 	}
 }
 
@@ -373,6 +502,39 @@ func TestSessionAdopt_FromSubdirectoryReadsSourceStore(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("runAdopt failed from source subdir: %v", err)
+	}
+}
+
+func TestStateStoreForWorktreeIgnoresGitStderrOnSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell script fake git")
+	}
+
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	script := `#!/bin/sh
+printf 'advice: noisy git warning\n' >&2
+printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	commonDir := filepath.Join(t.TempDir(), "common.git")
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_WORKTREE_ROOT", sourceRoot)
+	t.Setenv("FAKE_GIT_COMMON_DIR", commonDir)
+
+	_, gotSourceRoot, gotCommonDir, err := stateStoreForWorktree(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("stateStoreForWorktree failed: %v", err)
+	}
+	if gotSourceRoot != sourceRoot {
+		t.Fatalf("sourceRoot = %q, want %q", gotSourceRoot, sourceRoot)
+	}
+	if gotCommonDir != filepath.Clean(commonDir) {
+		t.Fatalf("commonDir = %q, want %q", gotCommonDir, filepath.Clean(commonDir))
 	}
 }
 
