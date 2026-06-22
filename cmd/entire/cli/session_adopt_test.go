@@ -205,6 +205,10 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 		TranscriptPath:              transcriptPath,
 		LastPrompt:                  "write target feature",
 		StepCount:                   4,
+		SessionDurationMs:           120_000,
+		SessionTurnCount:            7,
+		ContextTokens:               42_000,
+		ContextWindowSize:           200_000,
 		CheckpointTranscriptStart:   2,
 		CheckpointTranscriptSize:    1234,
 		CondensedTranscriptLines:    2,
@@ -213,6 +217,8 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 		TurnCheckpointIDs:           []string{"abc123def456"},
 		LastCheckpointID:            id.MustCheckpointID("abc123def456"),
 		LastCheckpointCommitHash:    "source-commit",
+		PromptWindowBase:            3,
+		PromptWindowResetPending:    true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +258,24 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	}
 	if adopted.TranscriptIdentifierAtStart != "" {
 		t.Fatalf("TranscriptIdentifierAtStart = %q, want empty", adopted.TranscriptIdentifierAtStart)
+	}
+	if adopted.SessionDurationMs != 120_000 {
+		t.Fatalf("SessionDurationMs = %d, want preserved source duration", adopted.SessionDurationMs)
+	}
+	if adopted.SessionTurnCount != 7 {
+		t.Fatalf("SessionTurnCount = %d, want preserved source turn count", adopted.SessionTurnCount)
+	}
+	if adopted.ContextTokens != 42_000 {
+		t.Fatalf("ContextTokens = %d, want preserved source context tokens", adopted.ContextTokens)
+	}
+	if adopted.ContextWindowSize != 200_000 {
+		t.Fatalf("ContextWindowSize = %d, want preserved source context window size", adopted.ContextWindowSize)
+	}
+	if adopted.PromptWindowBase != adopted.SessionTurnCount {
+		t.Fatalf("PromptWindowBase = %d, want current SessionTurnCount %d", adopted.PromptWindowBase, adopted.SessionTurnCount)
+	}
+	if adopted.PromptWindowResetPending {
+		t.Fatal("PromptWindowResetPending = true, want false for adopted target window")
 	}
 	if len(adopted.TurnCheckpointIDs) != 0 {
 		t.Fatalf("TurnCheckpointIDs = %v, want empty", adopted.TurnCheckpointIDs)

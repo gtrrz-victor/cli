@@ -263,7 +263,10 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.UntrackedFilesAtStart = nil
 	adopted.PromptAttributions = nil
 	adopted.PendingPromptAttribution = nil
-	adopted.PromptWindowBase = 0
+	// Preserve cumulative turn/context metrics for the continuing agent session,
+	// but start the target checkpoint prompt window at the current turn count so
+	// the first adopted checkpoint only counts target-side turns.
+	adopted.PromptWindowBase = adopted.SessionTurnCount
 	adopted.PromptWindowResetPending = false
 	adopted.AttachedManually = false
 
