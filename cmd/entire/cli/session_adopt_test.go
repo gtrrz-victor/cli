@@ -24,7 +24,7 @@ func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	targetRepo := setupAdoptRepo(t)
 
 	sessionID := "test-adopt-session-001"
-	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	transcriptPath := claudeAdoptTranscriptPath(t, sourceRepo, sessionID)
 	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +101,61 @@ func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_RejectsUnexpectedSourceTranscriptPath(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-reject-transcript"
+	transcriptPath := filepath.Join(t.TempDir(), sessionID+".jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(`{"type":"user"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		TranscriptPath:        transcriptPath,
+		LastPrompt:            "update target file",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err == nil {
+		t.Fatal("runAdopt succeeded, want transcript-path refusal")
+	}
+	if !strings.Contains(err.Error(), "unexpected transcript path") {
+		t.Fatalf("runAdopt error = %v, want unexpected transcript path", err)
+	}
+
+	targetStore, storeErr := session.NewStateStore(context.Background())
+	if storeErr != nil {
+		t.Fatal(storeErr)
+	}
+	adopted, loadErr := targetStore.Load(context.Background(), sessionID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if adopted != nil {
+		t.Fatalf("target state was written despite transcript-path refusal: %#v", adopted)
+	}
+}
+
 func TestSessionAdopt_EnablesPrepareCommitMsgTrailer(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetRepo := setupAdoptRepo(t)
@@ -109,7 +164,7 @@ func TestSessionAdopt_EnablesPrepareCommitMsgTrailer(t *testing.T) {
 	targetRelPath := "src/feature.go"
 	targetAbsPath := filepath.Join(targetRepo, targetRelPath)
 
-	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	transcriptPath := claudeAdoptTranscriptPath(t, sourceRepo, sessionID)
 	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +234,7 @@ func TestSessionAdopt_IdleSourceSurvivesPrepareCommitMsgTrailer(t *testing.T) {
 	sessionID := "test-adopt-idle-source"
 	targetRelPath := "src/idle.go"
 	targetAbsPath := filepath.Join(targetRepo, targetRelPath)
-	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	transcriptPath := claudeAdoptTranscriptPath(t, sourceRepo, sessionID)
 	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +363,7 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	targetRelPath := "src/feature.go"
 	targetAbsPath := filepath.Join(targetRepo, targetRelPath)
 
-	transcriptPath := filepath.Join(sourceRepo, ".claude", sessionID+".jsonl")
+	transcriptPath := claudeAdoptTranscriptPath(t, sourceRepo, sessionID)
 	if err := os.MkdirAll(filepath.Dir(transcriptPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -615,6 +670,14 @@ func setupAdoptRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return realRepoDir
+}
+
+func claudeAdoptTranscriptPath(t *testing.T, sourceRepo, sessionID string) string {
+	t.Helper()
+
+	transcriptDir := filepath.Join(sourceRepo, ".claude", "projects", "adopt-test")
+	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", transcriptDir)
+	return filepath.Join(transcriptDir, sessionID+".jsonl")
 }
 
 func runAdoptGit(t *testing.T, dir string, args ...string) {

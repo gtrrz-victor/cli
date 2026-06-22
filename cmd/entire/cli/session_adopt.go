@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -79,6 +80,9 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	if err != nil {
 		return err
 	}
+	if err := validateAdoptSourceTranscript(sourceState, sourceWorktree); err != nil {
+		return err
+	}
 
 	adopted, filesTouched, err := buildAdoptedSessionState(ctx, sourceState)
 	if err != nil {
@@ -103,6 +107,23 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	}
 	fmt.Fprintf(w, "Tracking %d file(s): %s\n", len(filesTouched), strings.Join(filesTouched, ", "))
 	fmt.Fprintln(w, "Review tracked files before committing; adoption attributes current changes in this repo to the adopted session.")
+	return nil
+}
+
+func validateAdoptSourceTranscript(source *session.State, sourceWorktree string) error {
+	if source == nil || strings.TrimSpace(source.TranscriptPath) == "" {
+		return nil
+	}
+
+	owner, ok := agent.AgentForTranscriptPath(source.TranscriptPath, sourceWorktree)
+	if !ok {
+		return fmt.Errorf("unexpected transcript path for session %s: %s is not owned by a registered agent for %s",
+			source.SessionID, source.TranscriptPath, sourceWorktree)
+	}
+	if source.AgentType != "" && owner.Type() != source.AgentType {
+		return fmt.Errorf("unexpected transcript path for session %s: %s belongs to %s, but source state says %s",
+			source.SessionID, source.TranscriptPath, owner.Type(), source.AgentType)
+	}
 	return nil
 }
 
