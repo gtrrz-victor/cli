@@ -52,9 +52,7 @@ func (s *ManualCommitStrategy) getCheckpointStores(ctx context.Context, repo *gi
 // topology. Writes target refs.Primary; reads target refs.Read. The strategy's
 // blob fetcher is wired in so reads can fetch blobs on demand after a treeless
 // fetch.
-//
-//nolint:ireturn // committed store capability is the abstraction boundary
-func (s *ManualCommitStrategy) getCheckpointStore(ctx context.Context, repo *git.Repository) (checkpoint.CommittedStore, error) {
+func (s *ManualCommitStrategy) getCheckpointStore(ctx context.Context, repo *git.Repository) (*checkpoint.GitStore, error) {
 	stores, err := s.getCheckpointStores(ctx, repo)
 	if err != nil {
 		return nil, err
@@ -64,9 +62,7 @@ func (s *ManualCommitStrategy) getCheckpointStore(ctx context.Context, repo *git
 
 // getTemporaryStore returns the git-backed shadow-branch store with the
 // strategy's blob fetcher wired in.
-//
-//nolint:ireturn // temporary store capability is the abstraction boundary
-func (s *ManualCommitStrategy) getTemporaryStore(ctx context.Context, repo *git.Repository) (checkpoint.TemporaryStore, error) {
+func (s *ManualCommitStrategy) getTemporaryStore(ctx context.Context, repo *git.Repository) (*checkpoint.GitStore, error) {
 	stores, err := s.getCheckpointStores(ctx, repo)
 	if err != nil {
 		return nil, err

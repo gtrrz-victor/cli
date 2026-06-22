@@ -14,6 +14,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -560,6 +561,85 @@ func TestSessionAdopt_FromSubdirectoryReadsSourceStore(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_FiltersSharedSourceStoreByFromWorktree(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	siblingWorktree := filepath.Join(t.TempDir(), "sibling-worktree")
+	runAdoptGit(t, sourceRepo, "worktree", "add", siblingWorktree, "-b", "sibling-worktree")
+	resolvedSiblingWorktree, err := filepath.EvalSymlinks(siblingWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingWorktree = resolvedSiblingWorktree
+	t.Cleanup(func() {
+		runAdoptGit(t, sourceRepo, "worktree", "remove", siblingWorktree, "--force")
+	})
+	targetRepo := setupAdoptRepo(t)
+
+	sourceWorktreeID, err := paths.GetWorktreeID(sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingWorktreeID, err := paths.GetWorktreeID(siblingWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:           "source-worktree-session",
+		AgentType:           agent.AgentTypeClaudeCode,
+		StartedAt:           time.Now().Add(-5 * time.Minute),
+		LastInteractionTime: &lastInteraction,
+		Phase:               session.PhaseActive,
+		BaseCommit:          testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:        sourceRepo,
+		WorktreeID:          sourceWorktreeID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:           "sibling-worktree-session",
+		AgentType:           agent.AgentTypeClaudeCode,
+		StartedAt:           time.Now().Add(-5 * time.Minute),
+		LastInteractionTime: &lastInteraction,
+		Phase:               session.PhaseActive,
+		BaseCommit:          testutil.GetHeadHash(t, siblingWorktree),
+		WorktreePath:        siblingWorktree,
+		WorktreeID:          siblingWorktreeID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err = runAdopt(context.Background(), &out, "", adoptOptions{
+		FromWorktree: sourceRepo,
+	})
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
+	}
+
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := targetStore.Load(context.Background(), "source-worktree-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted == nil {
+		t.Fatal("expected source worktree session to be adopted")
+	}
+	if wrong, err := targetStore.Load(context.Background(), "sibling-worktree-session"); err != nil {
+		t.Fatal(err)
+	} else if wrong != nil {
+		t.Fatalf("adopted sibling worktree session unexpectedly: %#v", wrong)
+	}
+}
+
 func TestStateStoreForWorktreeIgnoresGitStderrOnSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell script fake git")
@@ -593,15 +673,29 @@ printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
 	}
 }
 
-func TestSessionAdopt_RejectsSameGitCommonDir(t *testing.T) {
+func TestSessionAdopt_MovesSameStoreSessionIntoCurrentWorktree(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetWorktree := filepath.Join(t.TempDir(), "target-worktree")
 	runAdoptGit(t, sourceRepo, "worktree", "add", targetWorktree, "-b", "target-worktree")
+	resolvedTargetWorktree, err := filepath.EvalSymlinks(targetWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetWorktree = resolvedTargetWorktree
 	t.Cleanup(func() {
 		runAdoptGit(t, sourceRepo, "worktree", "remove", targetWorktree, "--force")
 	})
 
-	sessionID := "test-adopt-same-common-dir"
+	sourceWorktreeID, err := paths.GetWorktreeID(sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetWorktreeID, err := paths.GetWorktreeID(targetWorktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "test-adopt-same-store"
 	lastInteraction := time.Now().Add(-1 * time.Minute)
 	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
 	if err := sourceStore.Save(context.Background(), &session.State{
@@ -612,6 +706,7 @@ func TestSessionAdopt_RejectsSameGitCommonDir(t *testing.T) {
 		Phase:                     session.PhaseActive,
 		BaseCommit:                testutil.GetHeadHash(t, sourceRepo),
 		WorktreePath:              sourceRepo,
+		WorktreeID:                sourceWorktreeID,
 		StepCount:                 4,
 		CheckpointTranscriptStart: 2,
 		LastCheckpointID:          id.MustCheckpointID("abc123def456"),
@@ -621,38 +716,56 @@ func TestSessionAdopt_RejectsSameGitCommonDir(t *testing.T) {
 	}
 
 	testutil.WriteFile(t, targetWorktree, "feature.txt", "agent change\n")
+	testutil.GitAdd(t, targetWorktree, "feature.txt")
 	t.Chdir(targetWorktree)
 
 	var out bytes.Buffer
-	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+	err = runAdopt(context.Background(), &out, sessionID, adoptOptions{
 		FromWorktree: sourceRepo,
-		Force:        true,
 	})
-	if err == nil {
-		t.Fatal("runAdopt succeeded, want same-common-dir refusal")
-	}
-	if !strings.Contains(err.Error(), "same git common dir") {
-		t.Fatalf("runAdopt error = %v, want same git common dir refusal", err)
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
 	}
 
 	loaded, err := sourceStore.Load(context.Background(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded == nil {
-		t.Fatal("expected source session state to remain")
+	if loaded.WorktreePath != targetWorktree {
+		t.Fatalf("WorktreePath = %q, want %q", loaded.WorktreePath, targetWorktree)
 	}
-	if loaded.StepCount != 4 {
-		t.Fatalf("StepCount = %d, want source state preserved at 4", loaded.StepCount)
+	if loaded.WorktreeID != targetWorktreeID {
+		t.Fatalf("WorktreeID = %q, want %q", loaded.WorktreeID, targetWorktreeID)
 	}
-	if loaded.CheckpointTranscriptStart != 2 {
-		t.Fatalf("CheckpointTranscriptStart = %d, want source state preserved at 2", loaded.CheckpointTranscriptStart)
+	if loaded.BaseCommit != testutil.GetHeadHash(t, targetWorktree) {
+		t.Fatalf("BaseCommit = %q, want target HEAD", loaded.BaseCommit)
 	}
-	if loaded.LastCheckpointID.String() != "abc123def456" {
-		t.Fatalf("LastCheckpointID = %s, want source checkpoint preserved", loaded.LastCheckpointID.String())
+	if loaded.StepCount != 0 {
+		t.Fatalf("StepCount = %d, want reset target-local checkpoint state", loaded.StepCount)
 	}
-	if loaded.LastCheckpointCommitHash != "source-commit" {
-		t.Fatalf("LastCheckpointCommitHash = %q, want source commit preserved", loaded.LastCheckpointCommitHash)
+	if loaded.CheckpointTranscriptStart != 0 {
+		t.Fatalf("CheckpointTranscriptStart = %d, want reset target-local transcript window", loaded.CheckpointTranscriptStart)
+	}
+	if !loaded.LastCheckpointID.IsEmpty() {
+		t.Fatalf("LastCheckpointID = %s, want empty target-local checkpoint ID", loaded.LastCheckpointID.String())
+	}
+	if loaded.LastCheckpointCommitHash != "" {
+		t.Fatalf("LastCheckpointCommitHash = %q, want empty target-local commit hash", loaded.LastCheckpointCommitHash)
+	}
+
+	commitMsgFile := filepath.Join(targetWorktree, "COMMIT_EDITMSG")
+	if err := os.WriteFile(commitMsgFile, []byte("add same-store feature\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := strategy.NewManualCommitStrategy().PrepareCommitMsg(context.Background(), commitMsgFile, ""); err != nil {
+		t.Fatalf("PrepareCommitMsg failed: %v", err)
+	}
+	content, err := os.ReadFile(commitMsgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Entire-Checkpoint:") {
+		t.Fatalf("commit message = %q, want Entire-Checkpoint trailer", string(content))
 	}
 }
 

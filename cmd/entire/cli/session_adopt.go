@@ -68,12 +68,13 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 		return err
 	}
 
-	targetStore, _, targetCommonDir, err := stateStoreForWorktree(ctx, ".")
+	targetStore, targetWorktree, targetCommonDir, err := stateStoreForWorktree(ctx, ".")
 	if err != nil {
 		return fmt.Errorf("open current session store: %w", err)
 	}
-	if sourceCommonDir == targetCommonDir {
-		return errors.New("source and target share the same git common dir; session adopt only moves sessions across independent git session stores")
+	sameSessionStore := sourceCommonDir == targetCommonDir
+	if sameSessionStore && sameAdoptPath(sourceWorktree, targetWorktree) {
+		return errors.New("source and target are the same worktree; no session adoption is needed")
 	}
 
 	sourceState, err := selectAdoptSourceSession(ctx, sourceStore, sourceWorktree, sessionID)
@@ -93,7 +94,7 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	if err != nil {
 		return fmt.Errorf("load current session state: %w", err)
 	}
-	if existing != nil && !opts.Force {
+	if existing != nil && !opts.Force && !canReplaceAdoptState(existing, sourceState, sameSessionStore) {
 		return fmt.Errorf("session %s is already tracked in this repo; rerun with --force to replace it", adopted.SessionID)
 	}
 	if err := targetStore.Save(ctx, adopted); err != nil {
@@ -108,6 +109,13 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	fmt.Fprintf(w, "Tracking %d file(s): %s\n", len(filesTouched), strings.Join(filesTouched, ", "))
 	fmt.Fprintln(w, "Review tracked files before committing; adoption attributes current changes in this repo to the adopted session.")
 	return nil
+}
+
+func canReplaceAdoptState(existing, source *session.State, sameSessionStore bool) bool {
+	return sameSessionStore &&
+		existing != nil &&
+		source != nil &&
+		existing.SessionID == source.SessionID
 }
 
 func validateAdoptSourceTranscript(source *session.State, sourceWorktree string) error {
@@ -163,6 +171,10 @@ func stateStoreForWorktree(ctx context.Context, worktreePath string) (*session.S
 }
 
 func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, sourceWorktree, sessionID string) (*session.State, error) {
+	sourceWorktreeID, worktreeIDErr := paths.GetWorktreeID(sourceWorktree)
+	if worktreeIDErr != nil {
+		sourceWorktreeID = ""
+	}
 	if sessionID != "" {
 		sourceState, err := store.Load(ctx, sessionID)
 		if err != nil {
@@ -174,6 +186,10 @@ func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, so
 		if !isAdoptableSourceSession(sourceState) {
 			return nil, fmt.Errorf("session %s is ended or fully condensed and cannot be adopted", sessionID)
 		}
+		if !sessionBelongsToSourceWorktree(sourceState, sourceWorktree, sourceWorktreeID) {
+			return nil, fmt.Errorf("session %s belongs to %s, not %s",
+				sessionID, adoptSessionWorktreeLabel(sourceState), sourceWorktree)
+		}
 		return sourceState, nil
 	}
 
@@ -183,7 +199,7 @@ func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, so
 	}
 	candidates := make([]*session.State, 0, len(states))
 	for _, state := range states {
-		if isRecentAdoptCandidate(state) {
+		if isRecentAdoptCandidate(state) && sessionBelongsToSourceWorktree(state, sourceWorktree, sourceWorktreeID) {
 			candidates = append(candidates, state)
 		}
 	}
@@ -204,6 +220,32 @@ func selectAdoptSourceSession(ctx context.Context, store *session.StateStore, so
 		return nil, fmt.Errorf("multiple recent active sessions found in %s; pass one of: %s",
 			sourceWorktree, strings.Join(ids, ", "))
 	}
+}
+
+func sessionBelongsToSourceWorktree(state *session.State, sourceWorktree, sourceWorktreeID string) bool {
+	if state == nil {
+		return false
+	}
+	if state.WorktreeID != "" && sourceWorktreeID != "" {
+		return state.WorktreeID == sourceWorktreeID
+	}
+	if state.WorktreePath != "" {
+		return sameAdoptPath(state.WorktreePath, sourceWorktree)
+	}
+	return true
+}
+
+func adoptSessionWorktreeLabel(state *session.State) string {
+	if state == nil {
+		return unknownPlaceholder
+	}
+	if state.WorktreePath != "" {
+		return state.WorktreePath
+	}
+	if state.WorktreeID != "" {
+		return state.WorktreeID
+	}
+	return unknownPlaceholder
 }
 
 func isRecentAdoptCandidate(state *session.State) bool {
@@ -305,6 +347,25 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.AttachedManually = false
 
 	return &adopted, filesTouched, nil
+}
+
+func sameAdoptPath(a, b string) bool {
+	return canonicalAdoptPath(a) == canonicalAdoptPath(b)
+}
+
+func canonicalAdoptPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return path
 }
 
 func currentFilesTouched(ctx context.Context) ([]string, error) {
