@@ -161,7 +161,7 @@ func TestReviewTrailLocationFromJSON_SingleLineRangeBecomesLine(t *testing.T) {
 	}
 }
 
-func TestReviewTrailLocationFromJSON_InvertedRangeBecomesLine(t *testing.T) {
+func TestReviewTrailLocationFromJSON_InvalidRangeKeepsStartLineAnchor(t *testing.T) {
 	loc := reviewTrailLocationFromJSON(reviewTrailJSONLocation{
 		Granularity: reviewTrailGranularityRange,
 		FilePath:    "src/app.ts",
