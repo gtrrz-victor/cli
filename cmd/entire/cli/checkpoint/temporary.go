@@ -141,7 +141,7 @@ func (s *GitStore) WriteTemporary(ctx context.Context, opts WriteTemporaryOption
 				return nil
 			}
 
-			commitHash, cErr := s.createCommit(ctx, treeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail)
+			commitHash, cErr := CreateCommit(ctx, s.repo, treeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail)
 			if cErr != nil {
 				return fmt.Errorf("failed to create commit: %w", cErr)
 			}
@@ -325,7 +325,7 @@ func (s *GitStore) WriteTemporaryTask(ctx context.Context, opts WriteTemporaryTa
 				return fmt.Errorf("failed to add task metadata: %w", tErr)
 			}
 
-			commitHash, cErr := s.createCommit(ctx, newTreeHash, parentHash, opts.CommitMessage, opts.AuthorName, opts.AuthorEmail)
+			commitHash, cErr := CreateCommit(ctx, s.repo, newTreeHash, parentHash, opts.CommitMessage, opts.AuthorName, opts.AuthorEmail)
 			if cErr != nil {
 				return fmt.Errorf("failed to create commit: %w", cErr)
 			}
@@ -845,10 +845,6 @@ func (s *GitStore) buildTreeWithChanges(
 	return ApplyTreeChanges(ctx, s.repo, baseTreeHash, changes)
 }
 
-// createCommit creates a commit object.
-func (s *GitStore) createCommit(ctx context.Context, treeHash, parentHash plumbing.Hash, message, authorName, authorEmail string) (plumbing.Hash, error) {
-	return CreateCommit(ctx, s.repo, treeHash, parentHash, message, authorName, authorEmail)
-}
 
 // Helper functions extracted from strategy/common.go
 // These are exported for use by strategy package (push_common.go, session_test.go)

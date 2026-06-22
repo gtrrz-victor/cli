@@ -118,7 +118,7 @@ func (s *GitStore) WriteCommitted(ctx context.Context, opts WriteCommittedOption
 	}
 
 	commitMsg := s.buildCommitMessage(opts, taskMetadataPath)
-	newCommitHash, err := s.createCommit(ctx, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail)
+	newCommitHash, err := CreateCommit(ctx, s.repo, newTreeHash, parentHash, commitMsg, opts.AuthorName, opts.AuthorEmail)
 	if err != nil {
 		return err
 	}
@@ -592,7 +592,7 @@ func (s *GitStore) UpdateCheckpointSummary(ctx context.Context, checkpointID id.
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Update checkpoint summary for %s", checkpointID)
-	newCommitHash, err := s.createCommit(ctx, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+	newCommitHash, err := CreateCommit(ctx, s.repo, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
 	if err != nil {
 		return err
 	}
@@ -1421,7 +1421,7 @@ func (s *GitStore) UpdateSummary(ctx context.Context, checkpointID id.Checkpoint
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Update summary for checkpoint %s (session: %s)", checkpointID, existingMetadata.SessionID)
-	newCommitHash, err := s.createCommit(ctx, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+	newCommitHash, err := CreateCommit(ctx, s.repo, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
 	if err != nil {
 		return err
 	}
@@ -1540,7 +1540,7 @@ func (s *GitStore) UpdateCommitted(ctx context.Context, opts UpdateCommittedOpti
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
 	commitMsg := fmt.Sprintf("Finalize transcript for Checkpoint: %s", opts.CheckpointID)
-	newCommitHash, err := s.createCommit(ctx, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
+	newCommitHash, err := CreateCommit(ctx, s.repo, newTreeHash, parentHash, commitMsg, authorName, authorEmail)
 	if err != nil {
 		return err
 	}
@@ -1727,7 +1727,7 @@ func (s *GitStore) ensureSessionsBranch(ctx context.Context) error {
 	}
 
 	authorName, authorEmail := GetGitAuthorFromRepo(s.repo)
-	commitHash, err := s.createCommit(ctx, emptyTreeHash, plumbing.ZeroHash, "Initialize sessions branch", authorName, authorEmail)
+	commitHash, err := CreateCommit(ctx, s.repo, emptyTreeHash, plumbing.ZeroHash, "Initialize sessions branch", authorName, authorEmail)
 	if err != nil {
 		return err
 	}
