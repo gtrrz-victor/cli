@@ -180,10 +180,10 @@ func (s *ephemeralStore) WriteTemporary(ctx context.Context, opts WriteEphemeral
 	return result, nil
 }
 
-// ReadTemporary reads the latest checkpoint from a shadow branch.
+// Read reads the latest checkpoint from a shadow branch.
 // Returns nil if the shadow branch doesn't exist.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktreeID string) (*ReadEphemeralResult, error) {
+func (s *ephemeralStore) Read(ctx context.Context, baseCommit, worktreeID string) (*ReadEphemeralResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -214,8 +214,8 @@ func (s *ephemeralStore) ReadTemporary(ctx context.Context, baseCommit, worktree
 	}, nil
 }
 
-// ListTemporary lists all shadow branches with their checkpoint info.
-func (s *ephemeralStore) ListTemporary(ctx context.Context) ([]EphemeralInfo, error) {
+// List lists all shadow branches with their checkpoint info.
+func (s *ephemeralStore) List(ctx context.Context) ([]EphemeralInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -485,24 +485,24 @@ func (s *ephemeralStore) addTaskMetadataToTree(ctx context.Context, baseTreeHash
 	return ApplyTreeChanges(ctx, s.repo, baseTreeHash, changes)
 }
 
-// ListTemporaryCheckpoints lists all checkpoint commits on a shadow branch.
+// ListCheckpoints lists all checkpoint commits on a shadow branch.
 // This returns individual commits (rewind points), not just branch info.
 // The sessionID filter, if provided, limits results to commits from that session.
 // worktreeID should be empty for main worktree or the internal git worktree name for linked worktrees.
-func (s *ephemeralStore) ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
+func (s *ephemeralStore) ListCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	shadowBranchName := ShadowBranchNameForCommit(baseCommit, worktreeID)
 	return s.listCheckpointsForBranch(ctx, shadowBranchName, sessionID, limit)
 }
 
 // ListCheckpointsForBranch lists checkpoint commits for a shadow branch by name.
-// Use this when you already have the full branch name (e.g., from ListTemporary).
+// Use this when you already have the full branch name (e.g., from List).
 // The sessionID filter, if provided, limits results to commits from that session.
 func (s *ephemeralStore) ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	return s.listCheckpointsForBranch(ctx, branchName, sessionID, limit)
 }
 
 // listCheckpointsForBranch lists checkpoint commits for a specific shadow branch name.
-// This is an internal helper used by ListTemporaryCheckpoints, ListCheckpointsForBranch, and ListAllTemporaryCheckpoints.
+// This is an internal helper used by ListCheckpoints, ListCheckpointsForBranch, and ListAllCheckpoints.
 func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBranchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
@@ -582,16 +582,16 @@ func (s *ephemeralStore) listCheckpointsForBranch(ctx context.Context, shadowBra
 	return results, nil
 }
 
-// ListAllTemporaryCheckpoints lists checkpoint commits from ALL shadow branches.
+// ListAllCheckpoints lists checkpoint commits from ALL shadow branches.
 // This is used for checkpoint lookup when the base commit is unknown (e.g., HEAD advanced since session start).
 // The sessionID filter, if provided, limits results to commits from that session.
-func (s *ephemeralStore) ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
+func (s *ephemeralStore) ListAllCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
 
 	// List all shadow branches
-	branches, err := s.ListTemporary(ctx)
+	branches, err := s.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list shadow branches: %w", err)
 	}

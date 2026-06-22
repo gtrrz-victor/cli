@@ -63,10 +63,11 @@ const (
 type EphemeralStore interface {
 	WriteTemporary(ctx context.Context, opts WriteEphemeralOptions) (WriteEphemeralResult, error)
 	WriteTemporaryTask(ctx context.Context, opts WriteEphemeralTaskOptions) (plumbing.Hash, error)
-	ListTemporary(ctx context.Context) ([]EphemeralInfo, error)
-	ListTemporaryCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
+	Read(ctx context.Context, baseCommit, worktreeID string) (*ReadEphemeralResult, error)
+	List(ctx context.Context) ([]EphemeralInfo, error)
+	ListCheckpoints(ctx context.Context, baseCommit, worktreeID, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
 	ListCheckpointsForBranch(ctx context.Context, branchName, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
-	ListAllTemporaryCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
+	ListAllCheckpoints(ctx context.Context, sessionID string, limit int) ([]EphemeralCheckpointInfo, error)
 	GetTranscriptFromCommit(ctx context.Context, commitHash plumbing.Hash, metadataDir string, agentType types.AgentType) ([]byte, error)
 	ShadowBranchExists(baseCommit, worktreeID string) bool
 }
@@ -712,7 +713,7 @@ type WriteEphemeralTaskOptions struct {
 }
 
 // EphemeralCheckpointInfo contains information about a single commit on a shadow branch.
-// Used by ListTemporaryCheckpoints to provide rewind point data.
+// Used by ListCheckpoints to provide rewind point data.
 type EphemeralCheckpointInfo struct {
 	// CommitHash is the hash of the checkpoint commit
 	CommitHash plumbing.Hash
