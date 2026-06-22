@@ -282,14 +282,26 @@ func addCheckpointTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 		result.APICallCount = a.APICallCount
 	}
 	if b != nil {
-		result.InputTokens += b.InputTokens
-		result.CacheCreationTokens += b.CacheCreationTokens
-		result.CacheReadTokens += b.CacheReadTokens
-		result.OutputTokens += b.OutputTokens
-		result.APICallCount += b.APICallCount
+		result.InputTokens = saturatingIntAdd(result.InputTokens, b.InputTokens)
+		result.CacheCreationTokens = saturatingIntAdd(result.CacheCreationTokens, b.CacheCreationTokens)
+		result.CacheReadTokens = saturatingIntAdd(result.CacheReadTokens, b.CacheReadTokens)
+		result.OutputTokens = saturatingIntAdd(result.OutputTokens, b.OutputTokens)
+		result.APICallCount = saturatingIntAdd(result.APICallCount, b.APICallCount)
 	}
 	result.SubagentTokens = addCheckpointTokenUsage(tokenUsageSubagents(a), tokenUsageSubagents(b))
 	return result
+}
+
+func saturatingIntAdd(a, b int) int {
+	maxValue := int(^uint(0) >> 1)
+	minValue := -maxValue - 1
+	if b > 0 && a > maxValue-b {
+		return maxValue
+	}
+	if b < 0 && a < minValue-b {
+		return minValue
+	}
+	return a + b
 }
 
 func tokenUsageSubagents(usage *agent.TokenUsage) *agent.TokenUsage {

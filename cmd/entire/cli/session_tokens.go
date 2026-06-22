@@ -288,7 +288,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 			Signals:  []string{"api_call_count"},
 		})
 	}
-	if signals.Tokens != nil && signals.Tokens.SubagentTotal > 0 && signals.Tokens.SubagentTotal*100 >= signals.Tokens.Total*10 {
+	if signals.Tokens != nil && tokenShareAtLeastOneTenth(signals.Tokens.SubagentTotal, signals.Tokens.Total) {
 		recs = append(recs, sessionTokensRecommendation{
 			ID:       "subagent-heavy",
 			Severity: "medium",
@@ -322,6 +322,13 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 	}
 
 	return recs
+}
+
+func tokenShareAtLeastOneTenth(part, total int) bool {
+	if part <= 0 || total <= 0 {
+		return false
+	}
+	return part >= (total-1)/10+1
 }
 
 func tokenPercent(value, total int) float64 {

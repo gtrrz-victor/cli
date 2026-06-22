@@ -1047,6 +1047,25 @@ func TestTokensCmd_TextOutputWithRecommendations(t *testing.T) {
 	}
 }
 
+func TestRecommendationRulesSubagentHeavyAvoidsOverflow(t *testing.T) {
+	t.Parallel()
+
+	maxInt := int(^uint(0) >> 1)
+	recs := recommendationRules(tokenRecommendationSignals{
+		Tokens: &sessionTokensUsage{
+			Total:         maxInt,
+			SubagentTotal: maxInt,
+		},
+	})
+
+	for _, rec := range recs {
+		if rec.ID == "subagent-heavy" {
+			return
+		}
+	}
+	t.Fatalf("expected subagent-heavy recommendation, got %+v", recs)
+}
+
 func TestTokensCmd_JSONOutputReportsLimitations(t *testing.T) {
 	setupStopTestRepo(t)
 
@@ -1586,6 +1605,45 @@ func TestCheckpointTokensReport_UsesReadableMetadataWhenSessionMetadataIncomplet
 	}
 	if len(report.Limitations) == 0 || !strings.Contains(report.Limitations[0], "1 checkpoint session metadata file could not be read") {
 		t.Fatalf("expected incomplete metadata limitation, got %+v", report.Limitations)
+	}
+}
+
+func TestAddCheckpointTokenUsageSaturatesOverflow(t *testing.T) {
+	t.Parallel()
+
+	maxInt := int(^uint(0) >> 1)
+	usage := addCheckpointTokenUsage(
+		&agent.TokenUsage{
+			InputTokens:         maxInt,
+			CacheCreationTokens: maxInt,
+			CacheReadTokens:     maxInt,
+			OutputTokens:        maxInt,
+			APICallCount:        maxInt,
+			SubagentTokens: &agent.TokenUsage{
+				InputTokens: maxInt,
+			},
+		},
+		&agent.TokenUsage{
+			InputTokens:         1,
+			CacheCreationTokens: 1,
+			CacheReadTokens:     1,
+			OutputTokens:        1,
+			APICallCount:        1,
+			SubagentTokens: &agent.TokenUsage{
+				InputTokens: 1,
+			},
+		},
+	)
+
+	if usage.InputTokens != maxInt ||
+		usage.CacheCreationTokens != maxInt ||
+		usage.CacheReadTokens != maxInt ||
+		usage.OutputTokens != maxInt ||
+		usage.APICallCount != maxInt {
+		t.Fatalf("expected saturated top-level usage, got %+v", usage)
+	}
+	if usage.SubagentTokens == nil || usage.SubagentTokens.InputTokens != maxInt {
+		t.Fatalf("expected saturated subagent usage, got %+v", usage.SubagentTokens)
 	}
 }
 
