@@ -301,7 +301,7 @@ func runReviewConfigure(ctx context.Context, cmd *cobra.Command, profileOverride
 		if err := saveReviewProfile(ctx, profileName, profile, true, scope); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Review profile %q saved to %s with %s.\n", profileName, scope.file(), strings.Join(sortedProfileAgentNames(profile), ", "))
+		fmt.Fprintf(out, "Review profile %q saved to %s with %s.\n", profileName, scope.file(), strings.Join(sortedMapKeys(profile.Agents), ", "))
 		fmt.Fprintf(out, "Run `entire review %s` to start.\n", profileName)
 		return nil
 	}
@@ -409,7 +409,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 	}
 	defaultName := strings.TrimSpace(s.ReviewDefaultProfile)
 	fmt.Fprintln(out, "Profiles:")
-	for _, name := range sortedProfileNames(profiles) {
+	for _, name := range sortedMapKeys(profiles) {
 		p := profiles[name]
 		p.Agents = nonZeroAgentConfigs(p.Agents)
 		marker := ""
@@ -419,7 +419,7 @@ func runReviewListProfiles(ctx context.Context, cmd *cobra.Command, deps Deps) e
 		fmt.Fprintf(out, "  %s%s\n", name, marker)
 
 		reviewers := make([]string, 0, len(p.Agents))
-		for _, w := range sortedProfileAgentNames(p) {
+		for _, w := range sortedMapKeys(p.Agents) {
 			cfg := p.Agents[w]
 			model := strings.TrimSpace(cfg.Model)
 			if model == "" {
@@ -457,7 +457,7 @@ func runReviewListAgents(ctx context.Context, cmd *cobra.Command, profileOverrid
 		if name, profile, selErr := selectReviewProfile(s, profileOverride); selErr == nil {
 			profile.Agents = nonZeroAgentConfigs(profile.Agents)
 			fmt.Fprintf(out, "Reviewers in profile %q (pass one to --agent):\n", name)
-			for _, worker := range sortedProfileAgentNames(profile) {
+			for _, worker := range sortedMapKeys(profile.Agents) {
 				cfg := profile.Agents[worker]
 				status := reviewHooksInstalledStatus
 				if _, ok := installedSet[reviewAgentName(worker, cfg)]; !ok {
@@ -532,13 +532,13 @@ func printReviewConfigCatalog(out io.Writer, profileName string, catalog []revie
 		fmt.Fprintln(out, "Configured profiles: (none yet)")
 	} else {
 		fmt.Fprintln(out, "Configured profiles:")
-		for _, name := range sortedProfileNames(profiles) {
+		for _, name := range sortedMapKeys(profiles) {
 			p := profiles[name]
 			marker := ""
 			if name == strings.TrimSpace(s.ReviewDefaultProfile) {
 				marker = " (default)"
 			}
-			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedProfileAgentNames(p), ", "))
+			line := fmt.Sprintf("  %s%s: %s", name, marker, strings.Join(sortedMapKeys(p.Agents), ", "))
 			if j, ok := profileJudge(p); ok {
 				line += "  judge=" + j.agent
 			}
@@ -733,7 +733,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 		cmd.SilenceUsage = true
 		eo := cmd.ErrOrStderr()
 		if profs := nonZeroProfiles(s.ReviewProfiles); len(profs) > 0 {
-			ns := sortedProfileNames(profs)
+			ns := sortedMapKeys(profs)
 			fmt.Fprintf(eo, "Specify a profile to review, e.g. `entire review %s`.\n", ns[0])
 			fmt.Fprintf(eo, "Configured profiles: %s\n", strings.Join(ns, ", "))
 		} else {
@@ -776,7 +776,7 @@ func runReview(ctx context.Context, cmd *cobra.Command, agentOverride, modelOver
 				return silentErr(defaultErr)
 			}
 			profile = defaultProfile
-			fmt.Fprintf(out, "No review profiles found; using default %q profile with %s.\n", profileForSetup, strings.Join(sortedProfileAgentNames(profile), ", "))
+			fmt.Fprintf(out, "No review profiles found; using default %q profile with %s.\n", profileForSetup, strings.Join(sortedMapKeys(profile.Agents), ", "))
 			fmt.Fprintln(out, "Configure later with `entire review --configure`.")
 			fmt.Fprintln(out)
 		}

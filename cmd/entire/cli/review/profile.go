@@ -98,7 +98,7 @@ func selectReviewProfile(s *settings.EntireSettings, override string) (string, s
 		} else {
 			return "", settings.ReviewProfileConfig{}, fmt.Errorf(
 				"multiple review profiles configured (%s); pass a profile name or set review_default_profile",
-				strings.Join(sortedProfileNames(profiles), ", "))
+				strings.Join(sortedMapKeys(profiles), ", "))
 		}
 	}
 
@@ -106,7 +106,7 @@ func selectReviewProfile(s *settings.EntireSettings, override string) (string, s
 	if !ok {
 		return "", settings.ReviewProfileConfig{}, fmt.Errorf(
 			"review profile %q is not configured; configured profiles: %s",
-			name, strings.Join(sortedProfileNames(profiles), ", "))
+			name, strings.Join(sortedMapKeys(profiles), ", "))
 	}
 	if len(nonZeroAgentConfigs(cfg.Agents)) == 0 {
 		return "", settings.ReviewProfileConfig{}, fmt.Errorf("review profile %q has no configured agents", name)
@@ -126,10 +126,6 @@ func nonZeroProfiles(in map[string]settings.ReviewProfileConfig) map[string]sett
 	return out
 }
 
-func sortedProfileNames(in map[string]settings.ReviewProfileConfig) []string {
-	return sortedMapKeys(in)
-}
-
 func nonZeroAgentConfigs(in map[string]settings.ReviewConfig) map[string]settings.ReviewConfig {
 	out := make(map[string]settings.ReviewConfig, len(in))
 	for name, cfg := range in {
@@ -140,10 +136,6 @@ func nonZeroAgentConfigs(in map[string]settings.ReviewConfig) map[string]setting
 		out[name] = cfg
 	}
 	return out
-}
-
-func sortedProfileAgentNames(profile settings.ReviewProfileConfig) []string {
-	return sortedMapKeys(profile.Agents)
 }
 
 func reviewAgentName(workerName string, cfg settings.ReviewConfig) string {
@@ -241,7 +233,7 @@ func selectProfileWorker(profile settings.ReviewProfileConfig, selector string) 
 	case 1:
 		return matches[0], profile.Agents[matches[0]], nil
 	case 0:
-		configured := sortedProfileAgentNames(profile)
+		configured := sortedMapKeys(profile.Agents)
 		if len(configured) == 0 {
 			return "", settings.ReviewConfig{}, fmt.Errorf("review reviewer or agent %q is not configured", selector)
 		}
@@ -369,24 +361,20 @@ func defaultProfileFocus(profileName string) string {
 // false when no reviewer can.
 func defaultJudge(ctx context.Context, configured map[string]settings.ReviewConfig) (judgeSpec, bool) {
 	for _, preferred := range []string{string(agent.AgentNameClaudeCode), string(agent.AgentNameCodex), string(agent.AgentNameGemini)} {
-		for _, workerName := range sortedReviewConfigKeys(configured) {
+		for _, workerName := range sortedMapKeys(configured) {
 			cfg := configured[workerName]
 			if reviewAgentName(workerName, cfg) == preferred && agentSupportsTextGeneration(ctx, preferred) {
 				return judgeSpec{agent: preferred, model: strings.TrimSpace(cfg.Model)}, true
 			}
 		}
 	}
-	for _, workerName := range sortedReviewConfigKeys(configured) {
+	for _, workerName := range sortedMapKeys(configured) {
 		cfg := configured[workerName]
 		if name := reviewAgentName(workerName, cfg); agentSupportsTextGeneration(ctx, name) {
 			return judgeSpec{agent: name, model: strings.TrimSpace(cfg.Model)}, true
 		}
 	}
 	return judgeSpec{}, false
-}
-
-func sortedReviewConfigKeys(configured map[string]settings.ReviewConfig) []string {
-	return sortedMapKeys(configured)
 }
 
 func sortedMapKeys[V any](in map[string]V) []string {

@@ -156,7 +156,7 @@ func RunReviewGuidedSetup(
 	} else {
 		profile.Output = ""
 	}
-	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedProfileAgentNames(profile), ", "))
+	fmt.Fprintf(out, "Saved %q review profile with %s.\n", profileName, strings.Join(sortedMapKeys(profile.Agents), ", "))
 	fmt.Fprintln(out)
 	return profileName, profile, nil
 }
@@ -247,7 +247,7 @@ func promptForReviewFocus(ctx context.Context, current string) (string, string, 
 // `entire review` doesn't silently spawn a crew.
 func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (string, error) {
 	profiles := nonZeroProfiles(s.ReviewProfiles)
-	names := sortedProfileNames(profiles)
+	names := sortedMapKeys(profiles)
 	if len(names) == 0 {
 		return "", errors.New("no configured profiles to choose from")
 	}
@@ -261,7 +261,7 @@ func promptForProfileToRun(ctx context.Context, s *settings.EntireSettings) (str
 		p := profiles[name]
 		p.Agents = nonZeroAgentConfigs(p.Agents)
 		workers := make([]string, 0, len(p.Agents))
-		for _, w := range sortedProfileAgentNames(p) {
+		for _, w := range sortedMapKeys(p.Agents) {
 			workers = append(workers, reviewAgentName(w, p.Agents[w]))
 		}
 		label := name
@@ -303,7 +303,7 @@ func promptForReviewCrew(ctx context.Context, profileName string, launchable []s
 	// guided default is one slot per launchable agent.
 	seed := make([]crewSlot, 0, len(launchable))
 	if len(existing.Agents) > 0 {
-		for _, w := range sortedProfileAgentNames(existing) {
+		for _, w := range sortedMapKeys(existing.Agents) {
 			cfg := existing.Agents[w]
 			seed = append(seed, crewSlot{agent: reviewAgentName(w, cfg), model: strings.TrimSpace(cfg.Model)})
 		}
