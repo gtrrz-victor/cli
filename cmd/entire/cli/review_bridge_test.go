@@ -103,7 +103,7 @@ func TestReviewTrailFindingInputsSplitsTopLevelMarkedFindings(t *testing.T) {
 	if inputs[1].Severity == nil || *inputs[1].Severity != "medium" {
 		t.Fatalf("severity[1] = %v, want medium", inputs[1].Severity)
 	}
-	if inputs[0].Location.Granularity != "line" || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "api/src/lib/planetscale/trails.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 657 {
+	if inputs[0].Location.Granularity != reviewTrailGranularityLine || inputs[0].Location.FilePath == nil || *inputs[0].Location.FilePath != "api/src/lib/planetscale/trails.ts" || inputs[0].Location.StartLine == nil || *inputs[0].Location.StartLine != 657 {
 		t.Fatalf("location[0] = %+v, want trails.ts:657", inputs[0].Location)
 	}
 }

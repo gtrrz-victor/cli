@@ -23,10 +23,10 @@ type OpenOptions struct {
 // Stores is the facade returned by Open: the committed store plus the git-only
 // temporary capability and resolved committed-ref topology.
 type Stores struct {
-	// Primary is the committed store that serves committed reads and writes.
-	Primary CommittedStore
+	// Primary is the git-backed committed store that serves committed reads and writes.
+	Primary *GitStore
 
-	temporary TemporaryStore
+	temporary *GitStore
 	refs      CommittedRefs
 }
 
@@ -55,9 +55,7 @@ func resolveOpenRefs(ctx context.Context, opts OpenOptions) CommittedRefs {
 }
 
 // Temporary returns the git-backed temporary shadow-branch store.
-//
-//nolint:ireturn // temporary store capability is the abstraction boundary
-func (s *Stores) Temporary() TemporaryStore { return s.temporary }
+func (s *Stores) Temporary() *GitStore { return s.temporary }
 
 // Refs returns the resolved committed-ref topology.
 func (s *Stores) Refs() CommittedRefs { return s.refs }
