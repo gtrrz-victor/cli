@@ -37,10 +37,11 @@ func mirrorRow(m coreapi.Mirror) []string {
 
 // availableMirrorColumns is the view of a repo you *could* mirror: the
 // scannable repo name, your effective GitHub access, and whether it's
-// onboardable. STATUS is "available" (run `entire repo mirror create` to onboard),
-// "mirrored" (already done — `entire repo mirror list` shows the clone URL), or
-// "owner-only" (a personal repo of another user; only its owner may mirror
-// it). No clone URL column: an un-onboarded repo doesn't have one yet.
+// onboardable. STATUS is "available" (run `entire repo mirror create` to
+// onboard), "mirrored" (already done — `entire repo mirror list` shows the
+// clone URL), or "owner-only" (a personal repo of another user; only its
+// owner may mirror it). No clone URL column: an un-onboarded repo doesn't
+// have one yet.
 var availableMirrorColumns = []string{"REPO", "ACCESS", "STATUS"}
 
 func availableMirrorRow(m coreapi.AvailableMirror) []string {
