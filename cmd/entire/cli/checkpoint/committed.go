@@ -407,12 +407,12 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteCom
 	// Write transcript. The pointer targets full.jsonl, which CLI
 	// rewind/resume/explain read by filename. The compact transcript.jsonl is
 	// also written into the tree (so it is pushed) but is not yet pointed at.
-	transcriptPointer, err := s.writeTranscript(ctx, opts, sessionPath, entries)
+	wroteTranscript, err := s.writeTranscript(ctx, opts, sessionPath, entries)
 	if err != nil {
 		return filePaths, err
 	}
-	if transcriptPointer != "" {
-		filePaths.Transcript = "/" + sessionPath + transcriptPointer
+	if wroteTranscript {
+		filePaths.Transcript = "/" + sessionPath + paths.TranscriptFileName
 		filePaths.ContentHash = "/" + sessionPath + paths.ContentHashFileName
 	}
 
@@ -724,10 +724,9 @@ func aggregateTokenUsage(a, b *agent.TokenUsage) *agent.TokenUsage {
 // writeTranscript writes the transcript, compact transcript, and content hash
 // to the checkpoint entries. The compact transcript.jsonl is written into the
 // tree (so it is pushed alongside full.jsonl) but is not yet referenced by
-// metadata. Returns the session-relative filename the metadata transcript
-// pointer should target: full.jsonl, or "" when the transcript was empty and
-// nothing was written.
-func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptions, basePath string, entries map[string]object.TreeEntry) (string, error) {
+// metadata. Returns true when a transcript was written, false when it was
+// empty and nothing was written.
+func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptions, basePath string, entries map[string]object.TreeEntry) (bool, error) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	transcriptBytes := opts.Transcript.Bytes()
 
@@ -743,13 +742,13 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 		if len(rawData) > 0 {
 			redacted, redactErr := redact.JSONLBytes(rawData)
 			if redactErr != nil {
-				return "", fmt.Errorf("failed to redact transcript from file: %w", redactErr)
+				return false, fmt.Errorf("failed to redact transcript from file: %w", redactErr)
 			}
 			transcriptBytes = redacted.Bytes()
 		}
 	}
 	if len(transcriptBytes) == 0 {
-		return "", nil
+		return false, nil
 	}
 
 	if opts.Agent == agent.AgentTypeCodex {
@@ -763,7 +762,7 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 	if err != nil {
 		chunkTranscriptSpan.RecordError(err)
 		chunkTranscriptSpan.End()
-		return "", fmt.Errorf("failed to chunk transcript: %w", err)
+		return false, fmt.Errorf("failed to chunk transcript: %w", err)
 	}
 	chunkTranscriptSpan.End()
 	chunkDuration := time.Since(chunkStart)
@@ -777,7 +776,7 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 		if err != nil {
 			writeTranscriptBlobsSpan.RecordError(err)
 			writeTranscriptBlobsSpan.End()
-			return "", err
+			return false, err
 		}
 		entries[chunkPath] = object.TreeEntry{
 			Name: chunkPath,
@@ -796,7 +795,7 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 	if err != nil {
 		contentHashSpan.RecordError(err)
 		contentHashSpan.End()
-		return "", err
+		return false, err
 	}
 	entries[basePath+paths.ContentHashFileName] = object.TreeEntry{
 		Name: basePath + paths.ContentHashFileName,
@@ -810,7 +809,6 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 	// full.jsonl for now — pointing it at the compact transcript is deferred to
 	// a later change.
 	s.writeCompactTranscript(logCtx, opts.Agent, opts.CheckpointTranscriptStart, transcriptBytes, basePath, entries)
-	pointerFile := paths.TranscriptFileName
 
 	logging.Debug(logCtx, "write transcript timings",
 		slog.String("session_id", opts.SessionID),
@@ -821,9 +819,8 @@ func (s *GitStore) writeTranscript(ctx context.Context, opts WriteCommittedOptio
 		slog.Int64("write_transcript_content_hash_ms", time.Since(contentHashStart).Milliseconds()),
 		slog.Int("transcript_bytes", len(transcriptBytes)),
 		slog.Int("chunk_count", len(chunks)),
-		slog.String("transcript_pointer", pointerFile),
 	)
-	return pointerFile, nil
+	return true, nil
 }
 
 // compactAgentName resolves the agent slug used in compact transcript lines
