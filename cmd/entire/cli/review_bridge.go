@@ -232,11 +232,11 @@ func inferReviewTrailSeverity(body string) *string {
 	}
 	switch {
 	case strings.Contains(prefix, "[p0]") || strings.Contains(prefix, "[p1]") || strings.Contains(prefix, "[high]") || strings.Contains(prefix, "critical"):
-		return stringPtr("high")
+		return stringPtr(trailReviewSeverityHigh)
 	case strings.Contains(prefix, "[p2]") || strings.Contains(prefix, "[medium]"):
-		return stringPtr("medium")
+		return stringPtr(trailReviewSeverityMedium)
 	case strings.Contains(prefix, "[p3]") || strings.Contains(prefix, "[low]") || strings.Contains(prefix, "[nit]") || strings.Contains(prefix, "nit:"):
-		return stringPtr("low")
+		return stringPtr(trailReviewSeverityLow)
 	default:
 		return nil
 	}
@@ -246,14 +246,14 @@ func normalizeReviewTrailSeverity(raw string) *string {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	s = strings.Trim(s, "[](){}:*_ ")
 	switch s {
-	case "high", "medium", "low":
+	case trailReviewSeverityHigh, trailReviewSeverityMedium, trailReviewSeverityLow:
 		return stringPtr(s)
 	case "p0", "p1", "critical":
-		return stringPtr("high")
+		return stringPtr(trailReviewSeverityHigh)
 	case "p2":
-		return stringPtr("medium")
+		return stringPtr(trailReviewSeverityMedium)
 	case "p3", "nit", "nits":
-		return stringPtr("low")
+		return stringPtr(trailReviewSeverityLow)
 	default:
 		return nil
 	}

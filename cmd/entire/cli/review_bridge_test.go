@@ -49,7 +49,7 @@ func TestReviewTrailFindingInputsSplitsTopLevelBullets(t *testing.T) {
 	}
 	bodies := make([]string, len(inputs))
 	for i, in := range inputs {
-		if in.Location.Granularity != "line" {
+		if in.Location.Granularity != reviewTrailGranularityLine {
 			t.Fatalf("input %d granularity = %q, want line", i, in.Location.Granularity)
 		}
 		if in.Location.FilePath == nil || in.Location.StartLine == nil {
