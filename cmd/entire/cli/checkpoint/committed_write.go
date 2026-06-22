@@ -24,12 +24,12 @@ type WriteRequest interface {
 // WriteSession creates or replaces a session document within a checkpoint,
 // materializing the checkpoint on its first session. This is condensation's
 // write. (Maps to the former WriteCommitted.)
-type WriteSession WriteCommittedOptions
+type WriteSession WriteOptions
 
 // BackfillTranscript replaces a session's transcript, prompts, and skill
 // events at stop time without clobbering sibling fields. (Maps to the former
 // UpdateCommitted.)
-type BackfillTranscript UpdateCommittedOptions
+type BackfillTranscript UpdateOptions
 
 // BackfillSummary rewrites only the summary of the checkpoint's latest
 // session. (Maps to the former UpdateSummary.)
@@ -61,9 +61,9 @@ type Writer interface {
 func (s *GitStore) Write(ctx context.Context, req WriteRequest) error {
 	switch r := req.(type) {
 	case WriteSession:
-		return s.WriteCommitted(ctx, WriteCommittedOptions(r))
+		return s.WriteCommitted(ctx, WriteOptions(r))
 	case BackfillTranscript:
-		return s.UpdateCommitted(ctx, UpdateCommittedOptions(r))
+		return s.UpdateCommitted(ctx, UpdateOptions(r))
 	case BackfillSummary:
 		return s.UpdateSummary(ctx, r.CheckpointID, r.Summary)
 	case BackfillAttribution:

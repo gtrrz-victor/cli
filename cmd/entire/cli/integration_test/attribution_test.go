@@ -164,7 +164,7 @@ func TestManualCommit_Attribution(t *testing.T) {
 		t.Fatalf("Failed to read metadata content: %v", err)
 	}
 
-	var metadata checkpoint.CommittedMetadata
+	var metadata checkpoint.Metadata
 	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
 		t.Fatalf("Failed to parse metadata.json: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestManualCommit_AttributionDeletionOnly(t *testing.T) {
 		t.Fatalf("Failed to read metadata content: %v", err)
 	}
 
-	var metadata checkpoint.CommittedMetadata
+	var metadata checkpoint.Metadata
 	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
 		t.Fatalf("Failed to parse metadata.json: %v", err)
 	}
@@ -854,7 +854,7 @@ func getAttributionFromMetadata(t *testing.T, repo *git.Repository, checkpointID
 		t.Fatalf("Failed to read metadata content: %v", err)
 	}
 
-	var metadata checkpoint.CommittedMetadata
+	var metadata checkpoint.Metadata
 	if err := json.Unmarshal([]byte(metadataContent), &metadata); err != nil {
 		t.Fatalf("Failed to parse metadata.json: %v", err)
 	}

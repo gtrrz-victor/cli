@@ -89,8 +89,8 @@ var errCannotGenerateTemporaryCheckpoint = errors.New("cannot generate summary f
 
 type explainCheckpointLookup struct {
 	repo      *git.Repository
-	store     checkpoint.CommittedStore
-	committed []checkpoint.CommittedInfo
+	store     checkpoint.PersistentStore
+	committed []checkpoint.CheckpointInfo
 }
 
 func (l *explainCheckpointLookup) Close() error {
@@ -1571,9 +1571,9 @@ func buildAmbiguousCommitMatches(repo *git.Repository, hashes []plumbing.Hash) [
 // into ambiguousMatch entries enriched with timestamps and session IDs from
 // the loaded committed-checkpoint listing. Caps at 5 entries to keep the
 // failure block readable when a short prefix collides on many checkpoints.
-func buildAmbiguousCheckpointMatches(ids []id.CheckpointID, committed []checkpoint.CommittedInfo) []ambiguousMatch {
+func buildAmbiguousCheckpointMatches(ids []id.CheckpointID, committed []checkpoint.CheckpointInfo) []ambiguousMatch {
 	const maxMatches = 5
-	infoByID := make(map[id.CheckpointID]checkpoint.CommittedInfo, len(committed))
+	infoByID := make(map[id.CheckpointID]checkpoint.CheckpointInfo, len(committed))
 	for _, info := range committed {
 		infoByID[info.CheckpointID] = info
 	}
@@ -1757,7 +1757,7 @@ func buildCondensedCompactTranscriptEntries(transcriptBytes []byte) ([]summarize
 // otherwise the same compact shape is returned as plain text.
 func formatCheckpointHeader(
 	summary *checkpoint.CheckpointSummary,
-	meta checkpoint.CommittedMetadata,
+	meta checkpoint.Metadata,
 	cpID id.CheckpointID,
 	commits []associatedCommit,
 	author checkpoint.Author,
@@ -2048,7 +2048,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	}
 
 	// Build map of checkpoint ID -> committed info
-	committedByID := make(map[id.CheckpointID]checkpoint.CommittedInfo)
+	committedByID := make(map[id.CheckpointID]checkpoint.CheckpointInfo)
 	for _, info := range committedInfos {
 		if !info.CheckpointID.IsEmpty() {
 			committedByID[info.CheckpointID] = info
@@ -2159,7 +2159,7 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	return points, nil
 }
 
-func readLatestCommittedSessionPrompt(ctx context.Context, store checkpoint.CommittedListReader, cpID id.CheckpointID, sessionCount int) string {
+func readLatestCommittedSessionPrompt(ctx context.Context, store checkpoint.PersistentListReader, cpID id.CheckpointID, sessionCount int) string {
 	if sessionCount <= 0 {
 		return ""
 	}

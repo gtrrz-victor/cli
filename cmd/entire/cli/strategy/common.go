@@ -316,7 +316,7 @@ func ListCheckpoints(ctx context.Context) ([]CheckpointInfo, error) {
 	return checkpointInfosFromCommitted(committed), nil
 }
 
-func checkpointInfosFromCommitted(committed []checkpoint.CommittedInfo) []CheckpointInfo {
+func checkpointInfosFromCommitted(committed []checkpoint.CheckpointInfo) []CheckpointInfo {
 	result := make([]CheckpointInfo, 0, len(committed))
 	for _, c := range committed {
 		result = append(result, CheckpointInfo{
@@ -595,7 +595,7 @@ func isEmptyMetadataBranch(repo *git.Repository, ref *plumbing.Reference) (bool,
 
 // sessionMetadataLite contains only the fields needed from session-level metadata.json.
 // Using a minimal struct avoids allocating large nested objects (Summary, Attribution,
-// TokenUsage, etc.) that CommittedMetadata carries but callers never need here.
+// TokenUsage, etc.) that Metadata carries but callers never need here.
 type sessionMetadataLite struct {
 	SessionID string          `json:"session_id"`
 	Agent     types.AgentType `json:"agent,omitempty"`
@@ -843,7 +843,7 @@ func ReadAgentTypeFromTree(tree *object.Tree, checkpointPath string) types.Agent
 	metadataPath := checkpointPath + "/" + paths.MetadataFileName
 	if file, err := tree.File(metadataPath); err == nil {
 		if content, err := file.Contents(); err == nil {
-			var metadata checkpoint.CommittedMetadata
+			var metadata checkpoint.Metadata
 			if err := json.Unmarshal([]byte(content), &metadata); err == nil && metadata.Agent != "" {
 				return metadata.Agent
 			}
@@ -908,7 +908,7 @@ func isOnlySeparators(s string) bool {
 //
 // Falls back through earlier sessions when the latest has no prompt.
 // Avoids reading full transcripts — only reads prompt.txt files.
-// sessionCount is the number of sessions in the checkpoint (from CommittedInfo.SessionCount).
+// sessionCount is the number of sessions in the checkpoint (from CheckpointInfo.SessionCount).
 func ReadLatestSessionPromptFromCommittedTree(tree *object.Tree, cpID id.CheckpointID, sessionCount int) string {
 	cpPath := cpID.Path()
 	cpTree, err := tree.Tree(cpPath)

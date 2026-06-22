@@ -142,7 +142,7 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 	sessionID := "test-session-123"
 	agentType := agent.AgentTypeClaudeCode
 
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		Strategy:     "manual-commit",
@@ -209,7 +209,7 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to read session metadata.json: %v", err)
 		}
-		var sessionMetadata CommittedMetadata
+		var sessionMetadata Metadata
 		if err := json.Unmarshal([]byte(sessionContent), &sessionMetadata); err != nil {
 			t.Fatalf("failed to parse session metadata.json: %v", err)
 		}
@@ -227,7 +227,7 @@ func TestWriteCommitted_AgentField(t *testing.T) {
 
 // readLatestSessionMetadata reads the session-specific metadata from the latest session subdirectory.
 // This is where session-specific fields like Summary are stored.
-func readLatestSessionMetadata(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID) CommittedMetadata {
+func readLatestSessionMetadata(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID) Metadata {
 	t.Helper()
 
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
@@ -284,7 +284,7 @@ func readLatestSessionMetadata(t *testing.T, repo *git.Repository, checkpointID 
 		t.Fatalf("failed to read session metadata.json: %v", err)
 	}
 
-	var metadata CommittedMetadata
+	var metadata Metadata
 	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 		t.Fatalf("failed to parse session metadata.json: %v", err)
 	}
@@ -293,7 +293,7 @@ func readLatestSessionMetadata(t *testing.T, repo *git.Repository, checkpointID 
 }
 
 // Note: Tests for Agents array and SessionCount fields have been removed
-// as those fields were removed from CommittedMetadata in the simplification.
+// as those fields were removed from Metadata in the simplification.
 
 // TestWriteTemporary_Deduplication verifies that WriteTemporary skips creating
 // a new commit when the tree hash matches the previous checkpoint.
@@ -558,7 +558,7 @@ func TestWriteCommitted_MergesVercelConfigOnMetadataBranch(t *testing.T) {
 	}
 
 	cpID := id.MustCheckpointID("abcdef123456")
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: cpID,
 		SessionID:    "test-session-id",
 		Strategy:     "manual-commit",
@@ -645,7 +645,7 @@ func verifyBranchInMetadata(t *testing.T, repo *git.Repository, checkpointID id.
 		t.Fatalf("failed to read metadata.json: %v", err)
 	}
 
-	var metadata CommittedMetadata
+	var metadata Metadata
 	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 		t.Fatalf("failed to parse metadata.json: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestWriteCommitted_BranchField(t *testing.T) {
 		// Write a committed checkpoint with branch information
 		checkpointID := id.MustCheckpointID("a1b2c3d4e5f6")
 		store := NewGitStore(repo, DefaultV1Refs())
-		err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err = store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID: checkpointID,
 			SessionID:    "test-session-123",
 			Strategy:     "manual-commit",
@@ -731,7 +731,7 @@ func TestWriteCommitted_BranchField(t *testing.T) {
 		// Write a committed checkpoint (branch should be empty in detached HEAD)
 		checkpointID := id.MustCheckpointID("b2c3d4e5f6a7")
 		store := NewGitStore(repo, DefaultV1Refs())
-		err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err = store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID: checkpointID,
 			SessionID:    "test-session-456",
 			Strategy:     "manual-commit",
@@ -756,7 +756,7 @@ func TestUpdateSummary(t *testing.T) {
 	checkpointID := id.MustCheckpointID("f1e2d3c4b5a6")
 
 	// First, create a checkpoint without a summary
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: checkpointID,
 		SessionID:    "test-session-summary",
 		Strategy:     "manual-commit",
@@ -877,7 +877,7 @@ func TestListCommitted_FallsBackToRemote(t *testing.T) {
 	// Create entire/checkpoints/v1 branch on the remote with a checkpoint
 	remoteStore := NewGitStore(remoteRepo, DefaultV1Refs())
 	cpID := id.MustCheckpointID("abcdef123456")
-	err = remoteStore.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = remoteStore.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: cpID,
 		SessionID:    "test-session-id",
 		Strategy:     "manual-commit",
@@ -946,7 +946,7 @@ func TestGetCheckpointAuthor(t *testing.T) {
 	authorName := "Alice Developer"
 	authorEmail := "alice@example.com"
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: checkpointID,
 		SessionID:    "test-session-author",
 		Strategy:     "manual-commit",
@@ -1031,7 +1031,7 @@ func TestWriteCommitted_MultipleSessionsSameCheckpoint(t *testing.T) {
 	checkpointID := id.MustCheckpointID("a1a2a3a4a5a6")
 
 	// Write first session
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-one",
 		Strategy:         "manual-commit",
@@ -1047,7 +1047,7 @@ func TestWriteCommitted_MultipleSessionsSameCheckpoint(t *testing.T) {
 	}
 
 	// Write second session to the same checkpoint ID
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-two",
 		Strategy:         "manual-commit",
@@ -1112,7 +1112,7 @@ func TestWriteCommitted_Aggregation(t *testing.T) {
 	checkpointID := id.MustCheckpointID("b1b2b3b4b5b6")
 
 	// Write first session with specific stats
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-one",
 		Strategy:         "manual-commit",
@@ -1132,7 +1132,7 @@ func TestWriteCommitted_Aggregation(t *testing.T) {
 	}
 
 	// Write second session with overlapping and new files
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-two",
 		Strategy:         "manual-commit",
@@ -1204,7 +1204,7 @@ func TestReadCommitted_ReturnsCheckpointSummary(t *testing.T) {
 
 	// Write two sessions
 	for i, sessionID := range []string{"session-alpha", "session-beta"} {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        sessionID,
 			Strategy:         "manual-commit",
@@ -1273,7 +1273,7 @@ func TestReadSessionContent_ByIndex(t *testing.T) {
 	}
 
 	for _, s := range sessions {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        s.id,
 			Strategy:         "manual-commit",
@@ -1324,7 +1324,7 @@ func writeSingleSession(t *testing.T, cpIDStr, sessionID, transcript string) (*G
 	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID(cpIDStr)
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        sessionID,
 		Strategy:         "manual-commit",
@@ -1349,7 +1349,7 @@ func TestWriteCommitted_CodexSanitizesPortableTranscript(t *testing.T) {
 {"timestamp":"2026-03-25T11:31:11.756Z","type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},{"type":"reasoning","summary":[{"text":"nested"}],"encrypted_content":"REDACTED"},{"type":"compaction","encrypted_content":"REDACTED"},{"type":"compaction_summary","encrypted_content":"REDACTED"}]}}
 `
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "codex-session",
 		Strategy:         "manual-commit",
@@ -1399,7 +1399,7 @@ func TestReadLatestSessionContent(t *testing.T) {
 
 	// Write three sessions
 	for i := range 3 {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        fmt.Sprintf("session-%d", i),
 			Strategy:         "manual-commit",
@@ -1438,7 +1438,7 @@ func TestReadSessionContentByID(t *testing.T) {
 	// Write two sessions with distinct IDs
 	sessionIDs := []string{"unique-id-alpha", "unique-id-beta"}
 	for i, sid := range sessionIDs {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        sid,
 			Strategy:         "manual-commit",
@@ -1490,7 +1490,7 @@ func TestListCommitted_MultiSessionInfo(t *testing.T) {
 
 	// Write two sessions to the same checkpoint
 	for i, sid := range []string{"list-session-1", "list-session-2"} {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        sid,
 			Strategy:         "manual-commit",
@@ -1513,7 +1513,7 @@ func TestListCommitted_MultiSessionInfo(t *testing.T) {
 	}
 
 	// Find our checkpoint
-	var found *CommittedInfo
+	var found *CheckpointInfo
 	for i := range checkpoints {
 		if checkpoints[i].CheckpointID == checkpointID {
 			found = &checkpoints[i]
@@ -1552,7 +1552,7 @@ func TestWriteCommitted_SessionWithNoPrompts(t *testing.T) {
 	checkpointID := id.MustCheckpointID("313233343536")
 
 	// Write session without prompts
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "no-prompts-session",
 		Strategy:         "manual-commit",
@@ -1589,7 +1589,7 @@ func TestWriteCommitted_SessionWithNoPrompts(t *testing.T) {
 }
 
 // TestWriteCommitted_SessionWithSummary verifies that a non-nil Summary
-// in WriteCommittedOptions is persisted in the session-level metadata.json.
+// in WriteOptions is persisted in the session-level metadata.json.
 // Regression test for ENT-243 where Summary was omitted from the struct literal.
 func TestWriteCommitted_SessionWithSummary(t *testing.T) {
 	repo, _ := setupBranchTestRepo(t)
@@ -1601,7 +1601,7 @@ func TestWriteCommitted_SessionWithSummary(t *testing.T) {
 		Outcome: "Bug was fixed",
 	}
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "summary-session",
 		Strategy:         "manual-commit",
@@ -1640,7 +1640,7 @@ func TestWriteCommitted_ThreeSessions(t *testing.T) {
 
 	// Write three sessions
 	for i := range 3 {
-		err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+		err := store.WriteCommitted(context.Background(), WriteOptions{
 			CheckpointID:     checkpointID,
 			SessionID:        fmt.Sprintf("three-session-%d", i),
 			Strategy:         "manual-commit",
@@ -3081,7 +3081,7 @@ func TestWriteCommitted_DuplicateSessionIDUpdatesInPlace(t *testing.T) {
 	checkpointID := id.MustCheckpointID("deda01234567")
 
 	// Write session "X" with initial data
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-X",
 		Strategy:         "manual-commit",
@@ -3101,7 +3101,7 @@ func TestWriteCommitted_DuplicateSessionIDUpdatesInPlace(t *testing.T) {
 	}
 
 	// Write session "Y"
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-Y",
 		Strategy:         "manual-commit",
@@ -3121,7 +3121,7 @@ func TestWriteCommitted_DuplicateSessionIDUpdatesInPlace(t *testing.T) {
 	}
 
 	// Write session "X" again with updated data (should replace, not append)
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-X",
 		Strategy:         "manual-commit",
@@ -3216,7 +3216,7 @@ func TestWriteCommitted_DuplicateSessionIDSingleSession(t *testing.T) {
 	checkpointID := id.MustCheckpointID("dedb07654321")
 
 	// Write session "X" with initial data
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-X",
 		Strategy:         "manual-commit",
@@ -3231,7 +3231,7 @@ func TestWriteCommitted_DuplicateSessionIDSingleSession(t *testing.T) {
 	}
 
 	// Write session "X" again with updated data
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-X",
 		Strategy:         "manual-commit",
@@ -3292,7 +3292,7 @@ func TestWriteCommitted_DuplicateSessionIDReusesIndex(t *testing.T) {
 	checkpointID := id.MustCheckpointID("dedc0abcdef1")
 
 	// Write session A at index 0
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-A",
 		Strategy:         "manual-commit",
@@ -3306,7 +3306,7 @@ func TestWriteCommitted_DuplicateSessionIDReusesIndex(t *testing.T) {
 	}
 
 	// Write session B at index 1
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-B",
 		Strategy:         "manual-commit",
@@ -3320,7 +3320,7 @@ func TestWriteCommitted_DuplicateSessionIDReusesIndex(t *testing.T) {
 	}
 
 	// Write session A again — should reuse index 0, not create index 2
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-A",
 		Strategy:         "manual-commit",
@@ -3376,7 +3376,7 @@ func TestWriteCommitted_DuplicateSessionIDClearsStaleFiles(t *testing.T) {
 	checkpointID := id.MustCheckpointID("dedd0abcdef2")
 
 	// Write session A with prompts and context
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-A",
 		Strategy:         "manual-commit",
@@ -3391,7 +3391,7 @@ func TestWriteCommitted_DuplicateSessionIDClearsStaleFiles(t *testing.T) {
 	}
 
 	// Write session B with prompts
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-B",
 		Strategy:         "manual-commit",
@@ -3406,7 +3406,7 @@ func TestWriteCommitted_DuplicateSessionIDClearsStaleFiles(t *testing.T) {
 	}
 
 	// Overwrite session A WITHOUT prompts
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "session-A",
 		Strategy:         "manual-commit",
@@ -3460,7 +3460,7 @@ func TestWriteCommitted_PreservesRedactedTranscript(t *testing.T) {
 		t.Fatalf("redact.JSONLBytes() error = %v", err)
 	}
 
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "redact-transcript-session",
 		Strategy:         "manual-commit",
@@ -3491,7 +3491,7 @@ func TestWriteCommitted_RedactsPromptSecrets(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef2")
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "redact-prompt-session",
 		Strategy:         "manual-commit",
@@ -3586,7 +3586,7 @@ func TestCopyMetadataDir_RedactsSecrets(t *testing.T) {
 }
 
 // TestWriteCommitted_CLIVersionField verifies that versioninfo.Version is written
-// to both the root CheckpointSummary and session-level CommittedMetadata.
+// to both the root CheckpointSummary and session-level Metadata.
 func TestWriteCommitted_CLIVersionField(t *testing.T) {
 	t.Parallel()
 
@@ -3621,7 +3621,7 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 	checkpointID := id.MustCheckpointID("b1c2d3e4f5a6")
 	sessionID := "test-session-version"
 
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: checkpointID,
 		SessionID:    sessionID,
 		Strategy:     "manual-commit",
@@ -3675,7 +3675,7 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 		t.Errorf("CheckpointSummary.CLIVersion = %q, want %q", summary.CLIVersion, versioninfo.Version)
 	}
 
-	// Verify session-level metadata.json (CommittedMetadata) has CLIVersion
+	// Verify session-level metadata.json (Metadata) has CLIVersion
 	sessionTree, err := checkpointTree.Tree("0")
 	if err != nil {
 		t.Fatalf("failed to get session tree: %v", err)
@@ -3691,13 +3691,13 @@ func TestWriteCommitted_CLIVersionField(t *testing.T) {
 		t.Fatalf("failed to read session metadata.json: %v", err)
 	}
 
-	var sessionMetadata CommittedMetadata
+	var sessionMetadata Metadata
 	if err := json.Unmarshal([]byte(sessionContent), &sessionMetadata); err != nil {
 		t.Fatalf("failed to parse session metadata.json: %v", err)
 	}
 
 	if sessionMetadata.CLIVersion != versioninfo.Version {
-		t.Errorf("CommittedMetadata.CLIVersion = %q, want %q", sessionMetadata.CLIVersion, versioninfo.Version)
+		t.Errorf("Metadata.CLIVersion = %q, want %q", sessionMetadata.CLIVersion, versioninfo.Version)
 	}
 }
 
@@ -3733,7 +3733,7 @@ func TestWriteCommitted_ModelFieldAlwaysPresent(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 
 	checkpointID := id.MustCheckpointID("c1d2e3f4a5b6")
-	err = store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err = store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: checkpointID,
 		SessionID:    "test-session-model",
 		Strategy:     "manual-commit",
@@ -3772,13 +3772,13 @@ func TestWriteCommitted_ModelFieldAlwaysPresent(t *testing.T) {
 		t.Fatalf("failed to read session metadata.json: %v", err)
 	}
 
-	var sessionMetadata CommittedMetadata
+	var sessionMetadata Metadata
 	if err := json.Unmarshal([]byte(sessionContent), &sessionMetadata); err != nil {
 		t.Fatalf("failed to parse session metadata.json: %v", err)
 	}
 
 	if sessionMetadata.Model != "" {
-		t.Errorf("CommittedMetadata.Model = %q, want empty string", sessionMetadata.Model)
+		t.Errorf("Metadata.Model = %q, want empty string", sessionMetadata.Model)
 	}
 	if !strings.Contains(sessionContent, `"model": ""`) {
 		t.Errorf("session metadata.json should contain an explicit empty model field, got:\n%s", sessionContent)
@@ -3951,7 +3951,7 @@ func TestWriteCommitted_RedactsSummarySecrets(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("aabbccddeef7")
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "redact-summary-session",
 		Strategy:         "manual-commit",
@@ -3994,7 +3994,7 @@ func TestUpdateSummary_RedactsSecrets(t *testing.T) {
 	checkpointID := id.MustCheckpointID("aabbccddeef8")
 
 	// First write a checkpoint without a summary
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "update-summary-session",
 		Strategy:         "manual-commit",
@@ -4046,7 +4046,7 @@ func TestWriteCommitted_SubagentTranscript_JSONLFallback(t *testing.T) {
 		t.Fatalf("failed to write transcript: %v", err)
 	}
 
-	err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:           checkpointID,
 		SessionID:              "jsonl-fallback-session",
 		Strategy:               "manual-commit",
@@ -4577,14 +4577,14 @@ func TestWriteTemporaryTask_ExcludesGitIgnoredFiles(t *testing.T) {
 }
 
 // TestCommittedMetadata_ReviewFields pins the JSON wire format for review
-// fields on CommittedMetadata. Any refactor that silently drops or renames
+// fields on Metadata. Any refactor that silently drops or renames
 // these JSON tags would break the entire/checkpoints/v1 branch format. We
 // assert on the actual marshalled JSON keys (not just round-trip identity)
 // because a coordinated rename of struct field + tag would otherwise pass
 // the round-trip but break on-disk readers of older checkpoints.
 func TestCommittedMetadata_ReviewFields(t *testing.T) {
 	t.Parallel()
-	m := CommittedMetadata{
+	m := Metadata{
 		Kind:         "agent_review",
 		ReviewSkills: []string{"/skill1", "/skill2"},
 		ReviewPrompt: "Review this branch.",
@@ -4616,12 +4616,12 @@ func TestCommittedMetadata_ReviewFields(t *testing.T) {
 }
 
 // TestCommittedMetadata_InvestigateFields pins the JSON wire format for the
-// investigate fields on CommittedMetadata. Mirrors
+// investigate fields on Metadata. Mirrors
 // TestCommittedMetadata_ReviewFields: any silent rename or removal of these
 // JSON tags would corrupt the entire/checkpoints/v1 branch format.
 func TestCommittedMetadata_InvestigateFields(t *testing.T) {
 	t.Parallel()
-	m := CommittedMetadata{
+	m := Metadata{
 		Kind:             "agent_investigate",
 		InvestigateRunID: "abcdef012345",
 		InvestigateTopic: "Why is checkout flaky?",
@@ -4645,16 +4645,16 @@ func TestCommittedMetadata_InvestigateFields(t *testing.T) {
 		t.Errorf(`expected "investigate_topic" present, got %v`, raw["investigate_topic"])
 	}
 
-	// Zero-value CommittedMetadata must omit all the investigate keys
+	// Zero-value Metadata must omit all the investigate keys
 	// (omitempty tags) so older checkpoints aren't tagged as investigations.
-	bZero, err := json.Marshal(CommittedMetadata{})
+	bZero, err := json.Marshal(Metadata{})
 	if err != nil {
 		t.Fatalf("marshal zero: %v", err)
 	}
 	zs := string(bZero)
 	for _, key := range []string{"investigate_run_id", "investigate_topic"} {
 		if strings.Contains(zs, `"`+key+`"`) {
-			t.Errorf(`expected zero-value CommittedMetadata to omit %q, got %s`, key, zs)
+			t.Errorf(`expected zero-value Metadata to omit %q, got %s`, key, zs)
 		}
 	}
 }
@@ -4700,7 +4700,7 @@ func TestCheckpointSummary_HasReview(t *testing.T) {
 func TestRedactBlobBytes_JSONMetadata(t *testing.T) {
 	t.Parallel()
 
-	meta := CommittedMetadata{
+	meta := Metadata{
 		Kind:         "agent_review",
 		ReviewPrompt: "credential leak: key=AKIAYRWQG5EJLPZLBYNP",
 		Summary: &Summary{
@@ -4796,9 +4796,9 @@ func readSummaryFromBranch(t *testing.T, repo *git.Repository, checkpointID id.C
 	return summary
 }
 
-// readSessionMetadataAtIndex reads the per-session CommittedMetadata for
+// readSessionMetadataAtIndex reads the per-session Metadata for
 // session at numbered subfolder `index` (0-based) under the checkpoint.
-func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID, index int) CommittedMetadata {
+func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID id.CheckpointID, index int) Metadata {
 	t.Helper()
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	if err != nil {
@@ -4828,7 +4828,7 @@ func readSessionMetadataAtIndex(t *testing.T, repo *git.Repository, checkpointID
 	if err != nil {
 		t.Fatalf("read session metadata.json: %v", err)
 	}
-	var meta CommittedMetadata
+	var meta Metadata
 	if err := json.Unmarshal([]byte(content), &meta); err != nil {
 		t.Fatalf("parse session metadata.json: %v", err)
 	}
@@ -4867,7 +4867,7 @@ func initRepoForCheckpointTest(t *testing.T) *git.Repository {
 }
 
 // TestWriteCommitted_PropagatesHasInvestigation verifies that
-// WriteCommittedOptions.HasInvestigation flows into CheckpointSummary, and
+// WriteOptions.HasInvestigation flows into CheckpointSummary, and
 // that on a second write into the SAME checkpoint, the existing-summary
 // OR-merge keeps HasInvestigation true even when the second session is not
 // itself an investigation. Mirrors the existing HasReview merge behaviour.
@@ -4879,7 +4879,7 @@ func TestWriteCommitted_PropagatesHasInvestigation(t *testing.T) {
 	checkpointID := id.MustCheckpointID("aabbccddeeff")
 
 	// First session: investigate session, sets HasInvestigation=true.
-	if err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	if err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "investigate-session-1",
 		Strategy:         "manual-commit",
@@ -4902,7 +4902,7 @@ func TestWriteCommitted_PropagatesHasInvestigation(t *testing.T) {
 
 	// Second session: ordinary session, HasInvestigation=false. The OR-merge
 	// against the existing summary must keep HasInvestigation=true.
-	if err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	if err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "ordinary-session-2",
 		Strategy:         "manual-commit",
@@ -4922,8 +4922,8 @@ func TestWriteCommitted_PropagatesHasInvestigation(t *testing.T) {
 }
 
 // TestCommittedMetadata_InvestigateFieldsRoundTrip verifies that
-// WriteCommittedOptions investigate fields are written into the per-session
-// CommittedMetadata and round-trip on read.
+// WriteOptions investigate fields are written into the per-session
+// Metadata and round-trip on read.
 func TestCommittedMetadata_InvestigateFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -4931,7 +4931,7 @@ func TestCommittedMetadata_InvestigateFieldsRoundTrip(t *testing.T) {
 	store := NewGitStore(repo, DefaultV1Refs())
 	checkpointID := id.MustCheckpointID("11223344aabb")
 
-	if err := store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	if err := store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID:     checkpointID,
 		SessionID:        "investigate-roundtrip",
 		Strategy:         "manual-commit",

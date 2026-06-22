@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	_ CommittedStore = (*GitStore)(nil)
-	_ AuthorReader   = (*GitStore)(nil)
-	_ Writer         = (*GitStore)(nil)
-	_ TemporaryStore = (*ephemeralStore)(nil)
+	_ PersistentStore = (*GitStore)(nil)
+	_ AuthorReader    = (*GitStore)(nil)
+	_ Writer          = (*GitStore)(nil)
+	_ TemporaryStore  = (*ephemeralStore)(nil)
 )
 
 // GitStore is the committed (persistent) checkpoint store. Writes target

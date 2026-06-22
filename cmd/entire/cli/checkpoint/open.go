@@ -24,7 +24,7 @@ type OpenOptions struct {
 // temporary capability and resolved committed-ref topology.
 type Stores struct {
 	// Primary is the committed store that serves committed reads and writes.
-	Primary CommittedStore
+	Primary PersistentStore
 
 	temporary TemporaryStore
 	refs      CommittedRefs

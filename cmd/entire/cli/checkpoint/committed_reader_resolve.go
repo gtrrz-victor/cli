@@ -7,26 +7,26 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 )
 
-// CommittedReader provides read access to committed checkpoint data.
-type CommittedReader interface {
+// PersistentReader provides read access to committed checkpoint data.
+type PersistentReader interface {
 	ReadCommitted(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error)
 	ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 }
 
-// CommittedListReader provides read and list access to committed checkpoint data.
-type CommittedListReader interface {
-	CommittedReader
-	ListCommitted(ctx context.Context) ([]CommittedInfo, error)
-	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*CommittedMetadata, error)
+// PersistentListReader provides read and list access to committed checkpoint data.
+type PersistentListReader interface {
+	PersistentReader
+	ListCommitted(ctx context.Context) ([]CheckpointInfo, error)
+	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*Metadata, error)
 	ReadSessionPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (string, error)
 }
 
-// CommittedStore provides the production committed checkpoint storage surface.
+// PersistentStore provides the production committed checkpoint storage surface.
 // Writes go through the unified Writer.Write(ctx, WriteRequest); the concrete
 // per-operation methods (WriteCommitted/UpdateCommitted/...) remain on GitStore
 // as the implementation Write dispatches to.
-type CommittedStore interface {
-	CommittedListReader
+type PersistentStore interface {
+	PersistentListReader
 	ReadSessionMetadataAndPrompts(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error)
 	Writer
 }
@@ -38,7 +38,7 @@ type AuthorReader interface {
 
 // ReadCommittedCheckpoint reads a committed checkpoint summary and normalizes
 // a nil store response into ErrCheckpointNotFound.
-func ReadCommittedCheckpoint(ctx context.Context, reader CommittedReader, checkpointID id.CheckpointID) (*CheckpointSummary, error) {
+func ReadCommittedCheckpoint(ctx context.Context, reader PersistentReader, checkpointID id.CheckpointID) (*CheckpointSummary, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Propagating context cancellation
 	}
@@ -55,7 +55,7 @@ func ReadCommittedCheckpoint(ctx context.Context, reader CommittedReader, checkp
 
 // ReadLatestSessionContent reads the latest session from an already-resolved
 // committed reader and summary.
-func ReadLatestSessionContent(ctx context.Context, reader CommittedReader, checkpointID id.CheckpointID, summary *CheckpointSummary) (*SessionContent, error) {
+func ReadLatestSessionContent(ctx context.Context, reader PersistentReader, checkpointID id.CheckpointID, summary *CheckpointSummary) (*SessionContent, error) {
 	if summary == nil || len(summary.Sessions) == 0 {
 		return nil, ErrCheckpointNotFound
 	}
@@ -67,7 +67,7 @@ func ReadLatestSessionContent(ctx context.Context, reader CommittedReader, check
 	return content, nil
 }
 
-func ReadRawSessionLogForCheckpoint(ctx context.Context, reader CommittedReader, checkpointID id.CheckpointID) ([]byte, string, error) {
+func ReadRawSessionLogForCheckpoint(ctx context.Context, reader PersistentReader, checkpointID id.CheckpointID) ([]byte, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err //nolint:wrapcheck // Propagating context cancellation
 	}

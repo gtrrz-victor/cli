@@ -85,7 +85,7 @@ func TestGitStore_WriteCommittedTargetsPrimary(t *testing.T) {
 	store := NewGitStore(repo, refs)
 
 	cpID := id.MustCheckpointID("a1b2c3d4e5f6")
-	require.NoError(t, store.WriteCommitted(context.Background(), WriteCommittedOptions{
+	require.NoError(t, store.WriteCommitted(context.Background(), WriteOptions{
 		CheckpointID: cpID,
 		SessionID:    "session",
 		Strategy:     "manual-commit",

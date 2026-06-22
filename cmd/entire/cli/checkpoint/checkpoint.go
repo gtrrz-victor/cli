@@ -158,8 +158,8 @@ type TemporaryInfo struct {
 	Timestamp time.Time
 }
 
-// WriteCommittedOptions contains options for writing a committed checkpoint.
-type WriteCommittedOptions struct {
+// WriteOptions contains options for writing a committed checkpoint.
+type WriteOptions struct {
 	// CheckpointID is the stable 12-hex-char identifier
 	CheckpointID id.CheckpointID
 
@@ -245,8 +245,8 @@ type WriteCommittedOptions struct {
 	TranscriptIdentifierAtStart string // Last identifier when checkpoint started (UUID for Claude, message ID for Gemini)
 	CheckpointTranscriptStart   int    // Transcript line offset at start of this checkpoint's data
 
-	// CheckpointTranscriptStart is written to both CommittedMetadata.CheckpointTranscriptStart
-	// and the deprecated CommittedMetadata.TranscriptLinesAtStart for backward compatibility.
+	// CheckpointTranscriptStart is written to both Metadata.CheckpointTranscriptStart
+	// and the deprecated Metadata.TranscriptLinesAtStart for backward compatibility.
 
 	// TokenUsage contains the token usage for this checkpoint
 	TokenUsage *types.TokenUsage
@@ -314,11 +314,11 @@ type WriteCommittedOptions struct {
 	HasInvestigation bool
 }
 
-// UpdateCommittedOptions contains options for updating an existing committed checkpoint.
+// UpdateOptions contains options for updating an existing committed checkpoint.
 // Uses replace semantics: the transcript and prompts are fully replaced,
 // not appended. At stop time we have the complete session transcript and want every
 // checkpoint to contain it identically.
-type UpdateCommittedOptions struct {
+type UpdateOptions struct {
 	// CheckpointID identifies the checkpoint to update
 	CheckpointID id.CheckpointID
 
@@ -330,7 +330,7 @@ type UpdateCommittedOptions struct {
 	Transcript redact.RedactedBytes
 
 	// Prompts contains the raw user prompts (replaces existing).
-	// See WriteCommittedOptions.Prompts.
+	// See WriteOptions.Prompts.
 	Prompts []string
 
 	// Agent identifies the agent type (needed for transcript chunking)
@@ -376,8 +376,8 @@ func (p *PrecomputedTranscriptBlobs) isUsable() bool {
 	return p != nil && !p.ContentHashBlob.IsZero() && len(p.ChunkHashes) > 0
 }
 
-// CommittedInfo contains summary information about a committed checkpoint.
-type CommittedInfo struct {
+// CheckpointInfo contains summary information about a committed checkpoint.
+type CheckpointInfo struct {
 	// CheckpointID is the stable 12-hex-char identifier
 	CheckpointID id.CheckpointID
 
@@ -414,7 +414,7 @@ type CommittedInfo struct {
 // as opposed to just the metadata/summary.
 type SessionContent struct {
 	// Metadata contains the session-specific metadata
-	Metadata CommittedMetadata
+	Metadata Metadata
 
 	// Transcript is the session transcript content
 	Transcript []byte
@@ -428,8 +428,8 @@ type SessionContent struct {
 	Prompts string
 }
 
-// CommittedMetadata contains the metadata stored in metadata.json for each checkpoint.
-type CommittedMetadata struct {
+// Metadata contains the metadata stored in metadata.json for each checkpoint.
+type Metadata struct {
 	CLIVersion       string          `json:"cli_version,omitempty"`
 	CheckpointID     id.CheckpointID `json:"checkpoint_id"`
 	SessionID        string          `json:"session_id"`
@@ -513,7 +513,7 @@ type CommittedMetadata struct {
 // GetTranscriptStart returns the transcript line offset at which this checkpoint's data begins.
 // Returns 0 for new checkpoints (start from beginning). For data written by older CLI versions,
 // falls back to the deprecated TranscriptLinesAtStart field.
-func (m CommittedMetadata) GetTranscriptStart() int {
+func (m Metadata) GetTranscriptStart() int {
 	if m.CheckpointTranscriptStart > 0 {
 		return m.CheckpointTranscriptStart
 	}
@@ -540,7 +540,7 @@ type SessionFilePaths struct {
 //	<checkpoint-id[:2]>/<checkpoint-id[2:]>/
 //	├── metadata.json         # This CheckpointSummary
 //	├── 1/                    # First session
-//	│   ├── metadata.json     # Session-specific CommittedMetadata
+//	│   ├── metadata.json     # Session-specific Metadata
 //	│   ├── full.jsonl
 //	│   ├── prompt.txt
 //	│   └── content_hash.txt

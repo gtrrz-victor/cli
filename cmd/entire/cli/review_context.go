@@ -29,7 +29,7 @@ const (
 )
 
 type reviewContextSessionMetadataReader interface {
-	ReadSessionMetadata(ctx context.Context, checkpointID checkpointid.CheckpointID, sessionIndex int) (*checkpoint.CommittedMetadata, error)
+	ReadSessionMetadata(ctx context.Context, checkpointID checkpointid.CheckpointID, sessionIndex int) (*checkpoint.Metadata, error)
 }
 
 type reviewContextSessionMetadataPromptsReader interface {
@@ -273,7 +273,7 @@ func formatReviewSessionLine(worktreeRoot string, st *session.State) string {
 
 func reviewCheckpointDetail(
 	ctx context.Context,
-	reader checkpoint.CommittedReader,
+	reader checkpoint.PersistentReader,
 	cpID checkpointid.CheckpointID,
 	summary *checkpoint.CheckpointSummary,
 ) string {
@@ -307,10 +307,10 @@ type reviewContextSessionDetail struct {
 
 func readReviewContextSessionMetadata(
 	ctx context.Context,
-	reader checkpoint.CommittedReader,
+	reader checkpoint.PersistentReader,
 	cpID checkpointid.CheckpointID,
 	sessionIndex int,
-) (*checkpoint.CommittedMetadata, error) {
+) (*checkpoint.Metadata, error) {
 	if r, ok := reader.(reviewContextSessionMetadataReader); ok {
 		return r.ReadSessionMetadata(ctx, cpID, sessionIndex) //nolint:wrapcheck // Best-effort prompt context.
 	}
@@ -326,7 +326,7 @@ func readReviewContextSessionMetadata(
 
 func readReviewContextSessionPrompts(
 	ctx context.Context,
-	reader checkpoint.CommittedReader,
+	reader checkpoint.PersistentReader,
 	cpID checkpointid.CheckpointID,
 	sessionIndex int,
 ) (string, error) {

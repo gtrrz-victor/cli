@@ -2820,7 +2820,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			continue
 		}
 
-		updateOpts := checkpoint.UpdateCommittedOptions{
+		updateOpts := checkpoint.UpdateOptions{
 			CheckpointID:     cpID,
 			SessionID:        state.SessionID,
 			Transcript:       redactedTranscript,

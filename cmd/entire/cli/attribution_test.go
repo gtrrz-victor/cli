@@ -91,7 +91,7 @@ func TestParseAttributionLineRange(t *testing.T) {
 
 func TestAttributionBlameShowsHumanAndAICheckpointLines(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "a1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "a1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-ai-12345678",
 		Prompts:          []string{"Add an agent-owned helper."},
 		FilesTouched:     []string{"auth.py"},
@@ -161,7 +161,7 @@ func TestAttributionBlameColumnExpandsForFiveDigitLines(t *testing.T) {
 
 func TestAttributionBlameLongShowsDetailedColumns(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "a2b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "a2b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-ai-12345678",
 		Prompts:          []string{"Add an agent-owned helper."},
 		FilesTouched:     []string{"auth.py"},
@@ -193,7 +193,7 @@ func TestAttributionBlameLongShowsDetailedColumns(t *testing.T) {
 
 func TestAttributionBlameMarksMixedCheckpoint(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "b1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "b1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-mixed-12345678",
 		Prompts:          []string{"Change agent code, then keep a user tweak."},
 		FilesTouched:     []string{"auth.py"},
@@ -221,7 +221,7 @@ func TestAttributionBlameMarksMixedCheckpoint(t *testing.T) {
 
 func TestAttributionWhyLineShowsPromptAndCheckpoint(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "c1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "c1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-why-12345678",
 		Prompts:          []string{"Create a line that can be explained."},
 		FilesTouched:     []string{"auth.py"},
@@ -244,7 +244,7 @@ func TestAttributionWhyLineShowsPromptAndCheckpoint(t *testing.T) {
 
 func TestAttributionBlameJSONIsStable(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "d1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "d1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-json-12345678",
 		Prompts:          []string{"Add JSON attributed line."},
 		FilesTouched:     []string{"auth.py"},
@@ -279,7 +279,7 @@ func TestAttributionBlameJSONEmptyFileUsesEmptyLinesArray(t *testing.T) {
 
 func TestAttributionBlameJSONLineFilterPrunesCheckpoints(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "e1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "e1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-filter-12345678",
 		Prompts:          []string{"Add the second line only."},
 		FilesTouched:     []string{"auth.py"},
@@ -309,7 +309,7 @@ func TestAttributionBlameJSONLineFilterPrunesCheckpoints(t *testing.T) {
 
 func TestAttributionBlameMixedUsesFileMatchingCheckpoint(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "f1b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "f1b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-auth-12345678",
 		Prompts:          []string{"Add auth line."},
 		FilesTouched:     []string{"auth.py"},
@@ -323,7 +323,7 @@ func TestAttributionBlameMixedUsesFileMatchingCheckpoint(t *testing.T) {
 			MetricVersion:     2,
 		},
 	})
-	writeAttributionCheckpoint(t, repoRoot, "f2b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "f2b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-other-12345678",
 		Prompts:          []string{"Mixed update in another file."},
 		FilesTouched:     []string{"other.py"},
@@ -363,7 +363,7 @@ func TestAttributionResolverUsesCheckpointReader(t *testing.T) {
 			Sessions:     []checkpoint.SessionFilePaths{{Metadata: "metadata.json"}},
 		},
 		content: &checkpoint.SessionContent{
-			Metadata: checkpoint.CommittedMetadata{
+			Metadata: checkpoint.Metadata{
 				SessionID:    "session-ai",
 				FilesTouched: []string{"auth.py"},
 				Agent:        agent.AgentTypeClaudeCode,
@@ -400,7 +400,7 @@ func (s *attributionCheckpointReaderStub) ReadSessionMetadataAndPrompts(context.
 
 func TestAttributionBlameScopesMixedToSessionNotCheckpoint(t *testing.T) {
 	repoRoot := newAttributionRepo(t)
-	writeAttributionCheckpoint(t, repoRoot, "a9b2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "a9b2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-scoped-12345678",
 		Prompts:          []string{"Agent-only edit to auth.py."},
 		FilesTouched:     []string{"auth.py"},
@@ -443,14 +443,14 @@ func TestAttributionFlagsSessionFallbackForUnmatchedFile(t *testing.T) {
 	// One checkpoint, two sessions, neither recording a touch to auth.py (e.g.
 	// the file was renamed after the checkpoint). Attribution must fall back to
 	// a session and flag that the agent/prompt shown is approximate.
-	writeAttributionCheckpoint(t, repoRoot, "aab2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "aab2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-one-12345678",
 		Prompts:          []string{"Edit the first file."},
 		FilesTouched:     []string{"old_name.py"},
 		Agent:            agent.AgentTypeClaudeCode,
 		CheckpointsCount: 1,
 	})
-	writeAttributionCheckpoint(t, repoRoot, "aab2c3d4e5f6", checkpoint.WriteCommittedOptions{
+	writeAttributionCheckpoint(t, repoRoot, "aab2c3d4e5f6", checkpoint.WriteOptions{
 		SessionID:        "session-two-12345678",
 		Prompts:          []string{"Edit a second file."},
 		FilesTouched:     []string{"other.py"},
@@ -530,7 +530,7 @@ func newAttributionRepo(t *testing.T) string {
 	return repoRoot
 }
 
-func writeAttributionCheckpoint(t *testing.T, repoRoot, checkpointID string, opts checkpoint.WriteCommittedOptions) {
+func writeAttributionCheckpoint(t *testing.T, repoRoot, checkpointID string, opts checkpoint.WriteOptions) {
 	t.Helper()
 	repo, err := git.PlainOpen(repoRoot)
 	require.NoError(t, err)
