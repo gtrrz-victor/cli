@@ -42,7 +42,7 @@ type BackfillSummary struct {
 // (Maps to the former UpdateCheckpointSummary.)
 type BackfillAttribution struct {
 	CheckpointID id.CheckpointID
-	Attribution  *InitialAttribution
+	Attribution  *Attribution
 }
 
 func (WriteSession) isWriteRequest()        {}
