@@ -217,13 +217,13 @@ cumulative session transcript, scoped at read time via
 `checkpoint_transcript_start`), `transcript.jsonl` is pre-sliced to the
 checkpoint's own portion (`compact.Compact` is called with
 `StartLine = checkpoint_transcript_start`), so it needs no offset to consume.
-The root `metadata.json` `sessions[].transcript` pointer targets
-`transcript.jsonl` when it was generated and falls back to `full.jsonl`
-otherwise (e.g. unparseable/external-agent transcripts, or checkpoints written
-by older CLI versions). CLI read paths (rewind/resume/explain) ignore the
-pointer and read `full.jsonl` by filename. Generation failures are logged but
-never fail the checkpoint write; during finalization a failed regeneration
-keeps the previous `transcript.jsonl` so the pointer never dangles.
+It is written into the checkpoint tree and pushed alongside `full.jsonl`, but
+the root `metadata.json` `sessions[].transcript` pointer still targets
+`full.jsonl`; pointing it at `transcript.jsonl` is deferred to a later change.
+CLI read paths (rewind/resume/explain) read `full.jsonl` by filename. Compact
+generation is best-effort: failures are logged but never fail the checkpoint
+write, and during finalization a failed regeneration keeps the previous
+`transcript.jsonl`.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json
