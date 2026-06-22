@@ -230,12 +230,16 @@ type recordedRequest struct {
 // serveMirrorList stands up a fake control-plane that records the inbound
 // request and answers /mirrors and /mirrors/available with the given payloads,
 // then points the active-context client seam at it for the duration of the
-// test. The returned pointer is populated on each request.
-func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi.AvailableMirror) *recordedRequest {
+// test. Each request is delivered on the returned channel: receiving from it
+// after the command runs is the happens-before edge that synchronises the
+// handler-goroutine writes with the test-goroutine reads — HTTP completion
+// alone is not an edge the race detector recognises (see
+// TestBearerOnlySource_NoCookieOnTheWire). Buffered so the handler never
+// blocks on the send.
+func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi.AvailableMirror) <-chan recordedRequest {
 	t.Helper()
-	var rec recordedRequest
+	recCh := make(chan recordedRequest, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec.method, rec.path, rec.query = r.Method, r.URL.Path, r.URL.Query()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/mirrors/available":
@@ -250,6 +254,7 @@ func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi
 			t.Errorf("unexpected path %q", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
+		recCh <- recordedRequest{method: r.Method, path: r.URL.Path, query: r.URL.Query()}
 	}))
 	t.Cleanup(srv.Close)
 
@@ -258,7 +263,7 @@ func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi
 		return coreapi.NewWithBearer(srv.URL, "tok")
 	}
 	t.Cleanup(func() { activeCoreClient = prev })
-	return &rec
+	return recCh
 }
 
 // runMirrorList executes `repo mirror list` with args against the fake server,
@@ -285,11 +290,12 @@ func runMirrorList(t *testing.T, args ...string) (stdout, stderr string) {
 // Not parallel: swaps the package-level activeCoreClient seam.
 func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 	t.Run("--show-available routes to /mirrors/available with available columns", func(t *testing.T) {
-		rec := serveMirrorList(t,
+		recCh := serveMirrorList(t,
 			[]coreapi.Mirror{{Owner: "acme", Repo: "web", ClusterHost: "aws-us-east-2.entire.io"}},
 			[]coreapi.AvailableMirror{{Owner: "acme", Repo: "web", Access: "write", Status: "available"}},
 		)
 		stdout, stderr := runMirrorList(t, "--show-available")
+		rec := <-recCh
 
 		require.Equal(t, http.MethodGet, rec.method)
 		require.Equal(t, "/api/v1/mirrors/available", rec.path)
@@ -303,11 +309,12 @@ func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 	})
 
 	t.Run("default lists existing mirrors from /mirrors", func(t *testing.T) {
-		rec := serveMirrorList(t,
+		recCh := serveMirrorList(t,
 			[]coreapi.Mirror{{Owner: "acme", Repo: "web", ClusterHost: "aws-us-east-2.entire.io"}},
 			nil,
 		)
 		stdout, stderr := runMirrorList(t)
+		rec := <-recCh
 
 		require.Equal(t, "/api/v1/mirrors", rec.path)
 		require.Contains(t, stderr, "Listing mirrors on")
@@ -316,38 +323,42 @@ func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 	})
 
 	t.Run("--owner flows into the available query", func(t *testing.T) {
-		rec := serveMirrorList(t, nil,
+		recCh := serveMirrorList(t, nil,
 			[]coreapi.AvailableMirror{{Owner: "acme", Repo: "web", Access: "write", Status: "available"}},
 		)
 		runMirrorList(t, "--show-available", "--owner", "acme")
+		rec := <-recCh
 
 		require.Equal(t, "/api/v1/mirrors/available", rec.path)
 		require.Equal(t, "acme", rec.query.Get("owner"))
 	})
 
 	t.Run("--owner flows into the existing-mirror query", func(t *testing.T) {
-		rec := serveMirrorList(t,
+		recCh := serveMirrorList(t,
 			[]coreapi.Mirror{{Owner: "acme", Repo: "web", ClusterHost: "aws-us-east-2.entire.io"}}, nil,
 		)
 		runMirrorList(t, "--owner", "acme")
+		rec := <-recCh
 
 		require.Equal(t, "/api/v1/mirrors", rec.path)
 		require.Equal(t, "acme", rec.query.Get("owner"))
 	})
 
 	t.Run("--cluster/--provider apply to /mirrors but are ignored by --show-available", func(t *testing.T) {
-		rec := serveMirrorList(t,
+		recCh := serveMirrorList(t,
 			[]coreapi.Mirror{{Owner: "acme", Repo: "web", ClusterHost: "aws-us-east-2.entire.io"}}, nil,
 		)
 		runMirrorList(t, "--cluster", "eu-west-1.entire.io", "--provider", "github")
+		rec := <-recCh
 		require.Equal(t, "/api/v1/mirrors", rec.path)
 		require.Equal(t, "eu-west-1.entire.io", rec.query.Get("cluster"))
 		require.Equal(t, "github", rec.query.Get("provider"))
 
-		rec = serveMirrorList(t, nil,
+		recCh = serveMirrorList(t, nil,
 			[]coreapi.AvailableMirror{{Owner: "acme", Repo: "web", Access: "write", Status: "available"}},
 		)
 		runMirrorList(t, "--show-available", "--cluster", "eu-west-1.entire.io", "--provider", "github")
+		rec = <-recCh
 		require.Equal(t, "/api/v1/mirrors/available", rec.path)
 		require.Empty(t, rec.query.Get("cluster"), "show-available is cluster-agnostic; must not send --cluster")
 		require.Empty(t, rec.query.Get("provider"), "show-available is GitHub-only; must not send --provider")
