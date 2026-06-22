@@ -230,7 +230,7 @@ func addTokensProfileTokenSignals(signals map[string]*tokensProfileSignal, check
 	if tokens.APICalls >= 20 {
 		addTokensProfileSignal(signals, "api-call-amplification", checkpointID, denominator)
 	}
-	if tokens.Total > 0 && tokens.SubagentTotal*100 >= tokens.Total*10 {
+	if tokenShareAtLeastOneTenth(tokens.SubagentTotal, tokens.Total) {
 		addTokensProfileSignal(signals, "subagent-heavy", checkpointID, denominator)
 	}
 }
