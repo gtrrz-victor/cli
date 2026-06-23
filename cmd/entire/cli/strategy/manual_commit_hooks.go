@@ -2929,7 +2929,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
 	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
-	result, err := stores.Ephemeral().Write(writeCtx, checkpoint.WriteCheckpoint{
+	result, err := stores.Ephemeral().Write(writeCtx, checkpoint.Step{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,
