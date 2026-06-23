@@ -1064,6 +1064,48 @@ func TestCheckRemoteMetadata_MetadataExistsOnRemote(t *testing.T) {
 	}
 }
 
+func TestCheckRemoteMetadata_ReturnsUnsupportedVersionFromRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	checkpointID := id.MustCheckpointID("abc123def456")
+	writeCommittedResumeCheckpointWithAgent(
+		t,
+		repo,
+		checkpointID,
+		"2025-01-01-test-session",
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		agent.AgentTypeClaudeCode,
+	)
+	rewriteExportCheckpointVersionToRefsV1(t, repo, checkpointID)
+
+	localRef, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	if err != nil {
+		t.Fatalf("Failed to get local metadata branch: %v", err)
+	}
+	remoteRef := plumbing.NewHashReference(
+		plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName),
+		localRef.Hash(),
+	)
+	if err := repo.Storer.SetReference(remoteRef); err != nil {
+		t.Fatalf("Failed to create remote ref: %v", err)
+	}
+	if err := repo.Storer.RemoveReference(plumbing.NewBranchReferenceName(paths.MetadataBranchName)); err != nil {
+		t.Fatalf("Failed to remove local metadata branch: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = checkRemoteMetadata(context.Background(), &stdout, &stderr, checkpointID, checkpoint.DefaultV1Refs())
+	if err == nil {
+		t.Fatal("checkRemoteMetadata() error = nil, want unsupported checkpoint version")
+	}
+	if !checkpointpolicy.IsUnsupportedVersion(err) {
+		t.Fatalf("checkRemoteMetadata() error = %v, want unsupported checkpoint version", err)
+	}
+}
+
 func TestCheckRemoteMetadata_NoRemoteMetadataBranch(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
