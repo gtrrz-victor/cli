@@ -633,7 +633,7 @@ func TestResolveLatestCheckpointUsesCheckpointInfoReader(t *testing.T) {
 	}
 }
 
-func TestResolveLatestCheckpointSkipsUnsupportedCheckpointWhenReadableCheckpointExists(t *testing.T) {
+func TestResolveLatestCheckpointReturnsUnsupportedWhenAnyCheckpointIsUnsupported(t *testing.T) {
 	t.Parallel()
 
 	unsupportedID := id.MustCheckpointID("aaa111bbb222")
@@ -651,15 +651,15 @@ func TestResolveLatestCheckpointSkipsUnsupportedCheckpointWhenReadableCheckpoint
 		},
 	}
 
-	latest, found, err := resolveLatestCheckpoint(context.Background(), reader, []id.CheckpointID{unsupportedID, newID})
-	if err != nil {
-		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
+	_, found, err := resolveLatestCheckpoint(context.Background(), reader, []id.CheckpointID{unsupportedID, newID})
+	if err == nil {
+		t.Fatal("resolveLatestCheckpoint() error = nil, want unsupported version")
 	}
-	if !found {
-		t.Fatal("resolveLatestCheckpoint() found = false")
+	if found {
+		t.Fatal("resolveLatestCheckpoint() found = true")
 	}
-	if latest.CheckpointID != newID {
-		t.Errorf("resolveLatestCheckpoint() = %s, want %s", latest.CheckpointID, newID)
+	if !checkpointpolicy.IsUnsupportedVersion(err) {
+		t.Fatalf("resolveLatestCheckpoint() error = %v, want unsupported version", err)
 	}
 }
 
