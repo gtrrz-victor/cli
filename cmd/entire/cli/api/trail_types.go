@@ -21,24 +21,36 @@ type TrailListResponse struct {
 
 // TrailResource represents a single trail from the API.
 type TrailResource struct {
-	ID              string        `json:"id,omitempty"`
-	Number          int           `json:"number,omitempty"`
-	Branch          string        `json:"branch"`
-	Base            string        `json:"base"`
-	Title           string        `json:"title"`
-	Body            string        `json:"body"`
-	Status          string        `json:"status"`
-	Phase           string        `json:"phase,omitempty"`
-	Author          *trail.Author `json:"author"`
-	Assignees       []string      `json:"assignees"`
-	Labels          []string      `json:"labels"`
-	CreatedAt       time.Time     `json:"created_at"`
-	UpdatedAt       time.Time     `json:"updated_at"`
-	MergedAt        *time.Time    `json:"merged_at,omitempty"`
-	CommentCount    int           `json:"comment_count,omitempty"`
-	UnresolvedCount int           `json:"unresolved_count,omitempty"`
-	CheckpointCount int           `json:"checkpoint_count,omitempty"`
-	CommitsAhead    int           `json:"commits_ahead,omitempty"`
+	ID              string           `json:"id,omitempty"`
+	Number          int              `json:"number,omitempty"`
+	Branch          string           `json:"branch"`
+	Base            string           `json:"base"`
+	Title           string           `json:"title"`
+	Body            string           `json:"body"`
+	Status          string           `json:"status"`
+	Phase           string           `json:"phase,omitempty"`
+	Author          *trail.Author    `json:"author"`
+	Assignees       []string         `json:"assignees"`
+	Labels          []string         `json:"labels"`
+	Priority        string           `json:"priority,omitempty"`
+	Type            string           `json:"type,omitempty"`
+	Reviewers       []trail.Reviewer `json:"reviewers,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+	MergedAt        *time.Time       `json:"merged_at,omitempty"`
+	CommentCount    int              `json:"comment_count,omitempty"`
+	UnresolvedCount int              `json:"unresolved_count,omitempty"`
+	CheckpointCount int              `json:"checkpoint_count,omitempty"`
+	CommitsAhead    int              `json:"commits_ahead,omitempty"`
+	// BodyDocument carries the trail's description (collaborative editor doc).
+	// The list endpoint omits it; the detail endpoint populates it.
+	BodyDocument *TrailBodyDocument `json:"body_document,omitempty"`
+}
+
+// TrailBodyDocument is the trail's description editor document. TextSnapshot is
+// the rendered plain text the CLI displays.
+type TrailBodyDocument struct {
+	TextSnapshot string `json:"text_snapshot"`
 }
 
 // ToMetadata converts a TrailResource to a trail.Metadata for display.

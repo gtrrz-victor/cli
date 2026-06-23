@@ -58,6 +58,21 @@ func (s Status) IsValid() bool {
 	return false
 }
 
+// ReviewerStatus represents the review status for a reviewer.
+type ReviewerStatus string
+
+const (
+	ReviewerPending          ReviewerStatus = "pending"
+	ReviewerApproved         ReviewerStatus = "approved"
+	ReviewerChangesRequested ReviewerStatus = "changes_requested"
+)
+
+// Reviewer represents a reviewer assigned to a trail.
+type Reviewer struct {
+	Login  string         `json:"login"`
+	Status ReviewerStatus `json:"status"`
+}
+
 // Author identifies the user who created a trail.
 // On the wire the whole object may be null when the original author can no
 // longer be resolved (e.g. the GitHub user no longer exists), and login may

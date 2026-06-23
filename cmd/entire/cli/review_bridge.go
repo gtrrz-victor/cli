@@ -77,7 +77,7 @@ func postReviewToTrail(ctx context.Context, out io.Writer, profileName, verdict 
 		} else {
 			fmt.Fprintf(out, "Posted the review verdict to the trail as %d %s.\n", len(inputs), findingWord)
 		}
-		if link := trailWebURL(target); link != "" {
+		if link := trailReviewWebURL(target); link != "" {
 			fmt.Fprintf(out, "View the trail: %s\n", link)
 		}
 		return nil
@@ -356,7 +356,7 @@ func startsWithReviewSeverityMarker(s string) bool {
 // `<base>/<forge>/<owner>/<repo>/trails/<number>/<branch>` layout (the web UI
 // shares the API origin). Returns "" when the target lacks the parts needed for
 // a stable link.
-func trailWebURL(target trailReviewTarget) string {
+func trailReviewWebURL(target trailReviewTarget) string {
 	if target.Trail.Number <= 0 || target.Host == "" || target.Owner == "" || target.Repo == "" {
 		return ""
 	}
