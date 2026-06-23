@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1064,6 +1065,34 @@ func TestRecommendationRulesSubagentHeavyAvoidsOverflow(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected subagent-heavy recommendation, got %+v", recs)
+}
+
+func TestRecommendationRulesCacheReplayUsesTopLevelTokenTotal(t *testing.T) {
+	t.Parallel()
+
+	recs := recommendationRules(tokenRecommendationSignals{
+		Tokens: &sessionTokensUsage{
+			Total:         10000,
+			Input:         100,
+			CacheRead:     800,
+			CacheWrite:    50,
+			Output:        50,
+			APICalls:      20,
+			SubagentTotal: 9000,
+		},
+	})
+
+	var ids []string
+	for _, rec := range recs {
+		ids = append(ids, rec.ID)
+	}
+
+	expected := []string{"context-replay-hotspot", "summarize-before-boundary"}
+	for _, id := range expected {
+		if !slices.Contains(ids, id) {
+			t.Fatalf("expected %s recommendation in %+v", id, recs)
+		}
+	}
 }
 
 func TestTokensCmd_JSONOutputReportsLimitations(t *testing.T) {

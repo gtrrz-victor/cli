@@ -222,6 +222,15 @@ func buildSessionTokensUsage(usage *agent.TokenUsage) *sessionTokensUsage {
 	}
 }
 
+func topLevelSessionTokenTotal(tokens *sessionTokensUsage) int {
+	if tokens == nil {
+		return 0
+	}
+	total := saturatingIntAdd(tokens.Input, tokens.CacheWrite)
+	total = saturatingIntAdd(total, tokens.CacheRead)
+	return saturatingIntAdd(total, tokens.Output)
+}
+
 func buildSessionTokensContext(tokens, windowSize int) *sessionTokensContext {
 	if tokens <= 0 || windowSize <= 0 {
 		return nil
@@ -261,8 +270,8 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 	var recs []sessionTokensRecommendation
 
 	cacheReadHotspot := false
-	if signals.Tokens != nil && signals.Tokens.Total > 0 && signals.Tokens.CacheRead > 0 {
-		cacheReadPercent := tokenPercent(signals.Tokens.CacheRead, signals.Tokens.Total)
+	if signals.Tokens != nil && signals.Tokens.CacheRead > 0 {
+		cacheReadPercent := tokenPercent(signals.Tokens.CacheRead, topLevelSessionTokenTotal(signals.Tokens))
 		if cacheReadPercent >= 80 {
 			cacheReadHotspot = true
 			recs = append(recs, sessionTokensRecommendation{
