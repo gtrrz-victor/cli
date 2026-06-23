@@ -39,6 +39,7 @@ type checkpointTokensComparison struct {
 	Total                *checkpointTokensMetricDelta `json:"total,omitempty"`
 	CacheRead            *checkpointTokensMetricDelta `json:"cache_read,omitempty"`
 	APICalls             *checkpointTokensMetricDelta `json:"api_calls,omitempty"`
+	CacheReadCaveat      string                       `json:"cache_read_caveat,omitempty"`
 	Qualification        string                       `json:"qualification"`
 	Limitations          []string                     `json:"limitations,omitempty"`
 }
@@ -392,6 +393,7 @@ func buildCheckpointTokensComparison(target, baseline checkpointTokensReport) *c
 	comparison.Total = buildCheckpointMetricDelta(baseline.Tokens.Total, target.Tokens.Total)
 	comparison.CacheRead = buildCheckpointMetricDelta(baseline.Tokens.CacheRead, target.Tokens.CacheRead)
 	comparison.APICalls = buildCheckpointMetricDelta(baseline.Tokens.APICalls, target.Tokens.APICalls)
+	comparison.CacheReadCaveat = checkpointComparisonCacheReadCaveat(comparison.CacheRead)
 	comparison.Status = checkpointComparisonStatus(comparison.Total)
 	comparison.Qualification = checkpointComparisonQualification(comparison.Status)
 	return comparison
@@ -466,14 +468,21 @@ func checkpointComparisonStatus(total *checkpointTokensMetricDelta) string {
 func checkpointComparisonQualification(status string) string {
 	switch status {
 	case checkpointComparisonStatusObservedReduction:
-		return "Observed token use decreased for this checkpoint comparison. This does not prove quality was preserved; verify the task outcome or tests before treating it as a successful optimization."
+		return "Observed total token use decreased for this checkpoint comparison. This does not prove quality was preserved; verify the task outcome or tests before treating it as a successful optimization."
 	case checkpointComparisonStatusObservedIncrease:
-		return "Observed token use increased for this checkpoint comparison. Check whether the extra context was necessary before treating it as waste."
+		return "Observed total token use increased for this checkpoint comparison. Check whether the extra context was necessary before treating it as waste."
 	case checkpointComparisonStatusObservedNoChange:
-		return "Observed token use was unchanged for this checkpoint comparison. Quality still depends on the task outcome, not token totals alone."
+		return "Observed total token use was unchanged for this checkpoint comparison. Quality still depends on the task outcome, not token totals alone."
 	default:
 		return "Comparison unavailable because token usage is missing for one checkpoint."
 	}
+}
+
+func checkpointComparisonCacheReadCaveat(delta *checkpointTokensMetricDelta) string {
+	if delta == nil || (delta.Baseline == 0 && delta.Current == 0) {
+		return ""
+	}
+	return "Total tokens include cache/context replay; use the cache/context replay delta below before treating total direction as work saved or added."
 }
 
 func writeCheckpointTokensJSON(w io.Writer, report checkpointTokensReport) error {
@@ -530,6 +539,9 @@ func writeCheckpointTokenComparison(w io.Writer, comparison *checkpointTokensCom
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Comparison")
 	fmt.Fprintf(w, "Baseline: %s\n", comparison.BaselineCheckpointID)
+	if comparison.CacheReadCaveat != "" {
+		fmt.Fprintf(w, "Caveat: %s\n", comparison.CacheReadCaveat)
+	}
 	if comparison.Status != checkpointComparisonStatusUnavailable {
 		fmt.Fprintf(w, "Total tokens: %s\n", formatCheckpointMetricDelta(comparison.Total, formatTokenCount))
 		fmt.Fprintf(w, "Cache/context replay: %s\n", formatCheckpointMetricDelta(comparison.CacheRead, formatTokenCount))

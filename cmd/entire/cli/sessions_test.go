@@ -1095,6 +1095,32 @@ func TestRecommendationRulesCacheReplayUsesTopLevelTokenTotal(t *testing.T) {
 	}
 }
 
+func TestRecommendationThresholdsDocumentCurrentHeuristics(t *testing.T) {
+	t.Parallel()
+
+	checks := map[string]int{
+		"cache read hotspot percent": recommendationHighCacheReadPercent,
+		"high API calls":             recommendationHighAPICalls,
+		"subagent share denominator": recommendationSubagentShareDenominator,
+		"high context percent":       recommendationHighContextPercent,
+		"long session turns":         recommendationLongSessionTurns,
+		"long checkpoint count":      recommendationLongSessionCheckpoints,
+	}
+	want := map[string]int{
+		"cache read hotspot percent": 80,
+		"high API calls":             20,
+		"subagent share denominator": 10,
+		"high context percent":       80,
+		"long session turns":         10,
+		"long checkpoint count":      5,
+	}
+	for name, got := range checks {
+		if got != want[name] {
+			t.Fatalf("%s = %d, want %d", name, got, want[name])
+		}
+	}
+}
+
 func TestTokensCmd_JSONOutputReportsLimitations(t *testing.T) {
 	setupStopTestRepo(t)
 
@@ -2025,11 +2051,12 @@ func TestCheckpointTokensCmd_TextOutputWithComparison(t *testing.T) {
 		"Total:  500k tokens",
 		"Comparison",
 		"Baseline: aaa111bbb222",
+		"Caveat: Total tokens include cache/context replay; use the cache/context replay delta below before treating total direction as work saved or added.",
 		"Total tokens: down 50% (1000k -> 500k)",
 		"Cache/context replay: down 60% (750k -> 300k)",
 		"API calls: down 60% (10 -> 4)",
 		"Qualification",
-		"Observed token use decreased for this checkpoint comparison.",
+		"Observed total token use decreased for this checkpoint comparison.",
 		"This does not prove quality was preserved",
 	}
 	for _, check := range checks {
@@ -2121,6 +2148,9 @@ func TestCheckpointTokensCmd_JSONOutputWithComparison(t *testing.T) {
 	if result.Comparison.Total.ChangePercent == nil || *result.Comparison.Total.ChangePercent != 60 {
 		t.Fatalf("expected total change percent 60, got %+v", result.Comparison.Total)
 	}
+	if result.Comparison.CacheReadCaveat == "" {
+		t.Fatalf("expected cache read caveat, got %+v", result.Comparison)
+	}
 }
 
 func TestCheckpointTokensCmd_ComparisonNoChange(t *testing.T) {
@@ -2155,7 +2185,7 @@ func TestCheckpointTokensCmd_ComparisonNoChange(t *testing.T) {
 		"Total tokens: unchanged (200 -> 200)",
 		"Cache/context replay: unchanged (0 -> 0)",
 		"API calls: unchanged (2 -> 2)",
-		"Observed token use was unchanged for this checkpoint comparison.",
+		"Observed total token use was unchanged for this checkpoint comparison.",
 		"Quality still depends on the task outcome",
 	}
 	for _, check := range checks {

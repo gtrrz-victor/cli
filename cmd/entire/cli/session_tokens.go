@@ -66,6 +66,16 @@ type tokenRecommendationSignals struct {
 	CheckpointCount int
 }
 
+// Recommendation thresholds are coarse diagnostics for clear token hotspots, not a cost model or quality verdict.
+const (
+	recommendationHighCacheReadPercent     = 80
+	recommendationHighAPICalls             = 20
+	recommendationSubagentShareDenominator = 10
+	recommendationHighContextPercent       = 80
+	recommendationLongSessionTurns         = 10
+	recommendationLongSessionCheckpoints   = 5
+)
+
 func newTokensCmd() *cobra.Command {
 	var jsonFlag bool
 	var currentFlag bool
@@ -285,7 +295,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 	cacheReadHotspot := false
 	if signals.Tokens != nil && signals.Tokens.CacheRead > 0 {
 		cacheReadPercent := tokenPercent(signals.Tokens.CacheRead, topLevelSessionTokenTotal(signals.Tokens))
-		if cacheReadPercent >= 80 {
+		if cacheReadPercent >= recommendationHighCacheReadPercent {
 			cacheReadHotspot = true
 			recs = append(recs, sessionTokensRecommendation{
 				ID:       "context-replay-hotspot",
@@ -298,7 +308,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 			})
 		}
 	}
-	if signals.Tokens != nil && signals.Tokens.APICalls >= 20 {
+	if signals.Tokens != nil && signals.Tokens.APICalls >= recommendationHighAPICalls {
 		message := fmt.Sprintf("API call count is high for one session: %d calls. Batch the next diagnosis and reduce iterative calls.", signals.Tokens.APICalls)
 		if cacheReadHotspot {
 			message = fmt.Sprintf("Large context was replayed across %d API calls; batch the next diagnosis and reduce iterative tool calls.", signals.Tokens.APICalls)
@@ -318,7 +328,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 			Signals:  []string{"subagent_tokens"},
 		})
 	}
-	if signals.Context != nil && signals.Context.Percent >= 80 {
+	if signals.Context != nil && signals.Context.Percent >= recommendationHighContextPercent {
 		recs = append(recs, sessionTokensRecommendation{
 			ID:       "high-context-pressure",
 			Severity: "medium",
@@ -326,7 +336,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 			Signals:  []string{"context_tokens"},
 		})
 	}
-	if cacheReadHotspot && signals.Tokens != nil && signals.Tokens.APICalls >= 20 {
+	if cacheReadHotspot && signals.Tokens != nil && signals.Tokens.APICalls >= recommendationHighAPICalls {
 		recs = append(recs, sessionTokensRecommendation{
 			ID:       "summarize-before-boundary",
 			Severity: "low",
@@ -334,7 +344,7 @@ func recommendationRules(signals tokenRecommendationSignals) []sessionTokensReco
 			Signals:  []string{"cache_read_tokens", "api_call_count"},
 		})
 	}
-	if signals.TurnCount >= 10 || signals.CheckpointCount >= 5 {
+	if signals.TurnCount >= recommendationLongSessionTurns || signals.CheckpointCount >= recommendationLongSessionCheckpoints {
 		recs = append(recs, sessionTokensRecommendation{
 			ID:       "long-session",
 			Severity: "low",
@@ -350,7 +360,7 @@ func tokenShareAtLeastOneTenth(part, total int) bool {
 	if part <= 0 || total <= 0 {
 		return false
 	}
-	return part >= (total-1)/10+1
+	return part >= (total-1)/recommendationSubagentShareDenominator+1
 }
 
 func tokenPercent(value, total int) float64 {
