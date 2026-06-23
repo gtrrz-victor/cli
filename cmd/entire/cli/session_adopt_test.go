@@ -14,6 +14,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/internal/flock"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -154,6 +155,175 @@ func TestSessionAdopt_RejectsUnexpectedSourceTranscriptPath(t *testing.T) {
 	}
 	if adopted != nil {
 		t.Fatalf("target state was written despite transcript-path refusal: %#v", adopted)
+	}
+}
+
+func TestSessionAdopt_ExternalStoreRejectsSourceEndedAfterInitialSelection(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-external-source-stale"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selectAdoptSourceSession(context.Background(), sourceStore, sourceRepo, sessionID); err != nil {
+		t.Fatalf("initial source selection failed: %v", err)
+	}
+
+	endedAt := time.Now()
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		EndedAt:               &endedAt,
+		Phase:                 session.PhaseIdle,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, sourceCommonDir, err := stateStoreForWorktree(context.Background(), sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, targetCommonDir, err := stateStoreForWorktree(context.Background(), targetRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = adoptFromExternalSessionStore(
+		context.Background(),
+		sourceStore,
+		sourceRepo,
+		sourceCommonDir,
+		targetStore,
+		targetCommonDir,
+		sessionID,
+		adoptOptions{Force: true},
+	)
+	if err == nil {
+		t.Fatal("adoptFromExternalSessionStore succeeded from stale ended source, want refusal")
+	}
+	if !strings.Contains(err.Error(), "ended or fully condensed") {
+		t.Fatalf("adoptFromExternalSessionStore error = %v, want ended-session refusal", err)
+	}
+}
+
+func TestSessionAdopt_ExternalStoreChecksTargetStateAfterLockWait(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-external-target-race"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, sourceCommonDir, err := stateStoreForWorktree(context.Background(), sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, targetCommonDir, err := stateStoreForWorktree(context.Background(), targetRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lockPath, err := adoptSessionLockPath(targetCommonDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := flock.Acquire(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, adoptErr := adoptFromExternalSessionStore(
+			context.Background(),
+			sourceStore,
+			sourceRepo,
+			sourceCommonDir,
+			targetStore,
+			targetCommonDir,
+			sessionID,
+			adoptOptions{},
+		)
+		done <- adoptErr
+	}()
+
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("adoptFromExternalSessionStore finished before target lock released: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := targetStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now(),
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, targetRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, targetRepo),
+		WorktreePath:          targetRepo,
+		LastPrompt:            "concurrent target state",
+	}); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	release()
+
+	err = <-done
+	if err == nil {
+		t.Fatal("adoptFromExternalSessionStore succeeded, want existing target refusal")
+	}
+	if !strings.Contains(err.Error(), "already tracked in this repo") {
+		t.Fatalf("adoptFromExternalSessionStore error = %v, want existing-state refusal", err)
+	}
+
+	loaded, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastPrompt != "concurrent target state" {
+		t.Fatalf("target state LastPrompt = %q, want concurrent target state", loaded.LastPrompt)
 	}
 }
 
