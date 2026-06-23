@@ -302,6 +302,49 @@ func TestTrailWebURL(t *testing.T) {
 	}
 }
 
+func TestPrintCreatedTrail(t *testing.T) {
+	t.Parallel()
+
+	// The server-provided URL is used verbatim.
+	var out bytes.Buffer
+	printCreatedTrail(&out, api.TrailResource{Title: "Fix it", Branch: "feat/x", ID: "abc123", Number: 575, URL: "https://entire.io/gh/acme/repo/trails/575/fix-it"}, "gh", "acme", "repo")
+	text := out.String()
+	if !strings.Contains(text, `Created trail "Fix it" for branch feat/x (ID: abc123)`) {
+		t.Fatalf("missing create summary line, got:\n%s", text)
+	}
+	if !strings.Contains(text, "URL: https://entire.io/gh/acme/repo/trails/575/fix-it") {
+		t.Fatalf("expected the server-provided URL, got:\n%s", text)
+	}
+
+	// Without a number, omit the URL line.
+	out.Reset()
+	printCreatedTrail(&out, api.TrailResource{Title: "No num", Branch: "feat/y", ID: "def456"}, "gh", "acme", "repo")
+	if text := out.String(); strings.Contains(text, "URL:") {
+		t.Fatalf("expected URL omitted when number and URL are absent, got:\n%s", text)
+	}
+}
+
+func TestTrailDisplayURL(t *testing.T) {
+	t.Parallel()
+
+	// Server URL wins, even when a number is present.
+	got := trailDisplayURL(api.TrailResource{Number: 5, URL: "https://server/url"}, "gh", "acme", "repo")
+	if got != "https://server/url" {
+		t.Fatalf("expected server URL, got %q", got)
+	}
+
+	// Falls back to a constructed URL for older servers that omit it.
+	got = trailDisplayURL(api.TrailResource{Number: 5}, "gh", "acme", "repo")
+	if !strings.HasSuffix(got, "/gh/acme/repo/trails/5") {
+		t.Fatalf("expected constructed fallback URL, got %q", got)
+	}
+
+	// Nothing to show when neither is available.
+	if got := trailDisplayURL(api.TrailResource{}, "gh", "acme", "repo"); got != "" {
+		t.Fatalf("expected empty URL, got %q", got)
+	}
+}
+
 func TestTrailDescriptionForDisplay(t *testing.T) {
 	t.Parallel()
 	if got := trailDescriptionForDisplay("the body", true); got != "the body" {

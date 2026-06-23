@@ -133,14 +133,13 @@ func runTrailShow(ctx context.Context, w, errW io.Writer, insecureHTTP bool, sel
 		// the core metadata already came from the list, so a detail failure
 		// falls back to the list body with a warning rather than failing.
 		m := found.ToMetadata()
-		webURL := ""
+		webURL := trailDisplayURL(*found, forge, owner, repo)
 		// Seed the description from the list body so a failed (or skipped)
 		// detail fetch still shows something; a successful detail fetch
 		// supersedes it with the richer body_document text below.
 		bodyText := found.Body
 		descriptionLoaded := strings.TrimSpace(found.Body) != ""
 		if found.Number > 0 {
-			webURL = trailWebURL(api.BaseURL(), forge, owner, repo, found.Number)
 			if bt, derr := fetchTrailDescription(ctx, client, forge, owner, repo, found.Number); derr == nil {
 				// A successful fetch means we authoritatively consulted the
 				// description, but it only supersedes the seeded list body when
@@ -241,7 +240,31 @@ func trailDescriptionForDisplay(bodyText string, loaded bool) string {
 	return ""
 }
 
-// trailWebURL builds the browser URL for a trail:
+// printCreatedTrail reports a newly created trail, including its browser URL
+// (the same URL `trail show` surfaces) when one is available.
+func printCreatedTrail(w io.Writer, t api.TrailResource, forge, owner, repo string) {
+	fmt.Fprintf(w, "Created trail %q for branch %s (ID: %s)\n", t.Title, t.Branch, t.ID)
+	if url := trailDisplayURL(t, forge, owner, repo); url != "" {
+		fmt.Fprintf(w, "  URL: %s\n", url)
+	}
+}
+
+// trailDisplayURL returns the trail's browser URL. It prefers the canonical URL
+// the server now returns, so the CLI tracks any route change without being
+// updated in lockstep, and falls back to a locally constructed URL only for
+// older servers that omit the field.
+func trailDisplayURL(t api.TrailResource, forge, owner, repo string) string {
+	if strings.TrimSpace(t.URL) != "" {
+		return t.URL
+	}
+	if t.Number > 0 {
+		return trailWebURL(api.BaseURL(), forge, owner, repo, t.Number)
+	}
+	return ""
+}
+
+// trailWebURL builds a fallback browser URL for a trail used only when the
+// server does not supply one (older servers):
 // <web-origin>/<forge>/<owner>/<repo>/trails/<number>. In production the web app
 // is served from the same origin as the data API, so the API base URL doubles
 // as the web origin. A split local-dev setup (API and frontend on different
@@ -789,7 +812,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		return fmt.Errorf("failed to decode create response: %w", err)
 	}
 
-	fmt.Fprintf(w, "Created trail %q for branch %s (ID: %s)\n", createResp.Trail.Title, createResp.Trail.Branch, createResp.Trail.ID)
+	printCreatedTrail(w, createResp.Trail, forge, owner, repoName)
 
 	if needsCreation && currentBranch != branch {
 		shouldCheckout := checkout
