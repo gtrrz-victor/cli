@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,9 +40,13 @@ func newAdoptCmd() *cobra.Command {
 This is useful when an agent starts in one repository or worktree, then moves
 and makes changes in another. Adoption copies the live session state into the
 current repo and seeds it with the current repo's uncommitted file changes so
-the next commit can be linked normally.`,
+the next commit can be linked normally.
+
+When the source and target share a Git session store, adoption moves the same
+session state file to the current worktree and requires --force or --yes.`,
 		Example: `  entire session adopt 019ed5fe-ec49-7a72-89fd-f38e323f5448 --from ../cli
-  entire session adopt --from /path/to/source/worktree`,
+  entire session adopt --from /path/to/source/worktree
+  entire session adopt --from ../source-worktree --yes`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := ""
@@ -94,7 +100,7 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	if err != nil {
 		return fmt.Errorf("load current session state: %w", err)
 	}
-	if existing != nil && !opts.Force && !canReplaceAdoptState(existing, sourceState, sameSessionStore) {
+	if existing != nil && !opts.Force {
 		return fmt.Errorf("session %s is already tracked in this repo; rerun with --force to replace it", adopted.SessionID)
 	}
 	if err := targetStore.Save(ctx, adopted); err != nil {
@@ -109,13 +115,6 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	fmt.Fprintf(w, "Tracking %d file(s): %s\n", len(filesTouched), strings.Join(filesTouched, ", "))
 	fmt.Fprintln(w, "Review tracked files before committing; adoption attributes current changes in this repo to the adopted session.")
 	return nil
-}
-
-func canReplaceAdoptState(existing, source *session.State, sameSessionStore bool) bool {
-	return sameSessionStore &&
-		existing != nil &&
-		source != nil &&
-		existing.SessionID == source.SessionID
 }
 
 func validateAdoptSourceTranscript(source *session.State, sourceWorktree string) error {
@@ -304,7 +303,7 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	}
 
 	now := time.Now()
-	adopted := *source
+	adopted := cloneAdoptSourceState(source)
 
 	// Keep the source live transcript path. In cross-repo adoption the transcript
 	// belongs to the continuing agent session, not the target repository; clearing
@@ -347,6 +346,68 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.AttachedManually = false
 
 	return &adopted, filesTouched, nil
+}
+
+func cloneAdoptSourceState(source *session.State) session.State {
+	adopted := *source
+	adopted.EndedAt = cloneTimePtr(source.EndedAt)
+	adopted.LastInteractionTime = cloneTimePtr(source.LastInteractionTime)
+	adopted.ReviewSkills = slices.Clone(source.ReviewSkills)
+	adopted.TurnCheckpointIDs = slices.Clone(source.TurnCheckpointIDs)
+	adopted.UntrackedFilesAtStart = slices.Clone(source.UntrackedFilesAtStart)
+	adopted.FilesTouched = slices.Clone(source.FilesTouched)
+	adopted.TokenUsage = cloneTokenUsage(source.TokenUsage)
+	adopted.SkillEvents = cloneSkillEvents(source.SkillEvents)
+	adopted.PromptAttributions = clonePromptAttributions(source.PromptAttributions)
+	if source.PendingPromptAttribution != nil {
+		pending := clonePromptAttribution(*source.PendingPromptAttribution)
+		adopted.PendingPromptAttribution = &pending
+	}
+	return adopted
+}
+
+func cloneTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	cloned := *t
+	return &cloned
+}
+
+func cloneTokenUsage(usage *agent.TokenUsage) *agent.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	cloned := *usage
+	cloned.SubagentTokens = cloneTokenUsage(usage.SubagentTokens)
+	return &cloned
+}
+
+func cloneSkillEvents(events []agent.SkillEvent) []agent.SkillEvent {
+	cloned := slices.Clone(events)
+	for i := range cloned {
+		if events[i].TranscriptAnchor != nil {
+			anchor := *events[i].TranscriptAnchor
+			anchor.EntryIDs = slices.Clone(events[i].TranscriptAnchor.EntryIDs)
+			cloned[i].TranscriptAnchor = &anchor
+		}
+		cloned[i].Native = maps.Clone(events[i].Native)
+	}
+	return cloned
+}
+
+func clonePromptAttributions(attrs []session.PromptAttribution) []session.PromptAttribution {
+	cloned := slices.Clone(attrs)
+	for i := range cloned {
+		cloned[i] = clonePromptAttribution(attrs[i])
+	}
+	return cloned
+}
+
+func clonePromptAttribution(attr session.PromptAttribution) session.PromptAttribution {
+	attr.UserAddedPerFile = maps.Clone(attr.UserAddedPerFile)
+	attr.UserRemovedPerFile = maps.Clone(attr.UserRemovedPerFile)
+	return attr
 }
 
 func sameAdoptPath(a, b string) bool {

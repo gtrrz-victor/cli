@@ -524,6 +524,101 @@ func TestSessionAdopt_ClearsLegacyTranscriptOffsets(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_CloneSourceStateDoesNotShareMutableFields(t *testing.T) {
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	endedAt := time.Now()
+	source := &session.State{
+		SessionID:             "test-adopt-deep-copy",
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		EndedAt:               &endedAt,
+		LastInteractionTime:   &lastInteraction,
+		ReviewSkills:          []string{"/review"},
+		TurnCheckpointIDs:     []string{"source-checkpoint"},
+		UntrackedFilesAtStart: []string{"untracked.txt"},
+		FilesTouched:          []string{"source.txt"},
+		TokenUsage: &agent.TokenUsage{
+			InputTokens: 1,
+			SubagentTokens: &agent.TokenUsage{
+				OutputTokens: 2,
+			},
+		},
+		SkillEvents: []agent.SkillEvent{
+			{
+				ID: "skill-event",
+				TranscriptAnchor: &agent.SkillEventTranscriptAnchor{
+					EntryIDs: []string{"entry-1"},
+				},
+				Native: map[string]string{"tool": "skill"},
+			},
+		},
+		PromptAttributions: []session.PromptAttribution{
+			{
+				UserAddedPerFile:   map[string]int{"source.txt": 1},
+				UserRemovedPerFile: map[string]int{"source.txt": 2},
+			},
+		},
+		PendingPromptAttribution: &session.PromptAttribution{
+			UserAddedPerFile:   map[string]int{"pending.txt": 3},
+			UserRemovedPerFile: map[string]int{"pending.txt": 4},
+		},
+	}
+
+	adopted := cloneAdoptSourceState(source)
+	*adopted.EndedAt = endedAt.Add(1 * time.Hour)
+	*adopted.LastInteractionTime = lastInteraction.Add(1 * time.Hour)
+	adopted.ReviewSkills[0] = "/changed"
+	adopted.TurnCheckpointIDs[0] = "changed-checkpoint"
+	adopted.UntrackedFilesAtStart[0] = "changed-untracked.txt"
+	adopted.FilesTouched[0] = "changed-source.txt"
+	adopted.TokenUsage.SubagentTokens.OutputTokens = 99
+	adopted.SkillEvents[0].TranscriptAnchor.EntryIDs[0] = "changed-entry"
+	adopted.SkillEvents[0].Native["tool"] = "changed-skill"
+	adopted.PromptAttributions[0].UserAddedPerFile["source.txt"] = 99
+	adopted.PromptAttributions[0].UserRemovedPerFile["source.txt"] = 99
+	adopted.PendingPromptAttribution.UserAddedPerFile["pending.txt"] = 99
+	adopted.PendingPromptAttribution.UserRemovedPerFile["pending.txt"] = 99
+
+	if !source.EndedAt.Equal(endedAt) {
+		t.Fatalf("source EndedAt was mutated: %v", source.EndedAt)
+	}
+	if !source.LastInteractionTime.Equal(lastInteraction) {
+		t.Fatalf("source LastInteractionTime was mutated: %v", source.LastInteractionTime)
+	}
+	if source.ReviewSkills[0] != "/review" {
+		t.Fatalf("source ReviewSkills = %v, want unchanged", source.ReviewSkills)
+	}
+	if source.TurnCheckpointIDs[0] != "source-checkpoint" {
+		t.Fatalf("source TurnCheckpointIDs = %v, want unchanged", source.TurnCheckpointIDs)
+	}
+	if source.UntrackedFilesAtStart[0] != "untracked.txt" {
+		t.Fatalf("source UntrackedFilesAtStart = %v, want unchanged", source.UntrackedFilesAtStart)
+	}
+	if source.FilesTouched[0] != "source.txt" {
+		t.Fatalf("source FilesTouched = %v, want unchanged", source.FilesTouched)
+	}
+	if source.TokenUsage.SubagentTokens.OutputTokens != 2 {
+		t.Fatalf("source TokenUsage.SubagentTokens.OutputTokens = %d, want unchanged", source.TokenUsage.SubagentTokens.OutputTokens)
+	}
+	if source.SkillEvents[0].TranscriptAnchor.EntryIDs[0] != "entry-1" {
+		t.Fatalf("source SkillEvents entry IDs = %v, want unchanged", source.SkillEvents[0].TranscriptAnchor.EntryIDs)
+	}
+	if source.SkillEvents[0].Native["tool"] != "skill" {
+		t.Fatalf("source SkillEvents native = %v, want unchanged", source.SkillEvents[0].Native)
+	}
+	if source.PromptAttributions[0].UserAddedPerFile["source.txt"] != 1 {
+		t.Fatalf("source PromptAttributions user added = %v, want unchanged", source.PromptAttributions[0].UserAddedPerFile)
+	}
+	if source.PromptAttributions[0].UserRemovedPerFile["source.txt"] != 2 {
+		t.Fatalf("source PromptAttributions user removed = %v, want unchanged", source.PromptAttributions[0].UserRemovedPerFile)
+	}
+	if source.PendingPromptAttribution.UserAddedPerFile["pending.txt"] != 3 {
+		t.Fatalf("source PendingPromptAttribution user added = %v, want unchanged", source.PendingPromptAttribution.UserAddedPerFile)
+	}
+	if source.PendingPromptAttribution.UserRemovedPerFile["pending.txt"] != 4 {
+		t.Fatalf("source PendingPromptAttribution user removed = %v, want unchanged", source.PendingPromptAttribution.UserRemovedPerFile)
+	}
+}
+
 func TestSessionAdopt_FromSubdirectoryReadsSourceStore(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetRepo := setupAdoptRepo(t)
@@ -723,11 +818,30 @@ func TestSessionAdopt_MovesSameStoreSessionIntoCurrentWorktree(t *testing.T) {
 	err = runAdopt(context.Background(), &out, sessionID, adoptOptions{
 		FromWorktree: sourceRepo,
 	})
+	if err == nil {
+		t.Fatal("runAdopt succeeded without --force, want existing same-store state refusal")
+	}
+	if !strings.Contains(err.Error(), "already tracked in this repo") {
+		t.Fatalf("runAdopt error = %v, want existing-state refusal", err)
+	}
+
+	loaded, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.WorktreePath != sourceRepo {
+		t.Fatalf("WorktreePath changed without --force: %q", loaded.WorktreePath)
+	}
+
+	err = runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
 	if err != nil {
 		t.Fatalf("runAdopt failed: %v", err)
 	}
 
-	loaded, err := sourceStore.Load(context.Background(), sessionID)
+	loaded, err = sourceStore.Load(context.Background(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
