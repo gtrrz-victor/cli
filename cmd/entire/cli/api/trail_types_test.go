@@ -46,11 +46,16 @@ func TestTrailResourceDecodesServerURL(t *testing.T) {
 func TestTrailResourceToMetadataUsesID(t *testing.T) {
 	t.Parallel()
 
-	metadata := (&TrailResource{ID: "trail-db-id", Branch: "feature/x", Phase: "has_code"}).ToMetadata()
+	metadata := (&TrailResource{ID: "trail-db-id", URL: "https://entire.io/gh/o/r/trails/9", Branch: "feature/x", Phase: "has_code"}).ToMetadata()
 	if got := metadata.TrailID.String(); got != "trail-db-id" {
 		t.Fatalf("metadata TrailID = %q, want stable API id", got)
 	}
 	if metadata.Phase != "has_code" {
 		t.Fatalf("metadata Phase = %q, want has_code", metadata.Phase)
+	}
+	// The server-provided URL must propagate so callers relying on ToMetadata()
+	// don't silently drop it.
+	if metadata.URL != "https://entire.io/gh/o/r/trails/9" {
+		t.Fatalf("metadata URL = %q, want propagated server url", metadata.URL)
 	}
 }

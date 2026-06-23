@@ -59,6 +59,7 @@ func (r *TrailResource) ToMetadata() *trail.Metadata {
 	m := &trail.Metadata{
 		Number:    r.Number,
 		TrailID:   trail.ID(r.ID),
+		URL:       r.URL,
 		Branch:    r.Branch,
 		Base:      r.Base,
 		Title:     r.Title,
