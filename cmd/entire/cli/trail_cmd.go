@@ -133,14 +133,13 @@ func runTrailShow(ctx context.Context, w, errW io.Writer, insecureHTTP bool, sel
 		// the core metadata already came from the list, so a detail failure
 		// falls back to the list body with a warning rather than failing.
 		m := found.ToMetadata()
-		webURL := ""
+		webURL := trailDisplayURL(*found, forge, owner, repo)
 		// Seed the description from the list body so a failed (or skipped)
 		// detail fetch still shows something; a successful detail fetch
 		// supersedes it with the richer body_document text below.
 		bodyText := found.Body
 		descriptionLoaded := strings.TrimSpace(found.Body) != ""
 		if found.Number > 0 {
-			webURL = trailWebURL(api.BaseURL(), forge, owner, repo, found.Number)
 			if bt, derr := fetchTrailDescription(ctx, client, forge, owner, repo, found.Number); derr == nil {
 				// A successful fetch means we authoritatively consulted the
 				// description, but it only supersedes the seeded list body when
@@ -241,7 +240,35 @@ func trailDescriptionForDisplay(bodyText string, loaded bool) string {
 	return ""
 }
 
-// trailWebURL builds the browser URL for a trail:
+// printCreatedTrail reports a newly created trail, including its browser URL
+// (the same URL `trail show` surfaces) when one is available.
+func printCreatedTrail(w io.Writer, t api.TrailResource, forge, owner, repo string) {
+	if t.Branch == "" {
+		fmt.Fprintf(w, "Created trail %q (ID: %s)\n", t.Title, t.ID)
+	} else {
+		fmt.Fprintf(w, "Created trail %q for branch %s (ID: %s)\n", t.Title, t.Branch, t.ID)
+	}
+	if url := trailDisplayURL(t, forge, owner, repo); url != "" {
+		fmt.Fprintf(w, "  URL: %s\n", url)
+	}
+}
+
+// trailDisplayURL returns the trail's browser URL. It prefers the canonical URL
+// the server now returns, so the CLI tracks any route change without being
+// updated in lockstep, and falls back to a locally constructed URL only for
+// older servers that omit the field.
+func trailDisplayURL(t api.TrailResource, forge, owner, repo string) string {
+	if strings.TrimSpace(t.URL) != "" {
+		return t.URL
+	}
+	if t.Number > 0 {
+		return trailWebURL(api.BaseURL(), forge, owner, repo, t.Number)
+	}
+	return ""
+}
+
+// trailWebURL builds a fallback browser URL for a trail used only when the
+// server does not supply one (older servers):
 // <web-origin>/<forge>/<owner>/<repo>/trails/<number>. In production the web app
 // is served from the same origin as the data API, so the API base URL doubles
 // as the web origin. A split local-dev setup (API and frontend on different
@@ -357,10 +384,13 @@ func runTrailListAllWithClient(ctx context.Context, w io.Writer, client *api.Cli
 		return fmt.Errorf("failed to decode trail list: %w", err)
 	}
 
-	// Convert to metadata for display
+	// Convert to metadata for display, attaching the browser URL (server-provided
+	// when present, locally constructed as a fallback for older servers).
 	trails := make([]*trail.Metadata, 0, len(listResp.Trails))
 	for i := range listResp.Trails {
-		trails = append(trails, listResp.Trails[i].ToMetadata())
+		m := listResp.Trails[i].ToMetadata()
+		m.URL = trailDisplayURL(listResp.Trails[i], forge, owner, repo)
+		trails = append(trails, m)
 	}
 
 	totalMatched := listResp.Total
@@ -549,6 +579,7 @@ func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor, showStatu
 	// branch names or logins don't throw off the table.
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showPhase := trailListHasPhase(trails)
+	showURL := trailListHasURL(trails)
 	columns := []string{"NUM", "BRANCH", "TITLE"}
 	if showStatus {
 		columns = append(columns, "STATUS")
@@ -560,6 +591,9 @@ func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor, showStatu
 		columns = append(columns, "AUTHOR")
 	}
 	columns = append(columns, "UPDATED")
+	if showURL {
+		columns = append(columns, "URL")
+	}
 	fmt.Fprintln(tw, "  "+strings.Join(columns, "\t"))
 	for _, t := range trails {
 		number := "-"
@@ -581,6 +615,9 @@ func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor, showStatu
 			fields = append(fields, t.AuthorLogin())
 		}
 		fields = append(fields, timeAgo(t.UpdatedAt))
+		if showURL {
+			fields = append(fields, t.URL)
+		}
 		fmt.Fprintln(tw, "  "+strings.Join(fields, "\t"))
 	}
 	_ = tw.Flush()
@@ -589,6 +626,15 @@ func printTrailRows(w io.Writer, trails []*trail.Metadata, showAuthor, showStatu
 func trailListHasPhase(trails []*trail.Metadata) bool {
 	for _, t := range trails {
 		if t != nil && strings.TrimSpace(t.Phase) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func trailListHasURL(trails []*trail.Metadata) bool {
+	for _, t := range trails {
+		if t != nil && strings.TrimSpace(t.URL) != "" {
 			return true
 		}
 	}
@@ -708,7 +754,7 @@ func runTrailCreate(cmd *cobra.Command, title, body, base, branch, statusStr str
 		cleanupCreatedTrailBranch(repo, branch, branchState.LocalCreated, branchState.RemotePushed, errW)
 		return err
 	}
-	printTrailCreateResult(w, createResp.Trail)
+	printCreatedTrail(w, createResp.Trail, forge, owner, repoName)
 
 	return maybeCheckoutTrailCreateBranch(ctx, cmd, w, branch, currentBranch, checkout, branchState.NeedsCreation)
 }
@@ -852,14 +898,6 @@ func postTrailCreate(ctx context.Context, client *api.Client, forge, owner, repo
 		return api.TrailCreateResponse{}, fmt.Errorf("failed to decode create response: %w", err)
 	}
 	return createResp, nil
-}
-
-func printTrailCreateResult(w io.Writer, created api.TrailResource) {
-	if created.Branch == "" {
-		fmt.Fprintf(w, "Created trail %q (ID: %s)\n", created.Title, created.ID)
-		return
-	}
-	fmt.Fprintf(w, "Created trail %q for branch %s (ID: %s)\n", created.Title, created.Branch, created.ID)
 }
 
 func maybeCheckoutTrailCreateBranch(ctx context.Context, cmd *cobra.Command, w io.Writer, branch, currentBranch string, checkout, needsCreation bool) error {
