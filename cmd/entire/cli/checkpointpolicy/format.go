@@ -1,6 +1,7 @@
 package checkpointpolicy
 
 import (
+	"cmp"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ func ParseFormat(raw string) (CheckpointFormat, error) {
 	}
 
 	family := CheckpointFamily(familyRaw)
-	if _, ok := knownFamilies[family]; !ok {
+	if _, ok := familyRanks[family]; !ok {
 		return CheckpointFormat{}, fmt.Errorf("unknown checkpoint family %q", familyRaw)
 	}
 
@@ -44,17 +45,36 @@ func (f CheckpointFormat) String() string {
 	return fmt.Sprintf("%s-v%d", f.Family, f.Major)
 }
 
+func Compare(a, b CheckpointFormat) int {
+	aRank := familyRanks[a.Family]
+	bRank := familyRanks[b.Family]
+	if aRank != bRank {
+		return cmp.Compare(aRank, bRank)
+	}
+	return cmp.Compare(a.Major, b.Major)
+}
+
 func CanRead(format CheckpointFormat) bool {
 	return readFormats[format]
 }
 
-var knownFamilies = map[CheckpointFamily]bool{
-	CheckpointFamilyBranch: true,
-	CheckpointFamilyRefs:   true,
+func CanWrite(format CheckpointFormat) bool {
+	return writeFormats[format]
+}
+
+var familyRanks = map[CheckpointFamily]int{
+	CheckpointFamilyBranch: 0,
+	CheckpointFamilyRefs:   1,
 }
 
 var branchV1Format = CheckpointFormat{Family: CheckpointFamilyBranch, Major: 1}
 
-var readFormats = map[CheckpointFormat]bool{
-	branchV1Format: true,
-}
+var (
+	readFormats = map[CheckpointFormat]bool{
+		branchV1Format: true,
+	}
+
+	writeFormats = map[CheckpointFormat]bool{
+		branchV1Format: true,
+	}
+)
