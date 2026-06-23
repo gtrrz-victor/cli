@@ -26,7 +26,10 @@ import (
 )
 
 // resumePickerCancel is the sentinel option value for the picker's Cancel entry.
-const resumePickerCancel = "cancel"
+const (
+	resumePickerCancel = "cancel"
+	unknownAgentLabel  = "(unknown agent)"
+)
 
 // resumableSession pairs a session with the branch and committed checkpoint we
 // resolved for it. A session is only resumable when BOTH are known: the branch
@@ -378,7 +381,7 @@ func resumeOptionLabel(item resumableSession) string {
 
 	agentLabel := string(s.AgentType)
 	if agentLabel == "" {
-		agentLabel = "(unknown agent)"
+		agentLabel = unknownAgentLabel
 	}
 
 	prompt := strings.TrimSpace(s.LastPrompt)

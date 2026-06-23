@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -282,4 +283,20 @@ func (a *PiAgent) FormatResumeCommand(sessionID string) string {
 		return "pi --continue"
 	}
 	return "pi --session " + id
+}
+
+func (a *PiAgent) LaunchResumeCmd(ctx context.Context, sessionID string) (*exec.Cmd, error) {
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		cmd, err := agent.NewForegroundCommand(ctx, "pi", "--continue")
+		if err != nil {
+			return nil, fmt.Errorf("build pi resume command: %w", err)
+		}
+		return cmd, nil
+	}
+	cmd, err := agent.NewForegroundCommand(ctx, "pi", "--session", id)
+	if err != nil {
+		return nil, fmt.Errorf("build pi resume command: %w", err)
+	}
+	return cmd, nil
 }

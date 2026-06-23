@@ -192,19 +192,27 @@ func resumeSessionOnBranch(ctx context.Context, cmd *cobra.Command, branchName s
 // does not search branch history — the caller already knows which checkpoint to
 // resume, so two sessions on the same branch resume independently.
 func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID id.CheckpointID, force bool) error {
+	sessions, err := restoreByCheckpointID(ctx, w, errW, checkpointID, force)
+	if err != nil || len(sessions) == 0 {
+		return err
+	}
+	return displayRestoredSessions(w, sessions)
+}
+
+func restoreByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID id.CheckpointID, force bool) ([]strategy.RestoredSession, error) {
 	if checkpointID.IsEmpty() {
-		return errors.New("no checkpoint to resume")
+		return nil, errors.New("no checkpoint to resume")
 	}
 
 	repo, err := openRepository(ctx)
 	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
+		return nil, fmt.Errorf("not a git repository: %w", err)
 	}
 	defer repo.Close()
 
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
 	if err != nil {
-		return fmt.Errorf("open checkpoint store: %w", err)
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	store := stores.Primary
 	refs := stores.Refs()
@@ -218,29 +226,37 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 			slog.String("checkpoint_id", checkpointID.String()),
 			slog.String("error", err.Error()),
 		)
-		return checkRemoteMetadata(ctx, w, errW, checkpointID, stores.Refs())
+		return nil, checkRemoteMetadata(ctx, w, errW, checkpointID, stores.Refs())
 	}
 
-	return resumeSession(ctx, w, errW, metadata, force)
+	return restoreResumeSessions(ctx, w, errW, metadata, force)
 }
 
 func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName string, force bool) error {
+	sessions, err := restoreFromCurrentBranch(ctx, w, errW, branchName, force)
+	if err != nil || len(sessions) == 0 {
+		return err
+	}
+	return displayRestoredSessions(w, sessions)
+}
+
+func restoreFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName string, force bool) ([]strategy.RestoredSession, error) {
 	logCtx := logging.WithComponent(ctx, "resume")
 
 	repo, err := openRepository(ctx)
 	if err != nil {
-		return fmt.Errorf("not a git repository: %w", err)
+		return nil, fmt.Errorf("not a git repository: %w", err)
 	}
 	defer repo.Close()
 
 	// Find a commit with an Entire-Checkpoint trailer, looking at branch-only commits
 	result, err := findBranchCheckpoints(repo, branchName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(result.checkpointIDs) == 0 {
 		fmt.Fprintf(w, "No Entire checkpoint found on branch '%s'\n", branchName)
-		return nil
+		return nil, nil
 	}
 
 	logging.Debug(logCtx, "found checkpoint(s) on branch",
@@ -259,11 +275,11 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 
 		shouldResume, err := promptResumeFromOlderCheckpoint()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !shouldResume {
 			fmt.Fprintf(w, "Resume cancelled.\n")
-			return nil
+			return nil, nil
 		}
 	}
 
@@ -272,7 +288,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{BlobFetcher: FetchBlobsByHash})
 	if err != nil {
-		return fmt.Errorf("open checkpoint store: %w", err)
+		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
 	store := stores.Primary
 
@@ -292,7 +308,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 			)
 			fmt.Fprintf(w, "Found %d checkpoints for commit %s but metadata is not available\n",
 				len(result.checkpointIDs), result.commitHash[:7])
-			return checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], stores.Refs())
+			return nil, checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], stores.Refs())
 		}
 		skipped := len(result.checkpointIDs) - 1
 		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest (%d older checkpoints skipped)\n",
@@ -314,7 +330,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("error", storeErr.Error()),
 			)
-			return checkRemoteMetadata(ctx, w, errW, checkpointID, stores.Refs())
+			return nil, checkRemoteMetadata(ctx, w, errW, checkpointID, stores.Refs())
 		}
 	}
 
@@ -324,7 +340,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 		slog.Int("session_count", metadata.SessionCount),
 	)
 
-	return resumeSession(ctx, w, errW, metadata, force)
+	return restoreResumeSessions(ctx, w, errW, metadata, force)
 }
 
 // resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
@@ -551,8 +567,6 @@ type branchCheckpointsResult struct {
 // among commits that are unique to this branch (not reachable from the default branch).
 // This handles the case where main has been merged into the feature branch.
 func findBranchCheckpoints(repo *git.Repository, branchName string) (*branchCheckpointsResult, error) {
-	result := &branchCheckpointsResult{}
-
 	// Get HEAD commit
 	head, err := repo.Head()
 	if err != nil {
@@ -564,16 +578,48 @@ func findBranchCheckpoints(repo *git.Repository, branchName string) (*branchChec
 		return nil, fmt.Errorf("failed to get HEAD commit: %w", err)
 	}
 
-	// First, check if HEAD itself has a checkpoint (most common case)
-	if cpIDs := trailers.ParseAllCheckpoints(headCommit.Message); len(cpIDs) > 0 {
+	return findBranchCheckpointsFromCommit(repo, branchName, headCommit), nil
+}
+
+func findBranchCheckpointsForBranchRef(repo *git.Repository, branchName string) (*branchCheckpointsResult, error) {
+	commit, err := branchCommit(repo, branchName)
+	if err != nil {
+		return nil, err
+	}
+	return findBranchCheckpointsFromCommit(repo, branchName, commit), nil
+}
+
+func branchCommit(repo *git.Repository, branchName string) (*object.Commit, error) {
+	for _, refName := range []plumbing.ReferenceName{
+		plumbing.NewBranchReferenceName(branchName),
+		plumbing.NewRemoteReferenceName("origin", branchName),
+	} {
+		ref, err := repo.Reference(refName, true)
+		if err != nil {
+			continue
+		}
+		commit, commitErr := repo.CommitObject(ref.Hash())
+		if commitErr != nil {
+			return nil, fmt.Errorf("failed to get branch commit for %s: %w", refName, commitErr)
+		}
+		return commit, nil
+	}
+	return nil, fmt.Errorf("branch '%s' not found locally or on origin", branchName)
+}
+
+func findBranchCheckpointsFromCommit(repo *git.Repository, branchName string, startCommit *object.Commit) *branchCheckpointsResult {
+	result := &branchCheckpointsResult{}
+
+	// First, check if the branch tip itself has a checkpoint (most common case).
+	if cpIDs := trailers.ParseAllCheckpoints(startCommit.Message); len(cpIDs) > 0 {
 		result.checkpointIDs = cpIDs
-		result.commitHash = head.Hash().String()
-		result.commitMessage = headCommit.Message
+		result.commitHash = startCommit.Hash.String()
+		result.commitMessage = startCommit.Message
 		result.newerCommitsExist = false
-		return result, nil
+		return result
 	}
 
-	// HEAD doesn't have a checkpoint - find branch-only commits
+	// The branch tip doesn't have a checkpoint - find branch-only commits.
 	// Get the default branch name
 	defaultBranch := getDefaultBranchFromRemote(repo)
 	if defaultBranch == "" {
@@ -588,31 +634,31 @@ func findBranchCheckpoints(repo *git.Repository, branchName string) (*branchChec
 
 	// If we can't find a default branch, or we're on it, just walk all commits
 	if defaultBranch == "" || defaultBranch == branchName {
-		return findCheckpointInHistory(headCommit, nil), nil
+		return findCheckpointInHistory(startCommit, nil)
 	}
 
 	// Get the default branch reference
 	defaultRef, err := repo.Reference(plumbing.NewBranchReferenceName(defaultBranch), true)
 	if err != nil {
 		// Default branch doesn't exist locally, fall back to walking all commits
-		return findCheckpointInHistory(headCommit, nil), nil //nolint:nilerr // Intentional fallback
+		return findCheckpointInHistory(startCommit, nil)
 	}
 
 	defaultCommit, err := repo.CommitObject(defaultRef.Hash())
 	if err != nil {
 		// Can't get default commit, fall back to walking all commits
-		return findCheckpointInHistory(headCommit, nil), nil //nolint:nilerr // Intentional fallback
+		return findCheckpointInHistory(startCommit, nil)
 	}
 
 	// Find merge base
-	mergeBase, err := headCommit.MergeBase(defaultCommit)
+	mergeBase, err := startCommit.MergeBase(defaultCommit)
 	if err != nil || len(mergeBase) == 0 {
 		// No common ancestor, fall back to walking all commits
-		return findCheckpointInHistory(headCommit, nil), nil //nolint:nilerr // Intentional fallback
+		return findCheckpointInHistory(startCommit, nil)
 	}
 
 	// Walk from HEAD to merge base, looking for checkpoint
-	return findCheckpointInHistory(headCommit, &mergeBase[0].Hash), nil
+	return findCheckpointInHistory(startCommit, &mergeBase[0].Hash)
 }
 
 // findCheckpointInHistory walks commit history from start looking for a checkpoint trailer.
@@ -830,13 +876,21 @@ func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, ref
 // The caller must provide the already-resolved checkpoint metadata to avoid redundant lookups
 // and to support both local and remote metadata trees.
 func resumeSession(ctx context.Context, w, errW io.Writer, metadata *strategy.CheckpointInfo, force bool) error {
+	sessions, err := restoreResumeSessions(ctx, w, errW, metadata, force)
+	if err != nil || len(sessions) == 0 {
+		return err
+	}
+	return displayRestoredSessions(w, sessions)
+}
+
+func restoreResumeSessions(ctx context.Context, w, errW io.Writer, metadata *strategy.CheckpointInfo, force bool) ([]strategy.RestoredSession, error) {
 	checkpointID := metadata.CheckpointID
 	sessionID := metadata.SessionID
 
 	// Resolve agent from checkpoint metadata (same as rewind)
 	ag, err := strategy.ResolveAgentForRewind(metadata.Agent)
 	if err != nil {
-		return fmt.Errorf("failed to resolve agent: %w", err)
+		return nil, fmt.Errorf("failed to resolve agent: %w", err)
 	}
 
 	// Initialize logging context with agent
@@ -850,17 +904,17 @@ func resumeSession(ctx context.Context, w, errW io.Writer, metadata *strategy.Ch
 	// Get worktree root for session directory lookup
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get worktree root: %w", err)
+		return nil, fmt.Errorf("failed to get worktree root: %w", err)
 	}
 
 	sessionDir, err := ag.GetSessionDir(repoRoot)
 	if err != nil {
-		return fmt.Errorf("failed to determine session directory: %w", err)
+		return nil, fmt.Errorf("failed to determine session directory: %w", err)
 	}
 
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
-		return fmt.Errorf("failed to create session directory: %w", err)
+		return nil, fmt.Errorf("failed to create session directory: %w", err)
 	}
 
 	// Get strategy and restore sessions using full checkpoint data
@@ -877,7 +931,7 @@ func resumeSession(ctx context.Context, w, errW io.Writer, metadata *strategy.Ch
 	sessions, restoreErr := strat.RestoreLogsOnly(ctx, w, errW, point, force)
 	if restoreErr != nil || len(sessions) == 0 {
 		// Fall back to single-session restore (e.g., old checkpoints without agent metadata)
-		return resumeSingleSession(ctx, w, errW, ag, sessionID, checkpointID, repoRoot, force)
+		return nil, resumeSingleSession(ctx, w, errW, ag, sessionID, checkpointID, repoRoot, force)
 	}
 
 	logging.Debug(logCtx, "resume session completed",
@@ -885,7 +939,7 @@ func resumeSession(ctx context.Context, w, errW io.Writer, metadata *strategy.Ch
 		slog.Int("session_count", len(sessions)),
 	)
 
-	return displayRestoredSessions(w, sessions)
+	return sessions, nil
 }
 
 // displayRestoredSessions sorts sessions by CreatedAt and prints resume commands.

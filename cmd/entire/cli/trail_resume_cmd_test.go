@@ -1,0 +1,586 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/api"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/session"
+	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/entireio/cli/redact"
+
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+)
+
+func TestTrailResumeCmdRejectsConflictingSelectors(t *testing.T) {
+	t.Parallel()
+
+	cmd := newTrailResumeCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"575", "--trail", "feature/a"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error combining positional trail with --trail, got nil")
+	}
+	if !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("error = %q, want it to mention 'not both'", err)
+	}
+}
+
+func TestValidateTrailResumeOptions(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		opts    trailResumeOptions
+		wantErr string
+	}{
+		{
+			name:    "session and checkpoint conflict",
+			opts:    trailResumeOptions{SessionID: "session-1", CheckpointID: "0123456789ab"},
+			wantErr: "cannot combine --session and --checkpoint",
+		},
+		{
+			name:    "json requires no resume",
+			opts:    trailResumeOptions{JSON: true},
+			wantErr: "--json can only be used with --no-resume",
+		},
+		{
+			name: "json no resume accepted",
+			opts: trailResumeOptions{JSON: true, NoResume: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateTrailResumeOptions(tc.opts)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateTrailResumeOptions() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateTrailResumeOptions() = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	ctx := buildTrailResumeContext(api.TrailResource{
+		ID:     "trl_1",
+		Number: 575,
+		Title:  "Add trail resume",
+		Branch: "feature/trail-resume",
+		Status: "open",
+		Phase:  "has_code",
+	}, []trailResumeSessionContext{
+		{
+			SessionID:    "old-session",
+			Agent:        "claude-code",
+			LastPrompt:   "older work",
+			LastActive:   now.Add(-time.Hour),
+			CheckpointID: "bbbbbbbbbbbb",
+		},
+		{
+			SessionID:    "new-session",
+			Agent:        "codex",
+			LastPrompt:   "newer work",
+			LastActive:   now,
+			CheckpointID: "aaaaaaaaaaaa",
+		},
+	}, trailResumeFindingsContext{})
+
+	if len(ctx.Sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2: %#v", len(ctx.Sessions), ctx.Sessions)
+	}
+	if ctx.Sessions[0].SessionID != "new-session" || ctx.Sessions[0].CheckpointID != "aaaaaaaaaaaa" {
+		t.Fatalf("first session = %#v, want newest trail session", ctx.Sessions[0])
+	}
+	if ctx.Sessions[1].SessionID != "old-session" {
+		t.Fatalf("second session = %#v, want old-session", ctx.Sessions[1])
+	}
+	if ctx.DefaultResume == nil || ctx.DefaultResume.SessionID != "new-session" {
+		t.Fatalf("DefaultResume = %#v, want new-session", ctx.DefaultResume)
+	}
+}
+
+func TestResolveTrailCheckpointSessionsUsesBranchCheckpointMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	repo, err := git.PlainOpen(tmpDir)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "readme.md"), []byte("init\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if _, err := wt.Add("readme.md"); err != nil {
+		t.Fatalf("add readme: %v", err)
+	}
+	if _, err := wt.Commit("init", &git.CommitOptions{Author: testTrailResumeSignature(time.Date(2026, 6, 23, 9, 0, 0, 0, time.UTC))}); err != nil {
+		t.Fatalf("commit init: %v", err)
+	}
+
+	if err := wt.Checkout(&git.CheckoutOptions{Create: true, Branch: "refs/heads/feature/trail"}); err != nil {
+		t.Fatalf("checkout feature: %v", err)
+	}
+	cpID := id.MustCheckpointID("abc123def456")
+	firstTime := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	secondTime := firstTime.Add(time.Hour)
+	writeTrailResumeCheckpointSession(t, repo, cpID, "session-alice", firstTime, agent.AgentTypeClaudeCode, "alice started this trail")
+	writeTrailResumeCheckpointSession(t, repo, cpID, "session-bob", secondTime, agent.AgentTypeCodex, "bob continued from another machine")
+	if err := os.WriteFile(filepath.Join(tmpDir, "readme.md"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	if _, err := wt.Add("readme.md"); err != nil {
+		t.Fatalf("add feature: %v", err)
+	}
+	if _, err := wt.Commit("feature work\n\nEntire-Checkpoint: "+cpID.String(), &git.CommitOptions{Author: testTrailResumeSignature(secondTime)}); err != nil {
+		t.Fatalf("commit feature: %v", err)
+	}
+
+	sessions, err := resolveTrailCheckpointSessions(context.Background(), "feature/trail")
+	if err != nil {
+		t.Fatalf("resolveTrailCheckpointSessions() error = %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2: %#v", len(sessions), sessions)
+	}
+	if sessions[0].SessionID != "session-bob" || sessions[0].CheckpointID != cpID.String() {
+		t.Fatalf("first session = %#v, want newest checkpoint session", sessions[0])
+	}
+	if sessions[0].Agent != string(agent.AgentTypeCodex) {
+		t.Fatalf("first agent = %q, want %q", sessions[0].Agent, agent.AgentTypeCodex)
+	}
+	if sessions[0].LastPrompt != "bob continued from another machine" {
+		t.Fatalf("first prompt = %q", sessions[0].LastPrompt)
+	}
+	if sessions[1].SessionID != "session-alice" {
+		t.Fatalf("second session = %#v, want session-alice", sessions[1])
+	}
+}
+
+func testTrailResumeSignature(when time.Time) *object.Signature {
+	return &object.Signature{
+		Name:  "Test User",
+		Email: "test@example.com",
+		When:  when,
+	}
+}
+
+func writeTrailResumeCheckpointSession(
+	t *testing.T,
+	repo *git.Repository,
+	checkpointID id.CheckpointID,
+	sessionID string,
+	createdAt time.Time,
+	agentType types.AgentType,
+	prompt string,
+) {
+	t.Helper()
+
+	if err := checkpoint.NewGitStore(repo, checkpoint.DefaultV1Refs()).WriteCommitted(context.Background(), checkpoint.WriteCommittedOptions{
+		CheckpointID: checkpointID,
+		SessionID:    sessionID,
+		CreatedAt:    createdAt,
+		Strategy:     resumeTestStrategy,
+		Branch:       "feature/trail",
+		Transcript:   redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"` + prompt + `"}]}}` + "\n")),
+		Prompts:      []string{prompt},
+		Agent:        agentType,
+		AuthorName:   "Test",
+		AuthorEmail:  "test@example.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted(%s): %v", sessionID, err)
+	}
+}
+
+func TestPrintTrailResumeContextIncludesSessionsFindingsAndCommands(t *testing.T) {
+	t.Parallel()
+
+	sev := trailReviewSeverityHigh
+	line := 42
+	file := "cmd/entire/cli/trail_cmd.go"
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{
+			ID:     "trl_1",
+			Number: 575,
+			Title:  "Add trail resume",
+			Branch: "feature/trail-resume",
+			Status: "open",
+			Phase:  "has_code",
+			URL:    "https://entire.io/gh/o/r/trails/575",
+		},
+		Sessions: []trailResumeSessionContext{{
+			SessionID:    "session-1",
+			Agent:        "codex",
+			LastPrompt:   "implement trail resume",
+			LastActive:   time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC),
+			CheckpointID: "aaaaaaaaaaaa",
+		}},
+		Findings: trailResumeFindingsContext{
+			Counts: trailReviewCommentCounts{Open: 1, OpenHigh: 1, Resolved: 2},
+			Top: []api.TrailReviewComment{{
+				ID:       "finding-1",
+				Body:     trailReviewStrPtr("Resume output should show context"),
+				Severity: &sev,
+				Status:   trailReviewStatusOpen,
+				Location: api.TrailReviewLocation{
+					Granularity: "line",
+					FilePath:    &file,
+					StartLine:   &line,
+				},
+			}},
+		},
+		Commands: []string{
+			"entire trail finding 575 --json",
+			"entire trail resume 575 --session session-1",
+		},
+	}
+
+	var out strings.Builder
+	printTrailResumeContext(&out, ctx)
+	text := out.String()
+	for _, want := range []string{
+		"Trail #575  Add trail resume",
+		"Status: open · Phase: has_code · Branch: feature/trail-resume",
+		"Checkpoint sessions:",
+		"session-1",
+		"codex",
+		"aaaaaaaaaaaa",
+		"Findings: open 1",
+		"high 1",
+		"finding-1",
+		"cmd/entire/cli/trail_cmd.go:42",
+		"Resume output should show context",
+		"Commands:",
+		"entire trail finding 575 --json",
+		"entire trail resume 575 --session session-1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("context output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestEncodeTrailResumeContextJSON(t *testing.T) {
+	t.Parallel()
+
+	sev := trailReviewSeverityHigh
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{ID: "trl_1", Number: 575, Branch: "feature/trail-resume"},
+		Sessions: []trailResumeSessionContext{{
+			SessionID:    "session-1",
+			CheckpointID: "aaaaaaaaaaaa",
+		}},
+		Findings: trailResumeFindingsContext{
+			Counts: trailReviewCommentCounts{Open: 1, OpenHigh: 1},
+			Top: []api.TrailReviewComment{{
+				ID:       "finding-1",
+				Severity: &sev,
+				Status:   trailReviewStatusOpen,
+			}},
+		},
+		DefaultResume: &trailResumeDefaultContext{SessionID: "session-1", CheckpointID: "aaaaaaaaaaaa", Branch: "feature/trail-resume"},
+		Commands:      []string{"entire trail resume 575 --session session-1"},
+	}
+
+	var out bytes.Buffer
+	if err := encodeTrailResumeContextJSON(&out, ctx); err != nil {
+		t.Fatalf("encodeTrailResumeContextJSON: %v", err)
+	}
+	var decoded struct {
+		Trail struct {
+			ID     string `json:"id"`
+			Number int    `json:"number"`
+			Branch string `json:"branch"`
+		} `json:"trail"`
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+		DefaultResume struct {
+			SessionID string `json:"session_id"`
+		} `json:"default_resume"`
+		FindingsSummary struct {
+			Open     int `json:"open"`
+			OpenHigh int `json:"open_high"`
+		} `json:"findings_summary"`
+		Findings []struct {
+			ID string `json:"id"`
+		} `json:"findings"`
+		Commands []string `json:"commands"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out.String())
+	}
+	if decoded.Trail.ID != "trl_1" || decoded.Trail.Number != 575 || decoded.Trail.Branch != "feature/trail-resume" {
+		t.Fatalf("decoded trail = %#v", decoded.Trail)
+	}
+	if len(decoded.Sessions) != 1 || decoded.Sessions[0].SessionID != "session-1" {
+		t.Fatalf("decoded sessions = %#v", decoded.Sessions)
+	}
+	if decoded.DefaultResume.SessionID != "session-1" {
+		t.Fatalf("decoded default_resume = %#v", decoded.DefaultResume)
+	}
+	if decoded.FindingsSummary.Open != 1 || decoded.FindingsSummary.OpenHigh != 1 {
+		t.Fatalf("decoded findings_summary = %#v", decoded.FindingsSummary)
+	}
+	if len(decoded.Findings) != 1 || decoded.Findings[0].ID != "finding-1" {
+		t.Fatalf("decoded findings = %#v", decoded.Findings)
+	}
+}
+
+func TestBuildTrailResumeRestoredSessionChoicesDefaultsToMostRecent(t *testing.T) {
+	t.Parallel()
+
+	oldTime := time.Date(2026, 6, 22, 14, 30, 0, 0, time.UTC)
+	newTime := time.Date(2026, 6, 23, 7, 39, 0, 0, time.UTC)
+	choices := buildTrailResumeRestoredSessionChoices([]strategy.RestoredSession{
+		{
+			SessionID: "019eefbd-bb6a-7f51-a909-feb4cd95588d",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "set up the persistent checkpoint contract",
+			CreatedAt: oldTime,
+		},
+		{
+			SessionID: "019ef36b-a485-7ca2-992b-b4f164266e7f",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "finish the api/checkpoint extraction",
+			CreatedAt: newTime,
+		},
+	})
+
+	if len(choices) != 2 {
+		t.Fatalf("choices len = %d, want 2", len(choices))
+	}
+	if choices[0].SessionID != "019ef36b-a485-7ca2-992b-b4f164266e7f" {
+		t.Fatalf("first choice = %#v, want most recent restored session", choices[0])
+	}
+	if !strings.Contains(choices[0].Label, "default") {
+		t.Fatalf("first choice label = %q, want default marker", choices[0].Label)
+	}
+	if choices[1].SessionID != "019eefbd-bb6a-7f51-a909-feb4cd95588d" {
+		t.Fatalf("second choice = %#v, want older restored session", choices[1])
+	}
+}
+
+func TestBuildTrailResumeRestoredSessionChoicesPrefersWorkSessionOverReview(t *testing.T) {
+	t.Parallel()
+
+	workTime := time.Date(2026, 6, 23, 7, 30, 0, 0, time.UTC)
+	reviewTime := workTime.Add(10 * time.Minute)
+	choices := buildTrailResumeRestoredSessionChoices([]strategy.RestoredSession{
+		{
+			SessionID: "work-session",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "extract the persistent contract",
+			CreatedAt: workTime,
+		},
+		{
+			SessionID:    "review-session",
+			Agent:        types.AgentType("Codex"),
+			Kind:         "agent_review",
+			ReviewPrompt: "Review the code changes introduced by commit f9000bc1a.",
+			CreatedAt:    reviewTime,
+		},
+	})
+
+	if len(choices) != 2 {
+		t.Fatalf("choices len = %d, want 2", len(choices))
+	}
+	if choices[0].SessionID != "work-session" {
+		t.Fatalf("first choice = %#v, want normal work session before newer review session", choices[0])
+	}
+	if !strings.Contains(choices[0].Label, "default") {
+		t.Fatalf("work choice label = %q, want default marker", choices[0].Label)
+	}
+	if choices[1].SessionID != "review-session" {
+		t.Fatalf("second choice = %#v, want review session after work session", choices[1])
+	}
+	if !strings.Contains(choices[1].Label, "review") {
+		t.Fatalf("review choice label = %q, want review marker", choices[1].Label)
+	}
+	if !strings.Contains(choices[1].Label, "Review the code changes") {
+		t.Fatalf("review choice label = %q, want review prompt fallback", choices[1].Label)
+	}
+}
+
+func TestBuildTrailResumeRestoredSessionChoicesPrefersWorkSessionOverReviewPrompt(t *testing.T) {
+	t.Parallel()
+
+	workTime := time.Date(2026, 6, 23, 7, 30, 0, 0, time.UTC)
+	reviewTime := workTime.Add(10 * time.Minute)
+	choices := buildTrailResumeRestoredSessionChoices([]strategy.RestoredSession{
+		{
+			SessionID: "work-session",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "extract the persistent contract",
+			CreatedAt: workTime,
+		},
+		{
+			SessionID: "review-session",
+			Agent:     types.AgentType("Codex"),
+			Prompt:    "Review the code changes introduced by commit f9000bc1a.",
+			CreatedAt: reviewTime,
+		},
+	})
+
+	if len(choices) != 2 {
+		t.Fatalf("choices len = %d, want 2", len(choices))
+	}
+	if choices[0].SessionID != "work-session" {
+		t.Fatalf("first choice = %#v, want work session before newer review prompt", choices[0])
+	}
+	if choices[1].SessionID != "review-session" {
+		t.Fatalf("second choice = %#v, want review prompt after work session", choices[1])
+	}
+	if !strings.Contains(choices[1].Label, "review") {
+		t.Fatalf("review choice label = %q, want review marker", choices[1].Label)
+	}
+}
+
+func TestPrintTrailRestoredSessionSummaryIdentifiesReviewOnlyCheckpointSessions(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	printTrailRestoredSessionSummary(&out, []strategy.RestoredSession{
+		{
+			SessionID:    "review-session-1",
+			Kind:         string(session.KindAgentReview),
+			ReviewPrompt: "Review the code changes introduced by commit abc123.",
+		},
+		{
+			SessionID: "review-session-2",
+			Prompt:    "Review this branch for regressions.",
+		},
+	})
+
+	text := out.String()
+	for _, want := range []string{
+		"Restored 2 checkpoint sessions",
+		"Only review/investigation checkpoint sessions were found",
+		"may not appear as trail UI sessions",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestDisplayTrailRestoredSessionsIncludesReviewWarning(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	err := displayTrailRestoredSessions(&out, []strategy.RestoredSession{
+		{
+			SessionID:    "019ef36b-a485-7ca2-992b-b4f164266e7f",
+			Agent:        types.AgentType("Codex"),
+			Kind:         string(session.KindAgentReview),
+			ReviewPrompt: "Review the code changes introduced by commit abc123.",
+			CreatedAt:    time.Date(2026, 6, 23, 7, 39, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("displayTrailRestoredSessions() error = %v", err)
+	}
+
+	text := out.String()
+	for _, want := range []string{
+		"Restored checkpoint session 019ef36b-a485-7ca2-992b-b4f164266e7f",
+		"Only review/investigation checkpoint sessions were found",
+		"To continue this checkpoint session:",
+		"codex resume 019ef36b-a485-7ca2-992b-b4f164266e7f",
+		"Review the code changes introduced by commit abc123.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("display output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestDisplayTrailRestoredSessionsMarksActualMostRecent(t *testing.T) {
+	t.Parallel()
+
+	workTime := time.Date(2026, 6, 23, 7, 30, 0, 0, time.UTC)
+	reviewTime := workTime.Add(10 * time.Minute)
+	var out strings.Builder
+	err := displayTrailRestoredSessions(&out, []strategy.RestoredSession{
+		{
+			SessionID: "work-session",
+			Agent:     agent.AgentTypeClaudeCode,
+			Prompt:    "continue implementation",
+			CreatedAt: workTime,
+		},
+		{
+			SessionID:    "review-session",
+			Agent:        types.AgentType("Codex"),
+			Kind:         string(session.KindAgentReview),
+			ReviewPrompt: "Review this branch for regressions.",
+			CreatedAt:    reviewTime,
+		},
+	})
+	if err != nil {
+		t.Fatalf("displayTrailRestoredSessions() error = %v", err)
+	}
+
+	text := out.String()
+	workLine := lineContaining(text, "claude -r work-session")
+	if strings.Contains(workLine, "most recent") {
+		t.Fatalf("work session command should not be marked most recent:\n%s", text)
+	}
+	reviewLine := lineContaining(text, "codex resume review-session")
+	if !strings.Contains(reviewLine, "most recent") {
+		t.Fatalf("newest review session command should be marked most recent:\n%s", text)
+	}
+}
+
+func lineContaining(text, needle string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestTrailResumeWorktreeClashMessage(t *testing.T) {
+	t.Parallel()
+
+	msg := trailResumeWorktreeClashMessage("feature/work", "/tmp/path with spaces")
+	for _, want := range []string{
+		`Branch "feature/work" is already checked out in another worktree:`,
+		"/tmp/path with spaces",
+		"Resume from that worktree with:",
+		"cd '/tmp/path with spaces' && entire trail resume feature/work",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message missing %q:\n%s", want, msg)
+		}
+	}
+}
