@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -633,7 +634,7 @@ func TestResolveLatestCheckpointUsesCheckpointInfoReader(t *testing.T) {
 	}
 }
 
-func TestResolveLatestCheckpointSkipsUnsupportedCheckpointWhenReadableCheckpointExists(t *testing.T) {
+func TestResolveLatestCheckpointReturnsUnsupportedWhenAnyCheckpointIsUnsupported(t *testing.T) {
 	t.Parallel()
 
 	unsupportedID := id.MustCheckpointID("aaa111bbb222")
@@ -651,15 +652,15 @@ func TestResolveLatestCheckpointSkipsUnsupportedCheckpointWhenReadableCheckpoint
 		},
 	}
 
-	latest, found, err := resolveLatestCheckpoint(context.Background(), reader, []id.CheckpointID{unsupportedID, newID})
-	if err != nil {
-		t.Fatalf("resolveLatestCheckpoint() error = %v", err)
+	_, found, err := resolveLatestCheckpoint(context.Background(), reader, []id.CheckpointID{unsupportedID, newID})
+	if err == nil {
+		t.Fatal("resolveLatestCheckpoint() error = nil, want unsupported version")
 	}
-	if !found {
-		t.Fatal("resolveLatestCheckpoint() found = false")
+	if found {
+		t.Fatal("resolveLatestCheckpoint() found = true")
 	}
-	if latest.CheckpointID != newID {
-		t.Errorf("resolveLatestCheckpoint() = %s, want %s", latest.CheckpointID, newID)
+	if !checkpointpolicy.IsUnsupportedVersion(err) {
+		t.Fatalf("resolveLatestCheckpoint() error = %v, want unsupported version", err)
 	}
 }
 
@@ -682,6 +683,35 @@ func TestResolveLatestCheckpointReturnsUnsupportedWhenNoReadableCheckpointExists
 	}
 	if !checkpointpolicy.IsUnsupportedVersion(err) {
 		t.Fatalf("resolveLatestCheckpoint() error = %v, want unsupported version", err)
+	}
+}
+
+func TestResolveLatestCheckpointReturnsErrorWhenAnyCheckpointCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	missingID := id.MustCheckpointID("aaa111bbb222")
+	newID := id.MustCheckpointID("ccc333ddd444")
+	reader := &resumeCheckpointInfoReaderStub{
+		summaries: map[id.CheckpointID]*checkpoint.CheckpointSummary{
+			newID: {Sessions: []checkpoint.SessionFilePaths{{Metadata: "new"}}},
+		},
+		metadata: map[id.CheckpointID][]checkpoint.CommittedMetadata{
+			newID: {{
+				SessionID: "new-session",
+				CreatedAt: time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC),
+			}},
+		},
+	}
+
+	_, found, err := resolveLatestCheckpoint(context.Background(), reader, []id.CheckpointID{missingID, newID})
+	if err == nil {
+		t.Fatal("resolveLatestCheckpoint() error = nil, want read error")
+	}
+	if found {
+		t.Fatal("resolveLatestCheckpoint() found = true")
+	}
+	if !errors.Is(err, checkpoint.ErrCheckpointNotFound) {
+		t.Fatalf("resolveLatestCheckpoint() error = %v, want checkpoint not found", err)
 	}
 }
 
@@ -891,6 +921,41 @@ func TestFindBranchCheckpoint_SquashMergeMultipleCheckpoints(t *testing.T) {
 	}
 }
 
+func TestResumeFromCurrentBranch_MultipleCheckpointsSaysLatest(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("ENTIRE_TEST_CLAUDE_PROJECT_DIR", filepath.Join(tmpDir, "claude-projects"))
+
+	repo, w, _ := setupResumeTestRepo(t, tmpDir, false)
+	oldID := id.MustCheckpointID("aaa111bbb222")
+	newID := id.MustCheckpointID("ccc333ddd444")
+	writeCommittedResumeCheckpoint(t, repo, oldID, "session-old", time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+	writeCommittedResumeCheckpoint(t, repo, newID, "session-new", time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC))
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "squash.txt"), []byte("squash content"), 0o644); err != nil {
+		t.Fatalf("write squash file: %v", err)
+	}
+	if _, err := w.Add("squash.txt"); err != nil {
+		t.Fatalf("add squash file: %v", err)
+	}
+	commitMsg := fmt.Sprintf("Squash merge\n\nEntire-Checkpoint: %s\n\nEntire-Checkpoint: %s\n", oldID, newID)
+	if _, err := w.Commit(commitMsg, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test User", Email: "test@example.com"},
+	}); err != nil {
+		t.Fatalf("commit squash merge: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := resumeFromCurrentBranch(context.Background(), &stdout, &stderr, "master", true); err != nil {
+		t.Fatalf("resumeFromCurrentBranch() error = %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	want := "resuming from the latest checkpoint"
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout = %q, want substring %q", stdout.String(), want)
+	}
+}
+
 // TestResumeSingleSession_RejectsPathTraversalSessionID is an end-to-end proof
 // that a malicious session ID cannot cause an arbitrary file write during resume.
 //
@@ -1061,6 +1126,48 @@ func TestCheckRemoteMetadata_MetadataExistsOnRemote(t *testing.T) {
 		t.Error("checkRemoteMetadata() should return error when agent is missing from metadata")
 	} else if !strings.Contains(err.Error(), "failed to resolve agent") {
 		t.Errorf("checkRemoteMetadata() expected agent resolution error, got: %v", err)
+	}
+}
+
+func TestCheckRemoteMetadata_ReturnsUnsupportedVersionFromRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	checkpointID := id.MustCheckpointID("abc123def456")
+	writeCommittedResumeCheckpointWithAgent(
+		t,
+		repo,
+		checkpointID,
+		"2025-01-01-test-session",
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		agent.AgentTypeClaudeCode,
+	)
+	rewriteExportCheckpointVersionToRefsV1(t, repo, checkpointID)
+
+	localRef, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	if err != nil {
+		t.Fatalf("Failed to get local metadata branch: %v", err)
+	}
+	remoteRef := plumbing.NewHashReference(
+		plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName),
+		localRef.Hash(),
+	)
+	if err := repo.Storer.SetReference(remoteRef); err != nil {
+		t.Fatalf("Failed to create remote ref: %v", err)
+	}
+	if err := repo.Storer.RemoveReference(plumbing.NewBranchReferenceName(paths.MetadataBranchName)); err != nil {
+		t.Fatalf("Failed to remove local metadata branch: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err = checkRemoteMetadata(context.Background(), &stdout, &stderr, checkpointID, checkpoint.DefaultV1Refs())
+	if err == nil {
+		t.Fatal("checkRemoteMetadata() error = nil, want unsupported checkpoint version")
+	}
+	if !checkpointpolicy.IsUnsupportedVersion(err) {
+		t.Fatalf("checkRemoteMetadata() error = %v, want unsupported checkpoint version", err)
 	}
 }
 

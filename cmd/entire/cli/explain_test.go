@@ -1002,7 +1002,7 @@ func TestLoadCheckpointForExplainRejectsUnsupportedCheckpointVersion(t *testing.
 		SessionID:  "session-explain-unsupported",
 		Transcript: redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n")),
 	})
-	rewriteExportCheckpointVersion(t, repo, cpID, "refs-v1")
+	rewriteExportCheckpointVersionToRefsV1(t, repo, cpID)
 
 	lookup, err := newExplainCheckpointLookup(context.Background())
 	require.NoError(t, err)

@@ -79,7 +79,7 @@ func writeCheckpointForExport(t *testing.T, repo *git.Repository, cpID id.Checkp
 	require.NoError(t, store.WriteCommitted(context.Background(), opts))
 }
 
-func rewriteExportCheckpointVersion(t *testing.T, repo *git.Repository, cpID id.CheckpointID, version string) {
+func rewriteExportCheckpointVersionToRefsV1(t *testing.T, repo *git.Repository, cpID id.CheckpointID) {
 	t.Helper()
 	ctx := context.Background()
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
@@ -97,7 +97,7 @@ func rewriteExportCheckpointVersion(t *testing.T, repo *git.Repository, cpID id.
 	require.NoError(t, err)
 	var summary checkpoint.CheckpointSummary
 	require.NoError(t, json.Unmarshal([]byte(content), &summary))
-	summary.CheckpointVersion = version
+	summary.CheckpointVersion = "refs-v1"
 	metadataJSON, err := json.Marshal(summary)
 	require.NoError(t, err)
 	metadataHash, err := checkpoint.CreateBlobFromContent(repo, metadataJSON)
@@ -152,7 +152,7 @@ func TestRunExplainExportJSONRejectsUnsupportedCheckpointVersion(t *testing.T) {
 		SessionID:  "session-json-unsupported",
 		Transcript: redact.AlreadyRedacted([]byte(`{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n")),
 	})
-	rewriteExportCheckpointVersion(t, repo, cpID, "refs-v1")
+	rewriteExportCheckpointVersionToRefsV1(t, repo, cpID)
 
 	var stdout, stderr bytes.Buffer
 	err := runExplainExport(context.Background(), &stdout, &stderr, explainExportOptions{
@@ -308,7 +308,7 @@ func TestRunExplainExportTranscriptRejectsUnsupportedCheckpointVersion(t *testin
 				SessionID:  "session-unsupported-transcript",
 				Transcript: redact.AlreadyRedacted(raw),
 			})
-			rewriteExportCheckpointVersion(t, repo, cpID, "refs-v1")
+			rewriteExportCheckpointVersionToRefsV1(t, repo, cpID)
 
 			var stdout, stderr bytes.Buffer
 			err := runExplainExport(context.Background(), &stdout, &stderr, tt.opts)
