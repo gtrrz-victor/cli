@@ -47,12 +47,8 @@ func TestEnsureRunnersPresent_CreatesDefaultsWhenEmpty(t *testing.T) {
 	repoRoot := t.TempDir()
 	var out, errOut bytes.Buffer
 
-	created, err := ensureRunnersPresent(&out, &errOut, repoRoot, true /* assumeYes */)
-	if err != nil {
+	if err := ensureRunnersPresent(&out, &errOut, repoRoot, true /* assumeYes */); err != nil {
 		t.Fatalf("ensureRunnersPresent: %v", err)
-	}
-	if !created {
-		t.Fatal("expected created=true for an empty repo")
 	}
 
 	written, err := filepath.Glob(filepath.Join(repoRoot, ".entire", "runners", "*.json"))
@@ -85,11 +81,15 @@ func TestEnsureRunnersPresent_NoopWhenRunnersExist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	created, err := ensureRunnersPresent(&bytes.Buffer{}, &bytes.Buffer{}, repoRoot, true)
-	if err != nil {
+	if err := ensureRunnersPresent(&bytes.Buffer{}, &bytes.Buffer{}, repoRoot, true); err != nil {
 		t.Fatalf("ensureRunnersPresent: %v", err)
 	}
-	if created {
-		t.Error("expected created=false when runners already exist")
+	// No defaults should have been scaffolded over the existing runner.
+	after, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Errorf("expected the existing single runner untouched, got %d files", len(after))
 	}
 }

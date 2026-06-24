@@ -91,7 +91,7 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 
 	// Onboarding: a repo with no runners yet gets the default set scaffolded
 	// (on confirmation), which tune then tailors below.
-	if _, err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes); err != nil {
+	if err := ensureRunnersPresent(w, errW, repoRoot, opts.assumeYes); err != nil {
 		return err
 	}
 

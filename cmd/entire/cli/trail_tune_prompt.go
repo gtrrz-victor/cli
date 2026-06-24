@@ -8,7 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
+
+// runnersDir is the canonical location of the trail runner configs for a repo.
+func runnersDir(repoRoot string) string {
+	return filepath.Join(repoRoot, paths.EntireDir, "runners")
+}
 
 // tuneRunner is one .entire/runners/*.json file loaded for tuning. Raw holds
 // the verbatim file bytes (used for surgical template replacement); Template is
@@ -25,7 +32,7 @@ type tuneRunner struct {
 // without the "trail-" prefix). Returns an error when the directory is missing
 // or the filter matches nothing.
 func loadTuneRunners(repoRoot, filter string) ([]tuneRunner, error) {
-	dir := filepath.Join(repoRoot, ".entire", "runners")
+	dir := runnersDir(repoRoot)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", dir, err)
