@@ -409,6 +409,10 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	if err != nil {
 		return nil, nil, err
 	}
+	untrackedFiles, err := strategy.CollectUntrackedFiles(ctx)
+	if err != nil {
+		untrackedFiles = nil
+	}
 
 	now := time.Now()
 	adopted := cloneAdoptSourceState(source)
@@ -443,7 +447,7 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.LastCheckpointCommitHash = ""
 
 	adopted.FullyCondensed = false
-	adopted.UntrackedFilesAtStart = nil
+	adopted.UntrackedFilesAtStart = untrackedFiles
 	adopted.PromptAttributions = nil
 	adopted.PendingPromptAttribution = nil
 	// Preserve cumulative turn/context metrics for the continuing agent session,

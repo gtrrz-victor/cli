@@ -624,6 +624,7 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 		TurnCheckpointIDs:           []string{"abc123def456"},
 		LastCheckpointID:            id.MustCheckpointID("abc123def456"),
 		LastCheckpointCommitHash:    "source-commit",
+		UntrackedFilesAtStart:       []string{"source-only.txt"},
 		PromptWindowBase:            3,
 		PromptWindowResetPending:    true,
 	}); err != nil {
@@ -632,6 +633,7 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 
 	testutil.WriteFile(t, targetRepo, targetRelPath, "package src\n")
 	testutil.GitAdd(t, targetRepo, targetRelPath)
+	testutil.WriteFile(t, targetRepo, "target-notes.txt", "user notes\n")
 	t.Chdir(targetRepo)
 
 	var out bytes.Buffer
@@ -689,6 +691,9 @@ func TestSessionAdopt_ResetsSourceCheckpointWindow(t *testing.T) {
 	}
 	if adopted.TurnID != "" {
 		t.Fatalf("TurnID = %q, want empty target-local turn ID", adopted.TurnID)
+	}
+	if len(adopted.UntrackedFilesAtStart) != 1 || adopted.UntrackedFilesAtStart[0] != "target-notes.txt" {
+		t.Fatalf("UntrackedFilesAtStart = %v, want target worktree snapshot [target-notes.txt]", adopted.UntrackedFilesAtStart)
 	}
 	if !adopted.LastCheckpointID.IsEmpty() {
 		t.Fatalf("LastCheckpointID = %s, want empty", adopted.LastCheckpointID.String())
