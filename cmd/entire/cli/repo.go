@@ -191,7 +191,7 @@ func newRepoDeleteCmd() *cobra.Command {
 				if err := c.DeleteRepo(ctx, coreapi.DeleteRepoParams{RepoId: repoID}); err != nil {
 					return err
 				}
-				cmd.Printf("Deleted repo %s\n", args[0])
+				cmd.Printf("Deleted repo %s\n", resolvedRefLabel(args[0], repoID))
 				return nil
 			})
 		},

@@ -386,3 +386,24 @@ func TestToProjectList(t *testing.T) {
 		}
 	})
 }
+
+func TestResolvedRefLabel(t *testing.T) {
+	t.Parallel()
+
+	const id = "01J0REPO000000000000000001"
+
+	t.Run("ulid passes through", func(t *testing.T) {
+		t.Parallel()
+		if got := resolvedRefLabel(id, id); got != id {
+			t.Errorf("got %q, want %q", got, id)
+		}
+	})
+
+	t.Run("name includes resolved id", func(t *testing.T) {
+		t.Parallel()
+		want := fmt.Sprintf("acme (%s)", id)
+		if got := resolvedRefLabel("acme", id); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}

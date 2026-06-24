@@ -186,7 +186,7 @@ func newProjectDeleteCmd() *cobra.Command {
 				if err := c.DeleteProject(ctx, coreapi.DeleteProjectParams{ProjectId: projID}); err != nil {
 					return err
 				}
-				cmd.Printf("Deleted project %s\n", args[0])
+				cmd.Printf("Deleted project %s\n", resolvedRefLabel(args[0], projID))
 				return nil
 			})
 		},

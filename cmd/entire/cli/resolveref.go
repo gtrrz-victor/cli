@@ -171,6 +171,17 @@ func noRepoNamedErr(name string) error {
 	return fmt.Errorf("no repo named %q in that project (run `entire repo list <project>` to see names, or pass a ULID)", name)
 }
 
+// resolvedRefLabel formats a reference for a success message so it always
+// names the resolved ULID. When the user passed a ULID (ref == id) it returns
+// the id alone; when they passed a name it returns "name (id)" so the message
+// is unambiguous in environments where names can be reused across orgs/projects.
+func resolvedRefLabel(ref, id string) string {
+	if ref == id {
+		return id
+	}
+	return fmt.Sprintf("%s (%s)", ref, id)
+}
+
 // toProjectList adapts a name-filtered project response — which returns the
 // single match under the response's singular `project` field — into a slice for
 // list output (empty when the field is unset).

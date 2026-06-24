@@ -107,7 +107,7 @@ func newOrgDeleteCmd() *cobra.Command {
 				if err := c.DeleteOrg(ctx, coreapi.DeleteOrgParams{OrgId: orgID}); err != nil {
 					return err
 				}
-				cmd.Printf("Deleted org %s\n", args[0])
+				cmd.Printf("Deleted org %s\n", resolvedRefLabel(args[0], orgID))
 				return nil
 			})
 		},
