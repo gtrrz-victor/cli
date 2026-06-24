@@ -13,7 +13,7 @@ import (
 )
 
 func TestWarnCheckpointPolicyIfNeeded(t *testing.T) {
-	_, _ = setupPolicyCheckpointRepo(t)
+	_, _ = setupCheckpointPolicyRepo(t)
 	repo, err := git.PlainOpen(".")
 	require.NoError(t, err)
 	t.Cleanup(func() {

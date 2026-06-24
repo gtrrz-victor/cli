@@ -10,20 +10,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type policyCheckpointOptions struct {
+type checkpointPolicyOptions struct {
 	version    string
 	minVersion string
 	force      bool
 }
 
-func newPolicyCheckpointCmd() *cobra.Command {
-	var opts policyCheckpointOptions
+func newCheckpointPolicyCmd() *cobra.Command {
+	var opts checkpointPolicyOptions
 	cmd := &cobra.Command{
-		Use:   "checkpoint",
-		Short: "Inspect and update checkpoint policy",
-		Args:  cobra.NoArgs,
+		Use:    "policy",
+		Short:  "Inspect and update checkpoint policy",
+		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runPolicyCheckpoint(cmd, opts)
+			return runCheckpointPolicy(cmd, opts)
 		},
 	}
 
@@ -33,40 +34,40 @@ func newPolicyCheckpointCmd() *cobra.Command {
 	return cmd
 }
 
-func runPolicyCheckpoint(cmd *cobra.Command, opts policyCheckpointOptions) error {
+func runCheckpointPolicy(cmd *cobra.Command, opts checkpointPolicyOptions) error {
 	ctx := cmd.Context()
 	if err := ctx.Err(); err != nil {
 		return NewSilentError(err)
 	}
 	repo, err := gitrepo.OpenCurrent(ctx)
 	if err != nil {
-		return policyCheckpointError("open repository", err)
+		return checkpointPolicyError("open repository", err)
 	}
 	defer repo.Close()
 
 	target, err := checkpointpolicy.ResolveTarget(ctx)
 	if err != nil {
-		return policyCheckpointError("resolve checkpoint policy remote", err)
+		return checkpointPolicyError("resolve checkpoint policy remote", err)
 	}
 
 	var state checkpointpolicy.State
-	if hasPolicyCheckpointUpdate(opts) {
+	if hasCheckpointPolicyUpdate(opts) {
 		state, err = checkpointpolicy.Update(ctx, repo, target, checkpointpolicy.UpdateOptions{
 			CheckpointVersion:    opts.version,
 			CheckpointMinVersion: opts.minVersion,
 			Force:                opts.force,
 		})
 		if err != nil {
-			return policyCheckpointError("update checkpoint policy", err)
+			return checkpointPolicyError("update checkpoint policy", err)
 		}
 		if err := checkpointpolicy.Push(ctx, target); err != nil {
-			return policyCheckpointError("push checkpoint policy", err)
+			return checkpointPolicyError("push checkpoint policy", err)
 		}
 		state.Source = checkpointpolicy.SourceRemote
 	} else {
 		state, err = checkpointpolicy.Sync(ctx, repo, target)
 		if err != nil {
-			return policyCheckpointError("sync checkpoint policy", err)
+			return checkpointPolicyError("sync checkpoint policy", err)
 		}
 	}
 
@@ -76,11 +77,11 @@ func runPolicyCheckpoint(cmd *cobra.Command, opts policyCheckpointOptions) error
 	return nil
 }
 
-func hasPolicyCheckpointUpdate(opts policyCheckpointOptions) bool {
+func hasCheckpointPolicyUpdate(opts checkpointPolicyOptions) bool {
 	return opts.version != "" || opts.minVersion != ""
 }
 
-func policyCheckpointError(message string, err error) error {
+func checkpointPolicyError(message string, err error) error {
 	wrapped := fmt.Errorf("%s: %w", message, err)
 	if errors.Is(wrapped, context.Canceled) {
 		return NewSilentError(wrapped)

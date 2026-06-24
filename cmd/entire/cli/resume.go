@@ -207,7 +207,7 @@ func resumeByCheckpointID(ctx context.Context, w, errW io.Writer, checkpointID i
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
 		promoteRemoteTrackingPrimary(ctx, repo, refs)
@@ -278,7 +278,7 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 
 	refs := stores.Refs()
 	if refs.ReadBootstrappableFromOrigin() {
@@ -293,16 +293,16 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 		}
 		if !found {
 			// No metadata available — nothing to resume from
-			logging.Warn(logCtx, "resolveLatestCheckpoint failed",
+			logging.Warn(logCtx, "no checkpoint metadata resolved",
 				slog.Int("checkpoint_count", len(result.checkpointIDs)),
 			)
 			fmt.Fprintf(w, "Found %d checkpoints for commit %s but metadata is not available\n",
 				len(result.checkpointIDs), result.commitHash[:7])
 			return checkRemoteMetadata(ctx, w, errW, result.checkpointIDs[0], stores.Refs())
 		}
-		skipped := len(result.checkpointIDs) - 1
-		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest (%d older checkpoints skipped)\n",
-			len(result.checkpointIDs), result.commitHash[:7], skipped)
+		olderSkipped := len(result.checkpointIDs) - 1
+		fmt.Fprintf(w, "Found %d checkpoints for commit %s, resuming from the latest checkpoint (%d older checkpoint(s) skipped)\n",
+			len(result.checkpointIDs), result.commitHash[:7], olderSkipped)
 		checkpointID = latestMetadata.CheckpointID
 		metadata = latestMetadata
 	}
@@ -336,50 +336,40 @@ func resumeFromCurrentBranch(ctx context.Context, w, errW io.Writer, branchName 
 	return resumeSession(ctx, w, errW, metadata, force)
 }
 
-// resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
-// the checkpoint with the latest CreatedAt.
+// resolveLatestCheckpoint reads metadata for each checkpoint ID and returns the
+// checkpoint with the latest CreatedAt.
 func resolveLatestCheckpoint(ctx context.Context, store checkpointInfoReader, checkpointIDs []id.CheckpointID) (*strategy.CheckpointInfo, bool, error) {
 	infoMap := make(map[id.CheckpointID]strategy.CheckpointInfo, len(checkpointIDs))
-	var unsupportedErr error
 	for _, cpID := range checkpointIDs {
 		metadata, readErr := readCheckpointInfoFromStore(ctx, store, cpID)
 		if readErr != nil {
-			if checkpointpolicy.IsUnsupportedVersion(readErr) {
-				if unsupportedErr == nil {
-					unsupportedErr = readErr
-				}
-				continue
-			}
 			logging.Debug(ctx, "resolveLatestCheckpoint: checkpoint metadata read failed",
 				slog.String("checkpoint_id", cpID.String()),
 				slog.String("error", readErr.Error()),
 			)
-			continue
+			return nil, false, readErr
 		}
 		infoMap[cpID] = *metadata
 	}
 	latest, found := strategy.ResolveLatestCheckpointFromMap(checkpointIDs, infoMap)
 	if !found {
-		if unsupportedErr != nil {
-			return nil, false, unsupportedErr
-		}
 		return nil, false, nil
 	}
 	return &latest, true, nil
 }
 
 type checkpointInfoReader interface {
-	checkpoint.CommittedReader
-	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.CommittedMetadata, error)
+	checkpoint.CheckpointReader
+	ReadSessionMetadata(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*checkpoint.Metadata, error)
 }
 
 func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader, checkpointID id.CheckpointID) (*strategy.CheckpointInfo, error) {
-	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, store, checkpointID)
+	summary, err := checkpoint.ReadCheckpoint(ctx, store, checkpointID)
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion); err != nil {
-		return nil, fmt.Errorf("check checkpoint version: %w", err)
+		return nil, fmt.Errorf("%w", err)
 	}
 	info := &strategy.CheckpointInfo{
 		CheckpointID:     checkpointID,
@@ -415,14 +405,14 @@ func readCheckpointInfoFromStore(ctx context.Context, store checkpointInfoReader
 func readCheckpointInfoFromRef(
 	ctx context.Context,
 	repo *git.Repository,
-	refs checkpoint.CommittedRefs,
+	refs checkpoint.PersistentRefs,
 	checkpointID id.CheckpointID,
 ) (*strategy.CheckpointInfo, error) {
 	stores, err := checkpoint.Open(ctx, repo, checkpoint.OpenOptions{Refs: &refs, BlobFetcher: FetchBlobsByHash})
 	if err != nil {
 		return nil, fmt.Errorf("open checkpoint store: %w", err)
 	}
-	return readCheckpointInfoFromStore(ctx, stores.Primary, checkpointID)
+	return readCheckpointInfoFromStore(ctx, stores.Persistent, checkpointID)
 }
 
 // getMetadataTree returns the metadata branch tree and a fresh repo handle.
@@ -434,7 +424,7 @@ func readCheckpointInfoFromRef(
 func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error) {
 	logCtx := logging.WithComponent(ctx, "resume.getMetadataTree")
 
-	refs := checkpoint.ResolveCommittedRefs(ctx)
+	refs := checkpoint.ResolveRefs(ctx)
 
 	// Helper to log ref hash for a repo's primary metadata ref
 	logRefHash := func(repo *git.Repository, source string) {
@@ -717,7 +707,7 @@ func checkRemoteMetadata(
 	ctx context.Context,
 	w, errW io.Writer,
 	checkpointID id.CheckpointID,
-	refs checkpoint.CommittedRefs,
+	refs checkpoint.PersistentRefs,
 ) error {
 	logCtx := logging.WithComponent(ctx, "resume.checkRemoteMetadata")
 
@@ -740,6 +730,7 @@ func checkRemoteMetadata(
 
 	// Resolve checkpoint remote URL once; reuse for both fetch and error message.
 	hasCheckpointRemote := remote.Configured(ctx)
+	var unsupportedVersionErr error
 
 	// Try checkpoint_remote first if configured and resolved (that's where checkpoints are stored)
 	var checkpointURL string
@@ -757,6 +748,9 @@ func checkRemoteMetadata(
 					defer freshRepo.Close()
 					metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, refs, checkpointID)
 					if err != nil {
+						if checkpointpolicy.IsUnsupportedVersion(err) {
+							unsupportedVersionErr = err
+						}
 						logging.Debug(logCtx, "checkpoint remote: fetch succeeded but checkpoint metadata read failed",
 							slog.String("checkpoint_id", checkpointID.String()),
 							slog.String("error", err.Error()),
@@ -779,6 +773,9 @@ func checkRemoteMetadata(
 	if metadataErr == nil {
 		return resumeSession(ctx, w, errW, metadata, false)
 	}
+	if checkpointpolicy.IsUnsupportedVersion(metadataErr) {
+		unsupportedVersionErr = metadataErr
+	}
 	logging.Debug(logCtx, "remote-tracking metadata read failed",
 		slog.String("checkpoint_id", checkpointID.String()),
 		slog.String("error", metadataErr.Error()),
@@ -794,6 +791,9 @@ func checkRemoteMetadata(
 			defer freshRepo.Close()
 			metadata, err := readCheckpointInfoFromRef(ctx, freshRepo, refs, checkpointID)
 			if err != nil {
+				if checkpointpolicy.IsUnsupportedVersion(err) && unsupportedVersionErr == nil {
+					unsupportedVersionErr = err
+				}
 				logging.Debug(logCtx, "origin metadata fetch succeeded but checkpoint metadata read failed",
 					slog.String("checkpoint_id", checkpointID.String()),
 					slog.String("error", err.Error()),
@@ -806,6 +806,9 @@ func checkRemoteMetadata(
 		logging.Debug(logCtx, "origin metadata fetch failed",
 			slog.String("error", fetchErr.Error()),
 		)
+	}
+	if unsupportedVersionErr != nil {
+		return unsupportedVersionErr
 	}
 
 	// Nothing worked — print helpful error message
@@ -830,7 +833,7 @@ func checkRemoteMetadata(
 // the committed-checkpoint store only falls back to origin/... when the local
 // ref is *missing*, not when it's behind. No-op when Primary isn't in Push
 // (no remote-tracking ref exists).
-func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.CommittedRefs) {
+func promoteRemoteTrackingPrimary(ctx context.Context, repo *git.Repository, refs checkpoint.PersistentRefs) {
 	if !refs.PrimaryFetchableFromOrigin() {
 		return
 	}
@@ -964,13 +967,13 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, stores.Primary, checkpointID)
+	summary, err := checkpoint.ReadCheckpoint(ctx, stores.Persistent, checkpointID)
 	if err == nil {
 		err = checkpointpolicy.EnsureCanReadVersion(checkpointID.String(), summary.CheckpointVersion)
 	}
-	var content *checkpoint.SessionContent
+	var logContent []byte
 	if err == nil {
-		content, err = checkpoint.ReadLatestSessionContent(ctx, stores.Primary, checkpointID, summary)
+		logContent, _, err = checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Persistent, checkpointID)
 	}
 	if err != nil {
 		if errors.Is(err, checkpoint.ErrCheckpointNotFound) || errors.Is(err, checkpoint.ErrNoTranscript) {
@@ -990,7 +993,6 @@ func resumeSingleSession(ctx context.Context, w, _ io.Writer, ag agent.Agent, se
 		)
 		return fmt.Errorf("failed to get session log: %w", err)
 	}
-	logContent := content.Transcript
 
 	// By default, never overwrite a session log that already exists locally: the
 	// on-disk transcript is the live session the user is resuming, so we keep it

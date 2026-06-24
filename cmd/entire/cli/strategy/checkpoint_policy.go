@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -13,19 +14,21 @@ import (
 	"github.com/go-git/go-git/v6"
 )
 
-func committedCheckpointWriteAllowed(ctx context.Context, repo *git.Repository) bool {
+var errCommittedCheckpointWriteBlocked = errors.New("checkpoint write blocked by policy")
+
+func checkCommittedCheckpointWritePolicy(ctx context.Context, repo *git.Repository) error {
 	state, err := checkpointpolicy.ReadLocal(ctx, repo)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint policy read failed; allowing checkpoint write",
 			slog.String("error", err.Error()),
 		)
-		return true
+		return nil
 	}
 	if !checkpointpolicy.UnsupportedWrite(state.Policy) {
-		return true
+		return nil
 	}
 	warnOrLogUnsupportedCheckpointWrite(ctx, state.Policy)
-	return false
+	return errCommittedCheckpointWriteBlocked
 }
 
 func syncCheckpointPolicyForPrePush(ctx context.Context) bool {

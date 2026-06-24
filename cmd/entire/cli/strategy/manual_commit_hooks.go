@@ -1066,9 +1066,9 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 	if err != nil {
 		return fmt.Errorf("open checkpoint store: %w", err)
 	}
-	store := stores.Primary
+	store := stores.Persistent
 
-	summary, err := store.ReadCommitted(ctx, checkpointID)
+	summary, err := store.Read(ctx, checkpointID)
 	if err != nil {
 		return fmt.Errorf("reading checkpoint summary: %w", err)
 	}
@@ -1138,7 +1138,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		agentPercentage = float64(agentAdded+agentRemoved) / float64(totalLinesChanged) * 100
 	}
 
-	combined := &checkpoint.InitialAttribution{
+	combined := &checkpoint.Attribution{
 		CalculatedAt:      time.Now().UTC(),
 		AgentLines:        agentAdded,
 		AgentRemoved:      agentRemoved,
@@ -1159,7 +1159,7 @@ func (s *ManualCommitStrategy) updateCombinedAttributionForCheckpoint(
 		slog.Float64("agent_percentage", agentPercentage),
 	)
 
-	if err := store.Write(ctx, checkpoint.BackfillAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
+	if err := store.Write(ctx, checkpoint.CheckpointAttribution{CheckpointID: checkpointID, Attribution: combined}); err != nil {
 		return fmt.Errorf("persisting combined attribution: %w", err)
 	}
 
@@ -2785,9 +2785,8 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 	defer repo.Close()
-	if !committedCheckpointWriteAllowed(ctx, repo) {
-		state.TurnCheckpointIDs = nil
-		return 0
+	if err := checkCommittedCheckpointWritePolicy(ctx, repo); err != nil {
+		return 1
 	}
 
 	prompts := readPromptsFromShadowBranch(ctx, repo, state)
@@ -2831,7 +2830,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		)
 		return 1 // Count as error - all checkpoints will be skipped
 	}
-	store := stores.Primary
+	store := stores.Persistent
 
 	precomputed := precomputeTranscriptBlobsForFinalize(logCtx, repo, redactedTranscript, state)
 
@@ -2847,7 +2846,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			continue
 		}
 
-		updateOpts := checkpoint.UpdateCommittedOptions{
+		updateOpts := checkpoint.UpdateOptions{
 			CheckpointID:     cpID,
 			SessionID:        state.SessionID,
 			Transcript:       redactedTranscript,
@@ -2857,7 +2856,7 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			PrecomputedBlobs: precomputed,
 		}
 
-		updateErr := store.Write(ctx, checkpoint.BackfillTranscript(updateOpts))
+		updateErr := store.Write(ctx, checkpoint.SessionTranscript(updateOpts))
 		if updateErr != nil {
 			logging.Warn(logCtx, "finalize: failed to update checkpoint",
 				slog.String("checkpoint_id", cpIDStr),
@@ -2956,7 +2955,7 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 	// Including the transcript would cause sessionHasNewContent to always return true
 	// because CheckpointTranscriptStart is reset to 0 for carry-forward.
 	writeCtx, carryForwardWriteSpan := perf.Start(ctx, "write_carry_forward_shadow")
-	result, err := stores.Temporary().WriteTemporary(writeCtx, checkpoint.WriteTemporaryOptions{
+	result, err := stores.Ephemeral().Write(writeCtx, checkpoint.Step{
 		SessionID:         state.SessionID,
 		BaseCommit:        state.BaseCommit,
 		WorktreeID:        state.WorktreeID,

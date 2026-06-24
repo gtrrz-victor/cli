@@ -729,22 +729,19 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 	if err != nil {
 		return "", fmt.Errorf("open checkpoint store: %w", err)
 	}
-	summary, err := checkpoint.ReadCommittedCheckpoint(ctx, stores.Primary, cpID)
+	summary, err := checkpoint.ReadCheckpoint(ctx, stores.Persistent, cpID)
 	if err != nil {
 		return "", fmt.Errorf("failed to read checkpoint: %w", err)
 	}
 	if err := checkpointpolicy.EnsureCanReadVersion(cpID.String(), summary.CheckpointVersion); err != nil {
-		return "", fmt.Errorf("check checkpoint version: %w", err)
+		return "", fmt.Errorf("%w", err)
 	}
 
-	content, err := checkpoint.ReadLatestSessionContent(ctx, stores.Primary, cpID, summary)
+	logContent, returnedSessionID, err := checkpoint.ReadRawSessionLogForCheckpoint(ctx, stores.Persistent, cpID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get session log: %w", err)
 	}
 
-	// Use session ID returned from checkpoint if available
-	// Otherwise fall back to the passed-in sessionID
-	returnedSessionID := content.Metadata.SessionID
 	if returnedSessionID != "" {
 		sessionID = returnedSessionID
 	}
@@ -760,7 +757,7 @@ func restoreSessionTranscriptFromStrategy(ctx context.Context, cpID id.Checkpoin
 		SessionID:  sessionID,
 		AgentName:  agent.Name(),
 		SessionRef: sessionFile,
-		NativeData: content.Transcript,
+		NativeData: logContent,
 	}
 	if err := agent.WriteSession(ctx, agentSession); err != nil {
 		return "", fmt.Errorf("failed to write session: %w", err)
@@ -789,7 +786,7 @@ func restoreSessionTranscriptFromShadow(ctx context.Context, commitHash, metadat
 	if err != nil {
 		return "", fmt.Errorf("open checkpoint store: %w", err)
 	}
-	content, err := stores.Temporary().GetTranscriptFromCommit(ctx, hash, metadataDir, agent.Type())
+	content, err := stores.Ephemeral().GetTranscriptFromCommit(ctx, hash, metadataDir, agent.Type())
 	if err != nil {
 		return "", fmt.Errorf("failed to get transcript from shadow branch: %w", err)
 	}

@@ -74,7 +74,18 @@ func Sync(ctx context.Context, repo *git.Repository, target Target) (State, erro
 		return baseline, nil
 	}
 
-	if local.Hash.IsZero() || isAncestorOf(ctx, repo, local.Hash, baseline.Hash) {
+	if local.Hash.IsZero() {
+		if err := SetRef(repo, RefName, baseline.Hash); err != nil {
+			return State{}, err
+		}
+		baseline.Source = SourceRemote
+		return baseline, nil
+	}
+	localAncestor, err := isAncestorOf(ctx, repo, local.Hash, baseline.Hash)
+	if err != nil {
+		return State{}, err
+	}
+	if localAncestor {
 		if err := SetRef(repo, RefName, baseline.Hash); err != nil {
 			return State{}, err
 		}
@@ -106,7 +117,6 @@ func remoteBaseline(ctx context.Context, repo *git.Repository, target Target, lo
 		return State{}, false, err
 	}
 	fetched.RemoteHash = remoteState.Hash
-	defer removeFetchRef(repo)
 	return fetched, true, nil
 }
 
@@ -153,6 +163,7 @@ func fetchRemotePolicy(ctx context.Context, repo *git.Repository, target Target)
 	}); err != nil {
 		return State{}, fmt.Errorf("fetch checkpoint policy ref: %w", err)
 	}
+	defer removeFetchRef(repo)
 	return ReadFromRef(ctx, repo, fetchRefName, SourceRemote)
 }
 
@@ -162,21 +173,21 @@ func removeFetchRef(repo *git.Repository) {
 	}
 }
 
-func isAncestorOf(ctx context.Context, repo *git.Repository, ancestor, target plumbing.Hash) bool {
+func isAncestorOf(ctx context.Context, repo *git.Repository, ancestor, target plumbing.Hash) (bool, error) {
 	if ancestor == target {
-		return true
+		return true, nil
 	}
 
 	iter, err := repo.Log(&git.LogOptions{From: target})
 	if err != nil {
-		return false
+		return false, fmt.Errorf("open checkpoint policy ancestry: %w", err)
 	}
 	defer iter.Close()
 
 	found := false
 	err = iter.ForEach(func(commit *object.Commit) error {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("traverse checkpoint policy ancestry: %w", err)
+			return fmt.Errorf("checkpoint policy ancestry context: %w", err)
 		}
 		if commit.Hash == ancestor {
 			found = true
@@ -185,7 +196,7 @@ func isAncestorOf(ctx context.Context, repo *git.Repository, ancestor, target pl
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStopTraversal) {
-		return false
+		return false, fmt.Errorf("traverse checkpoint policy ancestry: %w", err)
 	}
-	return found
+	return found, nil
 }

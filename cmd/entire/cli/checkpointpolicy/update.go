@@ -59,10 +59,21 @@ func updateBaseline(ctx context.Context, repo *git.Repository, target Target) (S
 	if !remoteFound || local.Hash == baseline.Hash {
 		return baseline, nil
 	}
-	if local.Hash.IsZero() || isAncestorOf(ctx, repo, local.Hash, baseline.Hash) {
+	if local.Hash.IsZero() {
 		return baseline, nil
 	}
-	if isAncestorOf(ctx, repo, baseline.Hash, local.Hash) {
+	localAncestor, err := isAncestorOf(ctx, repo, local.Hash, baseline.Hash)
+	if err != nil {
+		return State{}, err
+	}
+	if localAncestor {
+		return baseline, nil
+	}
+	baselineAncestor, err := isAncestorOf(ctx, repo, baseline.Hash, local.Hash)
+	if err != nil {
+		return State{}, err
+	}
+	if baselineAncestor {
 		local.RemoteHash = baseline.RemoteHash
 		return local, nil
 	}

@@ -17,17 +17,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPolicyCheckpointCmd_PrintsDefaults(t *testing.T) {
-	_, _ = setupPolicyCheckpointRepo(t)
+func TestCheckpointPolicyCmd_PrintsDefaults(t *testing.T) {
+	_, _ = setupCheckpointPolicyRepo(t)
 
-	stdout, err := executePolicyCheckpointCmd(t)
+	stdout, err := executeCheckpointPolicyCmd(t)
 	require.NoError(t, err)
 	require.Contains(t, stdout, "checkpoint_version: branch-v1")
 	require.Contains(t, stdout, "checkpoint_min_version: branch-v1")
 	require.Contains(t, stdout, "source: defaults")
 }
 
-func TestPolicyCheckpointCmd_RejectsUnsupportedVersion(t *testing.T) {
+func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
@@ -39,33 +39,33 @@ func TestPolicyCheckpointCmd_RejectsUnsupportedVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _ = setupPolicyCheckpointRepo(t)
+			_, _ = setupCheckpointPolicyRepo(t)
 
-			_, err := executePolicyCheckpointCmd(t, tt.args...)
+			_, err := executeCheckpointPolicyCmd(t, tt.args...)
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
 
-func TestPolicyCheckpointCmd_RejectsDowngradeWithoutForce(t *testing.T) {
-	dir, bareDir := setupPolicyCheckpointRepo(t)
-	seedPolicyForCheckpointCommand(t, dir, checkpointpolicy.Policy{
+func TestCheckpointPolicyCmd_RejectsDowngradeWithoutForce(t *testing.T) {
+	dir, bareDir := setupCheckpointPolicyRepo(t)
+	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.Policy{
 		CheckpointVersion:    "refs-v1",
 		CheckpointMinVersion: "refs-v1",
 	})
 	pushCheckpointPolicyRefForCommandTest(t, dir, bareDir)
 
-	_, err := executePolicyCheckpointCmd(t, "--checkpoint-version", "branch-v1", "--checkpoint-min-version", "branch-v1")
+	_, err := executeCheckpointPolicyCmd(t, "--checkpoint-version", "branch-v1", "--checkpoint-min-version", "branch-v1")
 	require.ErrorContains(t, err, "would downgrade checkpoint_version")
 }
 
-func TestPolicyCheckpointCmd_UpdatesAndPushesOnlyPolicyRef(t *testing.T) {
-	dir, bareDir := setupPolicyCheckpointRepo(t)
+func TestCheckpointPolicyCmd_UpdatesAndPushesOnlyPolicyRef(t *testing.T) {
+	dir, bareDir := setupCheckpointPolicyRepo(t)
 	testutil.WriteFile(t, dir, "README.md", "hello\n")
 	testutil.GitAdd(t, dir, "README.md")
 	testutil.GitCommit(t, dir, "init")
 
-	stdout, err := executePolicyCheckpointCmd(t, "--checkpoint-version", "branch-v1", "--checkpoint-min-version", "branch-v1")
+	stdout, err := executeCheckpointPolicyCmd(t, "--checkpoint-version", "branch-v1", "--checkpoint-min-version", "branch-v1")
 	require.NoError(t, err)
 	require.Contains(t, stdout, "checkpoint_version: branch-v1")
 	require.Contains(t, stdout, "checkpoint_min_version: branch-v1")
@@ -74,16 +74,16 @@ func TestPolicyCheckpointCmd_UpdatesAndPushesOnlyPolicyRef(t *testing.T) {
 	remoteHash := checkpointPolicyRemoteHashForCommandTest(t, dir, bareDir)
 	require.False(t, remoteHash.IsZero())
 
-	repo := openPolicyCheckpointRepoForCommandTest(t, dir)
+	repo := openCheckpointPolicyRepoForCommandTest(t, dir)
 	localState, err := checkpointpolicy.ReadLocal(t.Context(), repo)
 	require.NoError(t, err)
 	require.Equal(t, remoteHash, localState.Hash)
 
-	branches := runPolicyCheckpointGit(t, dir, "ls-remote", bareDir, "refs/heads/*")
+	branches := runCheckpointPolicyGit(t, dir, "ls-remote", bareDir, "refs/heads/*")
 	require.Empty(t, strings.TrimSpace(branches))
 }
 
-func TestPolicyCheckpointCmd_SilencesContextCanceled(t *testing.T) {
+func TestCheckpointPolicyCmd_SilencesContextCanceled(t *testing.T) {
 	cmd := &cobra.Command{}
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -92,21 +92,21 @@ func TestPolicyCheckpointCmd_SilencesContextCanceled(t *testing.T) {
 	cancel()
 	cmd.SetContext(ctx)
 
-	err := runPolicyCheckpoint(cmd, policyCheckpointOptions{})
+	err := runCheckpointPolicy(cmd, checkpointPolicyOptions{})
 	require.ErrorIs(t, err, context.Canceled)
 	var silent *SilentError
 	require.ErrorAs(t, err, &silent, "error = %T %v, want SilentError", err, err)
 	require.Empty(t, stderr.String())
 }
 
-func TestPolicyCheckpointErrorSilencesWrappedContextCanceled(t *testing.T) {
-	err := policyCheckpointError("sync checkpoint policy", fmt.Errorf("remote: %w", context.Canceled))
+func TestCheckpointPolicyErrorSilencesWrappedContextCanceled(t *testing.T) {
+	err := checkpointPolicyError("sync checkpoint policy", fmt.Errorf("remote: %w", context.Canceled))
 	require.ErrorIs(t, err, context.Canceled)
 	var silent *SilentError
 	require.ErrorAs(t, err, &silent, "error = %T %v, want SilentError", err, err)
 }
 
-func setupPolicyCheckpointRepo(t *testing.T) (string, string) {
+func setupCheckpointPolicyRepo(t *testing.T) (string, string) {
 	t.Helper()
 	testutil.IsolateGitConfigEnv(t)
 	dir := setupTestDir(t)
@@ -115,17 +115,17 @@ func setupPolicyCheckpointRepo(t *testing.T) (string, string) {
 	bareDir := filepath.Join(t.TempDir(), "remote.git")
 	_, err := git.PlainInit(bareDir, true)
 	require.NoError(t, err)
-	runPolicyCheckpointGit(t, dir, "remote", "add", "origin", bareDir)
+	runCheckpointPolicyGit(t, dir, "remote", "add", "origin", bareDir)
 	return dir, bareDir
 }
 
-func executePolicyCheckpointCmd(t *testing.T, args ...string) (string, error) {
+func executeCheckpointPolicyCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := newPolicyCmd()
+	cmd := newCheckpointGroupCmd()
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
-	cmd.SetArgs(append([]string{"checkpoint"}, args...))
+	cmd.SetArgs(append([]string{"policy"}, args...))
 	cmd.SetContext(t.Context())
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
@@ -133,15 +133,15 @@ func executePolicyCheckpointCmd(t *testing.T, args ...string) (string, error) {
 	return stdout.String(), err
 }
 
-func seedPolicyForCheckpointCommand(t *testing.T, dir string, policy checkpointpolicy.Policy) plumbing.Hash {
+func seedCheckpointPolicyForCommand(t *testing.T, dir string, policy checkpointpolicy.Policy) plumbing.Hash {
 	t.Helper()
-	repo := openPolicyCheckpointRepoForCommandTest(t, dir)
+	repo := openCheckpointPolicyRepoForCommandTest(t, dir)
 	hash, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, policy)
 	require.NoError(t, err)
 	return hash
 }
 
-func openPolicyCheckpointRepoForCommandTest(t *testing.T, dir string) *git.Repository {
+func openCheckpointPolicyRepoForCommandTest(t *testing.T, dir string) *git.Repository {
 	t.Helper()
 	repo, err := git.PlainOpen(dir)
 	require.NoError(t, err)
@@ -154,18 +154,18 @@ func openPolicyCheckpointRepoForCommandTest(t *testing.T, dir string) *git.Repos
 func pushCheckpointPolicyRefForCommandTest(t *testing.T, dir, remote string) {
 	t.Helper()
 	refspec := checkpointpolicy.RefName.String() + ":" + checkpointpolicy.RefName.String()
-	runPolicyCheckpointGit(t, dir, "push", remote, refspec)
+	runCheckpointPolicyGit(t, dir, "push", remote, refspec)
 }
 
 func checkpointPolicyRemoteHashForCommandTest(t *testing.T, dir, remote string) plumbing.Hash {
 	t.Helper()
-	output := runPolicyCheckpointGit(t, dir, "ls-remote", remote, checkpointpolicy.RefName.String())
+	output := runCheckpointPolicyGit(t, dir, "ls-remote", remote, checkpointpolicy.RefName.String())
 	fields := strings.Fields(output)
 	require.NotEmpty(t, fields, "missing remote checkpoint policy ref")
 	return plumbing.NewHash(fields[0])
 }
 
-func runPolicyCheckpointGit(t *testing.T, dir string, args ...string) string {
+func runCheckpointPolicyGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir

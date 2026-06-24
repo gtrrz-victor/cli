@@ -234,25 +234,25 @@ func TestCheckpointSearchIsVisibleButTopLevelSearchIsHidden(t *testing.T) {
 	}
 }
 
-func TestPolicyCommandIsHiddenDuringDevelopment(t *testing.T) {
+func TestCheckpointPolicyCommandIsHiddenDuringDevelopment(t *testing.T) {
 	t.Parallel()
 
 	root := NewRootCmd()
 
-	policy, _, err := root.Find([]string{"policy"})
+	checkpointPolicy, remaining, err := root.Find([]string{"checkpoint", "policy"})
 	if err != nil {
-		t.Fatalf("find policy command: %v", err)
+		t.Fatalf("find checkpoint policy command: %v", err)
 	}
-	if !policy.Hidden {
-		t.Fatal("policy command should be hidden while it is in active development")
+	if len(remaining) != 0 || checkpointPolicy.Use != "policy" {
+		t.Fatalf("checkpoint policy resolved to %q with remaining args %v", checkpointPolicy.Use, remaining)
+	}
+	if !checkpointPolicy.Hidden {
+		t.Fatal("checkpoint policy should be hidden while it is in active development")
 	}
 
-	checkpointPolicy, _, err := root.Find([]string{"policy", "checkpoint"})
-	if err != nil {
-		t.Fatalf("find policy checkpoint command: %v", err)
-	}
-	if checkpointPolicy.Hidden {
-		t.Fatal("policy checkpoint should remain invokable through the hidden policy group")
+	topLevelPolicy, remaining, err := root.Find([]string{"policy"})
+	if err == nil && len(remaining) == 0 && topLevelPolicy.Use == "policy" {
+		t.Fatal("top-level policy command should not remain after moving policy under checkpoint")
 	}
 }
 
