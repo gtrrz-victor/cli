@@ -82,16 +82,19 @@ func TestValidateTrailResumeOptions(t *testing.T) {
 	}
 }
 
-func TestKnownTrailResumeSessionsForContextTreatsDiscoveryErrorAsEmpty(t *testing.T) {
+func TestKnownTrailResumeSessionsForContextTreatsDiscoveryErrorAsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	sessions := []trailResumeSessionContext{{
 		SessionID:    "known-session",
 		CheckpointID: "abc123def456",
 	}}
-	got := knownTrailResumeSessionsForContext(sessions, errors.New("branch not found locally or on origin"))
+	got, unavailable := knownTrailResumeSessionsForContext(sessions, errors.New("branch not found locally or on origin"))
 	if len(got) != 0 {
 		t.Fatalf("knownTrailResumeSessionsForContext() len = %d, want 0: %#v", len(got), got)
+	}
+	if unavailable != "branch not found locally or on origin" {
+		t.Fatalf("unavailable = %q", unavailable)
 	}
 }
 
@@ -121,7 +124,7 @@ func TestBuildTrailResumeContextSortsCheckpointSessions(t *testing.T) {
 			LastActive:   now,
 			CheckpointID: "aaaaaaaaaaaa",
 		},
-	}, trailResumeFindingsContext{})
+	}, "", trailResumeFindingsContext{})
 
 	if len(ctx.Sessions) != 2 {
 		t.Fatalf("sessions len = %d, want 2: %#v", len(ctx.Sessions), ctx.Sessions)
@@ -303,6 +306,34 @@ func TestPrintTrailResumeContextIncludesSessionsFindingsAndCommands(t *testing.T
 	}
 }
 
+func TestPrintTrailResumeContextShowsUnavailableSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{
+			Number: 575,
+			Title:  "Add trail resume",
+			Branch: "feature/trail-resume",
+		},
+		SessionsUnavailable: "fetch checkpoint blob: object not found",
+	}
+
+	var out strings.Builder
+	printTrailResumeContext(&out, ctx)
+	text := out.String()
+	for _, want := range []string{
+		"Checkpoint sessions:",
+		"unavailable before restore: fetch checkpoint blob: object not found",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("context output missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "none found before restore") {
+		t.Fatalf("context output reported empty sessions instead of unavailable sessions:\n%s", text)
+	}
+}
+
 func TestEncodeTrailResumeContextJSON(t *testing.T) {
 	t.Parallel()
 
@@ -313,6 +344,7 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 			SessionID:    "session-1",
 			CheckpointID: "aaaaaaaaaaaa",
 		}},
+		SessionsUnavailable: "checkpoint store unavailable",
 		Findings: trailResumeFindingsContext{
 			Counts: trailReviewCommentCounts{Open: 1, OpenHigh: 1},
 			Top: []api.TrailReviewComment{{
@@ -338,7 +370,8 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 		Sessions []struct {
 			SessionID string `json:"session_id"`
 		} `json:"sessions"`
-		DefaultResume struct {
+		SessionsUnavailable string `json:"sessions_unavailable"`
+		DefaultResume       struct {
 			SessionID string `json:"session_id"`
 		} `json:"default_resume"`
 		FindingsSummary struct {
@@ -358,6 +391,9 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 	}
 	if len(decoded.Sessions) != 1 || decoded.Sessions[0].SessionID != "session-1" {
 		t.Fatalf("decoded sessions = %#v", decoded.Sessions)
+	}
+	if decoded.SessionsUnavailable != "checkpoint store unavailable" {
+		t.Fatalf("decoded sessions_unavailable = %q", decoded.SessionsUnavailable)
 	}
 	if decoded.DefaultResume.SessionID != "session-1" {
 		t.Fatalf("decoded default_resume = %#v", decoded.DefaultResume)
