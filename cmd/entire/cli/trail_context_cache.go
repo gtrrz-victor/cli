@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	trailEnablementCacheTTL       = time.Hour
-	trailEnablementRefreshTimeout = 3 * time.Second
+	trailEnablementCacheTTL                   = time.Hour
+	trailEnablementSessionStartRefreshTimeout = time.Second
+	trailEnablementRefreshTimeout             = 3 * time.Second
 )
 
 type trailEnablementCacheStatus int

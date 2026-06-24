@@ -147,7 +147,7 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 	}
 
 	// Refresh before the TurnStart prompt path.
-	refreshCtx, refreshCancel := context.WithTimeout(ctx, trailEnablementRefreshTimeout)
+	refreshCtx, refreshCancel := context.WithTimeout(ctx, trailEnablementSessionStartRefreshTimeout)
 	if refreshErr := refreshTrailsEnabledCacheIfStale(refreshCtx); refreshErr != nil {
 		logging.Debug(logCtx, "trails enablement refresh skipped",
 			slog.String("error", refreshErr.Error()))
