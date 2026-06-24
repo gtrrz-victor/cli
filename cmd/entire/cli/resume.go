@@ -987,7 +987,7 @@ func restoreSingleSession(ctx context.Context, w io.Writer, ag agent.Agent, sess
 		logging.Debug(ctx, "resume session: empty checkpoint ID",
 			slog.String("checkpoint_id", checkpointID.String()),
 		)
-		return unavailableSessionLogResult(w, restored, sessionLogPath, force)
+		return unavailableSessionLogResult(w, ag, restored, sessionLogPath, force)
 	}
 
 	repo, repoErr := openRepository(ctx)
@@ -1006,7 +1006,7 @@ func restoreSingleSession(ctx context.Context, w io.Writer, ag agent.Agent, sess
 				slog.String("checkpoint_id", checkpointID.String()),
 				slog.String("session_id", sessionID),
 			)
-			return unavailableSessionLogResult(w, restored, sessionLogPath, force)
+			return unavailableSessionLogResult(w, ag, restored, sessionLogPath, force)
 		}
 		logging.Error(ctx, "resume session failed",
 			slog.String("checkpoint_id", checkpointID.String()),
@@ -1060,7 +1060,7 @@ func restoreSingleSession(ctx context.Context, w io.Writer, ag agent.Agent, sess
 	return restored, true, nil
 }
 
-func unavailableSessionLogResult(w io.Writer, restored strategy.RestoredSession, sessionLogPath string, force bool) (strategy.RestoredSession, bool, error) {
+func unavailableSessionLogResult(w io.Writer, ag agent.Agent, restored strategy.RestoredSession, sessionLogPath string, force bool) (strategy.RestoredSession, bool, error) {
 	if _, statErr := os.Stat(sessionLogPath); statErr == nil {
 		if force {
 			fmt.Fprintf(w, "Checkpoint session log for '%s' not available; keeping existing local session log.\n", restored.SessionID)
@@ -1073,6 +1073,8 @@ func unavailableSessionLogResult(w io.Writer, restored strategy.RestoredSession,
 	}
 
 	fmt.Fprintf(w, "Session '%s' found in commit trailer but session log not available\n", restored.SessionID)
+	fmt.Fprintf(w, "\nTo continue this session:\n")
+	fmt.Fprintf(w, "  %s\n", ag.FormatResumeCommand(restored.SessionID))
 	return restored, false, nil
 }
 

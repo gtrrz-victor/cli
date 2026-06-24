@@ -992,6 +992,13 @@ func TestRestoreSingleSession_NoTranscriptDoesNotReportRestored(t *testing.T) {
 	if !strings.Contains(stdout.String(), "session log not available") {
 		t.Fatalf("restoreSingleSession() output = %q, want missing log message", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "\nTo continue this session:\n") {
+		t.Fatalf("restoreSingleSession() output = %q, want continuation header", stdout.String())
+	}
+	wantCommand := "  " + ag.FormatResumeCommand(sessionID) + "\n"
+	if !strings.Contains(stdout.String(), wantCommand) {
+		t.Fatalf("restoreSingleSession() output = %q, want command %q", stdout.String(), wantCommand)
+	}
 }
 
 func TestCheckRemoteMetadata_MetadataExistsOnRemote(t *testing.T) {
