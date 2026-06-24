@@ -183,20 +183,17 @@ func newRepoDeleteCmd() *cobra.Command {
 		Short: "Delete a repository by name or ULID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				repoID, err := resolveRepoRef(ctx, c, args[0], project)
-				if err != nil {
-					return err
-				}
-				if err := c.DeleteRepo(ctx, coreapi.DeleteRepoParams{RepoId: repoID}); err != nil {
-					return err
-				}
-				cmd.Printf("Deleted repo %s\n", resolvedRefLabel(args[0], repoID))
-				return nil
-			})
+			return runControlPlaneDelete(cmd, "repo", args[0],
+				func(ctx context.Context, c *coreapi.Client) (string, error) {
+					return resolveRepoRef(ctx, c, args[0], project)
+				},
+				func(ctx context.Context, c *coreapi.Client, id string) error {
+					return c.DeleteRepo(ctx, coreapi.DeleteRepoParams{RepoId: id})
+				})
 		},
 	}
 	bindRepoProjectFlag(cmd, &project)
+	addForceFlag(cmd)
 	return cmd
 }
 

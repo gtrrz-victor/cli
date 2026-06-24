@@ -94,22 +94,20 @@ func newOrgGetCmd() *cobra.Command {
 }
 
 func newOrgDeleteCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "delete <org>",
 		Short: "Delete an organization by name or ULID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				orgID, err := resolveOrgRef(ctx, c, args[0])
-				if err != nil {
-					return err
-				}
-				if err := c.DeleteOrg(ctx, coreapi.DeleteOrgParams{OrgId: orgID}); err != nil {
-					return err
-				}
-				cmd.Printf("Deleted org %s\n", resolvedRefLabel(args[0], orgID))
-				return nil
-			})
+			return runControlPlaneDelete(cmd, "org", args[0],
+				func(ctx context.Context, c *coreapi.Client) (string, error) {
+					return resolveOrgRef(ctx, c, args[0])
+				},
+				func(ctx context.Context, c *coreapi.Client, id string) error {
+					return c.DeleteOrg(ctx, coreapi.DeleteOrgParams{OrgId: id})
+				})
 		},
 	}
+	addForceFlag(cmd)
+	return cmd
 }

@@ -173,24 +173,22 @@ func newProjectGetCmd() *cobra.Command {
 }
 
 func newProjectDeleteCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "delete <project>",
 		Short: "Delete a project by name or ULID",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-				projID, err := resolveProjectRef(ctx, c, args[0])
-				if err != nil {
-					return err
-				}
-				if err := c.DeleteProject(ctx, coreapi.DeleteProjectParams{ProjectId: projID}); err != nil {
-					return err
-				}
-				cmd.Printf("Deleted project %s\n", resolvedRefLabel(args[0], projID))
-				return nil
-			})
+			return runControlPlaneDelete(cmd, "project", args[0],
+				func(ctx context.Context, c *coreapi.Client) (string, error) {
+					return resolveProjectRef(ctx, c, args[0])
+				},
+				func(ctx context.Context, c *coreapi.Client, id string) error {
+					return c.DeleteProject(ctx, coreapi.DeleteProjectParams{ProjectId: id})
+				})
 		},
 	}
+	addForceFlag(cmd)
+	return cmd
 }
 
 // parseProjectOwnerType maps the --owner-type flag to the generated enum,

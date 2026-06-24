@@ -5,8 +5,48 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
+
+// TestConfirmControlPlaneDeletion covers the non-TTY decision paths of the
+// destructive-delete gate. The interactive form path needs a real terminal and
+// is left to manual/e2e coverage.
+func TestConfirmControlPlaneDeletion(t *testing.T) {
+	t.Parallel()
+
+	// --force proceeds without prompting (no TTY needed).
+	var buf bytes.Buffer
+	proceed, err := confirmControlPlaneDeletion(t.Context(), &buf, "org acme (01J)", true, false)
+	if err != nil || !proceed {
+		t.Fatalf("force: got (proceed=%v, err=%v), want (true, nil)", proceed, err)
+	}
+
+	// Non-interactive without --force must refuse, not delete unprompted.
+	buf.Reset()
+	proceed, err = confirmControlPlaneDeletion(t.Context(), &buf, "org acme (01J)", false, false)
+	if err == nil {
+		t.Fatalf("non-interactive without --force: expected error, got nil (proceed=%v)", proceed)
+	}
+	if proceed {
+		t.Fatal("non-interactive without --force: must not proceed")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("error should mention --force, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "org acme") {
+		t.Fatalf("error should name the target, got: %v", err)
+	}
+
+	// An already-cancelled context is a clean cancel: no prompt, no error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	buf.Reset()
+	proceed, err = confirmControlPlaneDeletion(ctx, &buf, "org acme (01J)", false, true)
+	if err != nil || proceed {
+		t.Fatalf("cancelled ctx: got (proceed=%v, err=%v), want (false, nil)", proceed, err)
+	}
+}
 
 // TestFetchAllPages walks a multi-page source, stops on the empty cursor,
 // and errors rather than looping when the server fails to advance.
