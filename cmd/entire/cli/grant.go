@@ -184,15 +184,13 @@ func newGrantOrgRemoveCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
-					OrgId:          orgID,
-					Provider:       provider,
-					ProviderUserId: providerUserID,
-				}); err != nil {
-					return err
-				}
-				cmd.Printf("Removed %s/%s from org %s\n", provider, providerUserID, args[0])
-				return nil
+				return revokeGrant(cmd, "Removed", fmt.Sprintf("%s/%s from org %s", provider, providerUserID, args[0]), func() error {
+					return c.RemoveOrgMember(ctx, coreapi.RemoveOrgMemberParams{
+						OrgId:          orgID,
+						Provider:       provider,
+						ProviderUserId: providerUserID,
+					})
+				})
 			})
 		},
 	}
@@ -301,25 +299,21 @@ func newGrantProjectRemoveCmd() *cobra.Command {
 					return err
 				}
 				if mode == granteeModeProvider {
-					if err := c.RevokeProjectAccessByProvider(ctx, coreapi.RevokeProjectAccessByProviderParams{
-						ProjectId:      projID,
-						Provider:       provider,
-						ProviderUserId: providerUserID,
-					}); err != nil {
-						return err
-					}
-					cmd.Printf("Revoked %s/%s from project %s\n", provider, providerUserID, args[0])
-					return nil
+					return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s/%s from project %s", provider, providerUserID, args[0]), func() error {
+						return c.RevokeProjectAccessByProvider(ctx, coreapi.RevokeProjectAccessByProviderParams{
+							ProjectId:      projID,
+							Provider:       provider,
+							ProviderUserId: providerUserID,
+						})
+					})
 				}
-				if err := c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
-					ProjectId:   projID,
-					GranteeType: granteeType,
-					GranteeId:   granteeID,
-				}); err != nil {
-					return err
-				}
-				cmd.Printf("Revoked %s %s from project %s\n", granteeType, granteeID, args[0])
-				return nil
+				return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s %s from project %s", granteeType, granteeID, args[0]), func() error {
+					return c.RevokeProjectAccess(ctx, coreapi.RevokeProjectAccessParams{
+						ProjectId:   projID,
+						GranteeType: granteeType,
+						GranteeId:   granteeID,
+					})
+				})
 			})
 		},
 	}
@@ -469,25 +463,21 @@ func newGrantRepoRemoveCmd() *cobra.Command {
 					return err
 				}
 				if mode == granteeModeProvider {
-					if err := c.RevokeRepoAccessByProvider(ctx, coreapi.RevokeRepoAccessByProviderParams{
-						RepoId:         repoID,
-						Provider:       provider,
-						ProviderUserId: providerUserID,
-					}); err != nil {
-						return err
-					}
-					cmd.Printf("Revoked %s/%s from repo %s\n", provider, providerUserID, args[0])
-					return nil
+					return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s/%s from repo %s", provider, providerUserID, args[0]), func() error {
+						return c.RevokeRepoAccessByProvider(ctx, coreapi.RevokeRepoAccessByProviderParams{
+							RepoId:         repoID,
+							Provider:       provider,
+							ProviderUserId: providerUserID,
+						})
+					})
 				}
-				if err := c.RevokeRepoAccess(ctx, coreapi.RevokeRepoAccessParams{
-					RepoId:      repoID,
-					GranteeType: granteeType,
-					GranteeId:   granteeID,
-				}); err != nil {
-					return err
-				}
-				cmd.Printf("Revoked %s %s from repo %s\n", granteeType, granteeID, args[0])
-				return nil
+				return revokeGrant(cmd, "Revoked", fmt.Sprintf("%s %s from repo %s", granteeType, granteeID, args[0]), func() error {
+					return c.RevokeRepoAccess(ctx, coreapi.RevokeRepoAccessParams{
+						RepoId:      repoID,
+						GranteeType: granteeType,
+						GranteeId:   granteeID,
+					})
+				})
 			})
 		},
 	}
@@ -506,4 +496,21 @@ func bindGranteeFlags(cmd *cobra.Command, provider, providerUserID *string) {
 	cmd.Flags().StringVar(provider, "provider", "", "identity provider (e.g. github) (required)")
 	cmd.Flags().StringVar(providerUserID, "provider-user-id", "", "provider-specific user id (required)")
 	markRequired(cmd, "provider", "provider-user-id")
+}
+
+// revokeGrant runs a grant-removal API call idempotently. A 404 means the
+// grantee already has no such grant — the desired end state — so it's reported
+// as a no-op rather than surfaced as a raw error, matching runControlPlaneDelete.
+// verb is the success word ("Revoked"/"Removed"); subject describes the grant,
+// e.g. "github/12345 from repo acme".
+func revokeGrant(cmd *cobra.Command, verb, subject string, revoke func() error) error {
+	if err := revoke(); err != nil {
+		if isCoreNotFound(err) {
+			cmd.Printf("%s: no such grant; nothing to revoke\n", subject)
+			return nil
+		}
+		return err
+	}
+	cmd.Printf("%s %s\n", verb, subject)
+	return nil
 }
