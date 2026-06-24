@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,19 @@ import (
 // I/L/O/U) so it passes looksLikeULID and the delete commands skip the name
 // lookup, addressing the resource by id directly.
 const testDeleteULID = "01HZX7QABCDEFGHJKMNPQRSTVW"
+
+// writeNotFoundProblem writes a control-plane RFC 7807 404 so the ogen client
+// decodes it as *ErrorModelStatusCode (which isNotFound keys on). A bare
+// WriteHeader without the problem+json content type would instead surface as a
+// decode error.
+func writeNotFoundProblem(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusNotFound)
+	if _, err := fmt.Fprintf(w, `{"status":%d,"detail":"not found"}`, http.StatusNotFound); err != nil {
+		t.Errorf("write problem: %v", err)
+	}
+}
 
 // runDeleteCmd points the active-context client at srv via the activeCoreClient
 // seam, runs newCmd() with args, and returns its stdout and error. The caller
