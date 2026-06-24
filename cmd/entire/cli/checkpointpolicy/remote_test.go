@@ -16,7 +16,6 @@ import (
 )
 
 func TestSyncRemotePolicyDefaultsWhenRemoteMissing(t *testing.T) {
-	t.Parallel()
 	localDir, repo, bareDir := initPolicyRemoteFixture(t)
 
 	got, err := checkpointpolicy.Sync(t.Context(), repo, checkpointpolicy.Target{Remote: bareDir, Dir: localDir})
@@ -28,7 +27,6 @@ func TestSyncRemotePolicyDefaultsWhenRemoteMissing(t *testing.T) {
 }
 
 func TestSyncRemotePolicyFetchesAndPromotesMissingLocalRef(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	remoteHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
@@ -47,7 +45,6 @@ func TestSyncRemotePolicyFetchesAndPromotesMissingLocalRef(t *testing.T) {
 }
 
 func TestSyncRemotePolicyDoesNotLeaveTempRefWhenSHAAlreadyMatches(t *testing.T) {
-	t.Parallel()
 	localDir, repo, bareDir := initPolicyRemoteFixture(t)
 	localHash, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
@@ -62,7 +59,6 @@ func TestSyncRemotePolicyDoesNotLeaveTempRefWhenSHAAlreadyMatches(t *testing.T) 
 }
 
 func TestSyncRemotePolicyKeepsDivergedLocalRef(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	baseHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
@@ -93,8 +89,18 @@ func TestSyncRemotePolicyKeepsDivergedLocalRef(t *testing.T) {
 	requireNoRef(t, localRepo, "refs/entire/policies/checkpoint-fetch")
 }
 
+func TestSyncRemotePolicyRemovesTempRefWhenFetchedPolicyCannotBeRead(t *testing.T) {
+	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
+	writeRawPolicyCommit(t, remoteRepo, []byte(`{"checkpoint_version":`), plumbing.ZeroHash)
+	pushPolicyRefWithGit(t, remoteDir, bareDir)
+
+	localDir, localRepo := initPolicyRepoWithDir(t)
+	_, err := checkpointpolicy.Sync(t.Context(), localRepo, checkpointpolicy.Target{Remote: bareDir, Dir: localDir})
+	require.ErrorContains(t, err, "parse policy.json")
+	requireNoRef(t, localRepo, "refs/entire/policies/checkpoint-fetch")
+}
+
 func TestPushPolicyRejectsNonFastForward(t *testing.T) {
-	t.Parallel()
 	firstDir, firstRepo, bareDir := initPolicyRemoteFixture(t)
 	_, err := checkpointpolicy.WriteLocal(t.Context(), firstRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
@@ -163,6 +169,7 @@ func initPolicyRemoteFixture(t *testing.T) (string, *git.Repository, string) {
 
 func initPolicyRepoWithDir(t *testing.T) (string, *git.Repository) {
 	t.Helper()
+	testutil.IsolateGitConfigEnv(t)
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)
 	repo, err := git.PlainOpen(dir)

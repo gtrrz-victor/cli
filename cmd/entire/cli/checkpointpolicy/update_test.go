@@ -10,7 +10,6 @@ import (
 )
 
 func TestUpdateRejectsDowngradeFromRemoteWithoutForce(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	_, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.Policy{
 		CheckpointVersion:    "refs-v1",
@@ -33,7 +32,6 @@ func TestUpdateRejectsDowngradeFromRemoteWithoutForce(t *testing.T) {
 }
 
 func TestUpdateAllowsDowngradeWithForce(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	remoteHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.Policy{
 		CheckpointVersion:    "refs-v1",
@@ -61,7 +59,6 @@ func TestUpdateAllowsDowngradeWithForce(t *testing.T) {
 }
 
 func TestUpdatePreservesLocalPolicyAheadOfRemote(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	baseHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
@@ -86,7 +83,6 @@ func TestUpdatePreservesLocalPolicyAheadOfRemote(t *testing.T) {
 }
 
 func TestUpdateRejectsDivergedLocalPolicy(t *testing.T) {
-	t.Parallel()
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	baseHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
 	require.NoError(t, err)
