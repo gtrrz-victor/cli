@@ -69,5 +69,5 @@ tmp/
 .superpowers/
 .clawpatch/
 entire-external-cp-test/
-skills/
+/skills/
 /git-remote-entire
