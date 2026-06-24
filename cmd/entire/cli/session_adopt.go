@@ -452,6 +452,9 @@ func buildAdoptedSessionState(ctx context.Context, source *session.State) (*sess
 	adopted.PromptWindowBase = adopted.SessionTurnCount
 	adopted.PromptWindowResetPending = false
 	adopted.AttachedManually = false
+	// The source process owner may already be gone; a new turn will capture the
+	// current owner, and until then liveness should fall back to the timeout.
+	adopted.Owner = nil
 
 	return &adopted, filesTouched, nil
 }

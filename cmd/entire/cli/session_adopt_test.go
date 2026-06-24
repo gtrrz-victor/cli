@@ -16,6 +16,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/internal/flock"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/proclive"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
@@ -100,6 +101,55 @@ func TestSessionAdopt_CopiesExternalSessionIntoCurrentWorktree(t *testing.T) {
 	}
 	if !bytes.Contains(out.Bytes(), []byte("Review tracked files before committing")) {
 		t.Fatalf("output = %q, want tracked-file attribution warning", out.String())
+	}
+}
+
+func TestSessionAdopt_ClearsSourceOwner(t *testing.T) {
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-clear-owner"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStore := session.NewStateStoreWithDir(filepath.Join(sourceRepo, ".git", session.SessionStateDirName))
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		Owner:                 &proclive.Identity{PID: os.Getpid(), Start: "source-owner"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+
+	var out bytes.Buffer
+	err := runAdopt(context.Background(), &out, sessionID, adoptOptions{
+		FromWorktree: sourceRepo,
+		Force:        true,
+	})
+	if err != nil {
+		t.Fatalf("runAdopt failed: %v", err)
+	}
+
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted == nil {
+		t.Fatal("expected adopted session state in target repo")
+	}
+	if adopted.Owner != nil {
+		t.Fatalf("Owner = %#v, want nil so source process liveness cannot finalize adopted session", adopted.Owner)
 	}
 }
 
