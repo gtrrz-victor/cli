@@ -43,7 +43,7 @@ func (r PersistentRefs) PrimaryAsRead() PersistentRefs {
 	return r
 }
 
-// ResolvePersistentRefs returns the committed metadata topology.
-func ResolvePersistentRefs(_ context.Context) PersistentRefs {
+// ResolveRefs returns the committed metadata topology.
+func ResolveRefs(_ context.Context) PersistentRefs {
 	return DefaultV1Refs()
 }

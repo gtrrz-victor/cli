@@ -412,7 +412,7 @@ func readCheckpointInfoFromRef(
 func getMetadataTree(ctx context.Context) (*object.Tree, *git.Repository, error) {
 	logCtx := logging.WithComponent(ctx, "resume.getMetadataTree")
 
-	refs := checkpoint.ResolvePersistentRefs(ctx)
+	refs := checkpoint.ResolveRefs(ctx)
 
 	// Helper to log ref hash for a repo's primary metadata ref
 	logRefHash := func(repo *git.Repository, source string) {

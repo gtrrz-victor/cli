@@ -47,7 +47,7 @@ func NewEphemeralStore(repo *git.Repository, refs PersistentRefs) EphemeralStore
 
 // NewGitStore creates a checkpoint store backed by the given git repository
 // and committed-metadata topology. Pass DefaultV1Refs() for the v1-only default
-// or ResolvePersistentRefs(ctx) in code paths that honor settings.
+// or ResolveRefs(ctx) in code paths that honor settings.
 func NewGitStore(repo *git.Repository, refs PersistentRefs) *GitStore {
 	return &GitStore{repo: repo, refs: refs}
 }

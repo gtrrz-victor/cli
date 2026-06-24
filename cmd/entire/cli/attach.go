@@ -57,7 +57,7 @@ type attachOptions struct {
 
 // committedRefs resolves the committed metadata topology.
 func (opts attachOptions) committedRefs(ctx context.Context) cpkg.PersistentRefs {
-	return cpkg.ResolvePersistentRefs(ctx)
+	return cpkg.ResolveRefs(ctx)
 }
 
 // openAttachStore opens the committed store for the resolved topology. refs is
