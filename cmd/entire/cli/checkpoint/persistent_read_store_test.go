@@ -124,8 +124,8 @@ func TestNewGitStore_IgnoresCheckpointsVersion(t *testing.T) {
 	t.Chdir(dir)
 
 	writeSettings(t, dir, "") // v1 only
-	assert.Equal(t, v1BranchRef(), NewGitStore(repo, ResolvePersistentRefs(context.Background())).PersistentReadRef())
+	assert.Equal(t, v1BranchRef(), NewGitStore(repo, ResolveRefs(context.Background())).PersistentReadRef())
 
 	writeSettings(t, dir, `"1.1"`)
-	assert.Equal(t, v1BranchRef(), NewGitStore(repo, ResolvePersistentRefs(context.Background())).PersistentReadRef())
+	assert.Equal(t, v1BranchRef(), NewGitStore(repo, ResolveRefs(context.Background())).PersistentReadRef())
 }

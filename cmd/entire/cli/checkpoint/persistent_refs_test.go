@@ -24,7 +24,7 @@ func TestResolveCommittedRefs(t *testing.T) {
 			dir := t.TempDir()
 			t.Chdir(dir)
 			writeSettings(t, dir, tt.version)
-			assert.Equal(t, tt.want, ResolvePersistentRefs(context.Background()))
+			assert.Equal(t, tt.want, ResolveRefs(context.Background()))
 		})
 	}
 }

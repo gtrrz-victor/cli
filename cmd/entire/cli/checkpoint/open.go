@@ -51,7 +51,7 @@ func resolveOpenRefs(ctx context.Context, opts OpenOptions) PersistentRefs {
 	if opts.Refs != nil {
 		return *opts.Refs
 	}
-	return ResolvePersistentRefs(ctx)
+	return ResolveRefs(ctx)
 }
 
 // Ephemeral returns the git-backed shadow-branch (temporary) store.
