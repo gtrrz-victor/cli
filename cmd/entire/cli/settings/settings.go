@@ -152,6 +152,12 @@ type ClonePreferences struct {
 	// definitive false. This is clone-local and not committed so hook-time agent
 	// context injection can avoid network/auth work on the prompt path.
 	TrailsEnabled *bool `json:"trails_enabled,omitempty"`
+
+	// Freshness and scope for TrailsEnabled.
+	TrailsEnabledCheckedAt *time.Time `json:"trails_enabled_checked_at,omitempty"`
+	TrailsEnabledRepoKey   string     `json:"trails_enabled_repo_key,omitempty"`
+	TrailsEnabledAPIBase   string     `json:"trails_enabled_api_base,omitempty"`
+	TrailsEnabledAuthKey   string     `json:"trails_enabled_auth_key,omitempty"`
 }
 
 // SummaryGenerationSettings configures provider selection for on-demand
