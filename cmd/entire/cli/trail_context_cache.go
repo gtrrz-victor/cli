@@ -133,18 +133,16 @@ func saveTrailsEnabledForRemote(ctx context.Context, forge, owner, repo string, 
 }
 
 func saveTrailsEnabledForScope(ctx context.Context, scope trailEnablementScope, enabled bool, checkedAt time.Time) error {
-	prefs, err := settings.LoadClonePreferences(ctx)
-	if err != nil {
-		return fmt.Errorf("load clone preferences: %w", err)
-	}
 	enabledCopy := enabled
 	checkedAtUTC := checkedAt.UTC()
-	prefs.TrailsEnabled = &enabledCopy
-	prefs.TrailsEnabledCheckedAt = &checkedAtUTC
-	prefs.TrailsEnabledRepoKey = scope.RepoKey
-	prefs.TrailsEnabledAPIBase = scope.APIBase
-	prefs.TrailsEnabledAuthKey = scope.AuthKey
-	if err := settings.SaveClonePreferences(ctx, prefs); err != nil {
+	if err := settings.ModifyClonePreferences(ctx, func(prefs *settings.ClonePreferences) error {
+		prefs.TrailsEnabled = &enabledCopy
+		prefs.TrailsEnabledCheckedAt = &checkedAtUTC
+		prefs.TrailsEnabledRepoKey = scope.RepoKey
+		prefs.TrailsEnabledAPIBase = scope.APIBase
+		prefs.TrailsEnabledAuthKey = scope.AuthKey
+		return nil
+	}); err != nil {
 		return fmt.Errorf("save clone preferences: %w", err)
 	}
 	return nil
