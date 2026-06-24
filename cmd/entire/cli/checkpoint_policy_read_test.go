@@ -27,14 +27,18 @@ type checkpointInfoPolicyStub struct {
 	summary *checkpoint.CheckpointSummary
 }
 
-func (s checkpointInfoPolicyStub) ReadCommitted(context.Context, id.CheckpointID) (*checkpoint.CheckpointSummary, error) {
+func (s checkpointInfoPolicyStub) Read(context.Context, id.CheckpointID) (*checkpoint.CheckpointSummary, error) {
 	return s.summary, nil
+}
+
+func (s checkpointInfoPolicyStub) List(context.Context) ([]checkpoint.CheckpointInfo, error) {
+	return nil, nil
 }
 
 func (s checkpointInfoPolicyStub) ReadSessionContent(context.Context, id.CheckpointID, int) (*checkpoint.SessionContent, error) {
 	return nil, checkpoint.ErrCheckpointNotFound
 }
 
-func (s checkpointInfoPolicyStub) ReadSessionMetadata(context.Context, id.CheckpointID, int) (*checkpoint.CommittedMetadata, error) {
+func (s checkpointInfoPolicyStub) ReadSessionMetadata(context.Context, id.CheckpointID, int) (*checkpoint.Metadata, error) {
 	return nil, checkpoint.ErrCheckpointNotFound
 }
