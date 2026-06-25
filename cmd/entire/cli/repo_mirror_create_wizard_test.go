@@ -72,20 +72,26 @@ func TestClusterChoices(t *testing.T) {
 		{host: "bare.entire.io"}, // no slug/jurisdiction
 	}
 
-	// Caller is in "eu": every cluster is listed, but only the eu default
-	// pre-selects (is_default is per-jurisdiction, so the us default must not).
+	// Caller is in "eu": every cluster is listed, the eu cluster is ordered
+	// first (so it's visible+checked on a short terminal), and only the eu
+	// default pre-selects (is_default is per-jurisdiction, so us must not).
 	opts, defaults := clusterChoices(regions, "eu")
 
 	require.Len(t, opts, 3)
-	require.Equal(t, "us-east (us)", opts[0].Key)
-	require.Equal(t, "aws-us-east-2.entire.io", opts[0].Value)
-	require.Equal(t, "eu-west (eu)", opts[1].Key)
-	require.Equal(t, "bare.entire.io", opts[2].Key) // falls back to host
+	require.Equal(t, "eu-west (eu)", opts[0].Key, "caller's jurisdiction listed first")
+	require.Equal(t, "eu-west-1.entire.io", opts[0].Value)
 	require.Equal(t, []string{"eu-west-1.entire.io"}, defaults)
+	// The other jurisdictions are still present, in their original relative order.
+	var keys []string
+	for _, o := range opts {
+		keys = append(keys, o.Key)
+	}
+	require.ElementsMatch(t, []string{"us-east (us)", "eu-west (eu)", "bare.entire.io"}, keys)
 
-	// Unknown jurisdiction: all still listed, nothing pre-selected.
-	_, noneDefault := clusterChoices(regions, "")
+	// Unknown jurisdiction: all still listed, original order, nothing pre-selected.
+	noOpts, noneDefault := clusterChoices(regions, "")
 	require.Empty(t, noneDefault)
+	require.Equal(t, "us-east (us)", noOpts[0].Key)
 }
 
 func TestRegionLabel(t *testing.T) {

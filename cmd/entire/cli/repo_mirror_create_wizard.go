@@ -142,9 +142,20 @@ func selectableAvailableRepos(avail []coreapi.AvailableMirror) []coreapi.Availab
 // per-jurisdiction, so pre-selecting only the caller's avoids defaulting a repo
 // into every jurisdiction. With no jurisdiction nothing is pre-checked (the user
 // picks). All clusters stay selectable regardless.
+//
+// The caller's-jurisdiction clusters are listed first so that on a short
+// terminal — where huh's option viewport shows only the top rows — the visible,
+// pre-checked default is the relevant one, not some other jurisdiction's.
 func clusterChoices(regions []regionChoice, jurisdiction string) (opts []huh.Option[string], defaults []string) {
-	opts = make([]huh.Option[string], 0, len(regions))
-	for _, r := range regions {
+	ordered := make([]regionChoice, len(regions))
+	copy(ordered, regions)
+	if jurisdiction != "" {
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return ordered[i].jurisdiction == jurisdiction && ordered[j].jurisdiction != jurisdiction
+		})
+	}
+	opts = make([]huh.Option[string], 0, len(ordered))
+	for _, r := range ordered {
 		opts = append(opts, huh.NewOption(regionLabel(r), r.host))
 		if jurisdiction != "" && r.isDefault && r.jurisdiction == jurisdiction {
 			defaults = append(defaults, r.host)
@@ -365,7 +376,7 @@ func pickRegions(w io.Writer, regions []regionChoice, jurisdiction string) ([]re
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Select regions to mirror into").
-				Description("Each selected repo is mirrored into every selected region. Space to select, enter to confirm.").
+				Description("Each repo is mirrored into every selected region.").
 				Options(opts...).
 				Validate(func(s []string) error {
 					if len(s) == 0 {
