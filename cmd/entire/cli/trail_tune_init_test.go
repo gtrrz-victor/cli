@@ -57,6 +57,25 @@ func TestRunnerDefaults_AreValidAndComplete(t *testing.T) {
 	}
 }
 
+func TestWriteTuneDebug(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "nested", "debug") // exercises MkdirAll
+	var errOut bytes.Buffer
+	writeTuneDebug(&errOut, dir, "prompt.txt", "hello-prompt")
+
+	got, err := os.ReadFile(filepath.Join(dir, "prompt.txt"))
+	if err != nil {
+		t.Fatalf("reading debug file: %v", err)
+	}
+	if string(got) != "hello-prompt" {
+		t.Errorf("debug content = %q, want %q", got, "hello-prompt")
+	}
+	if !strings.Contains(errOut.String(), "debug: wrote") {
+		t.Errorf("expected a 'debug: wrote' notice, got %q", errOut.String())
+	}
+}
+
 func TestEnsureRunnersPresent_CreatesDefaultsWhenEmpty(t *testing.T) {
 	t.Parallel()
 

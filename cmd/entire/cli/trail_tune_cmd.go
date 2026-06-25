@@ -19,6 +19,7 @@ type trailTuneOptions struct {
 	runner       string // optional: limit to one runner (id, with or without "trail-")
 	run          bool   // headless apply vs. print prompt
 	assumeYes    bool   // skip the create-defaults confirmation
+	debugDir     string // if set, dump prompt.txt (+ response.txt on --run) here
 	sources      []string
 	limit        int
 	insecureHTTP bool
@@ -28,6 +29,7 @@ func newTrailTuneCmd() *cobra.Command {
 	var (
 		run       bool
 		assumeYes bool
+		debugDir  string
 		sources   []string
 		limit     int
 	)
@@ -61,6 +63,7 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 				runner:       runner,
 				run:          run,
 				assumeYes:    assumeYes,
+				debugDir:     debugDir,
 				sources:      sources,
 				limit:        limit,
 				insecureHTTP: trailInsecureHTTP(cmd),
@@ -75,6 +78,8 @@ If <runner> is given (e.g. "risk" or "trail-risk"), only that runner is tuned.`,
 	cmd.Flags().IntVar(&limit, "limit", 20, "How many recent PRs/issues/trails to sample")
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false,
 		"Skip the confirmation when creating the default runner set in a repo that has none")
+	cmd.Flags().StringVar(&debugDir, "debug-dir", "",
+		"Write the assembled prompt (prompt.txt) and, with --run, the raw model response (response.txt) to this directory for debugging")
 
 	return cmd
 }
@@ -106,6 +111,10 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 	brief := gatherTuningContext(ctx, errW, repoRoot, src, opts.limit, opts.insecureHTTP)
 	prompt := buildTunePrompt(brief, runners)
 
+	if opts.debugDir != "" {
+		writeTuneDebug(errW, opts.debugDir, "prompt.txt", prompt)
+	}
+
 	if !opts.run {
 		fmt.Fprintln(w, prompt)
 		if len(created) > 0 {
@@ -115,7 +124,22 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 		return nil
 	}
 
-	return applyTuneWithAgent(ctx, w, errW, runners, prompt, created)
+	return applyTuneWithAgent(ctx, w, errW, runners, prompt, created, opts.debugDir)
+}
+
+// writeTuneDebug best-effort writes content to <dir>/<name> for debugging,
+// reporting any failure as a warning rather than failing the command.
+func writeTuneDebug(errW io.Writer, dir, name, content string) {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // user-specified debug dir
+		fmt.Fprintf(errW, "warning: debug dir %s: %v\n", dir, err)
+		return
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil { //nolint:gosec // local debug artifact
+		fmt.Fprintf(errW, "warning: writing %s: %v\n", path, err)
+		return
+	}
+	fmt.Fprintf(errW, "debug: wrote %s\n", path)
 }
 
 // applyTuneWithAgent runs the prompt through the configured summary provider
@@ -123,7 +147,7 @@ func runTrailTune(ctx context.Context, w, errW io.Writer, opts trailTuneOptions)
 // surgically rewrites each runner file's prompt.template in place. createdIDs
 // are runners onboarding just scaffolded from defaults; any of those left
 // un-tailored is flagged so it isn't committed as if it were repo-specific.
-func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRunner, prompt string, createdIDs []string) error {
+func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRunner, prompt string, createdIDs []string, debugDir string) error {
 	// Reuse the summary-provider resolution (selection + persistence), but pull
 	// the raw TextGenerator rather than provider.Generator: the latter is a
 	// summarize.Generator that turns a transcript Input into a checkpoint
@@ -145,6 +169,9 @@ func applyTuneWithAgent(ctx context.Context, w, errW io.Writer, runners []tuneRu
 	out, err := textGen.GenerateText(ctx, prompt, provider.Model)
 	if err != nil {
 		return fmt.Errorf("agent run failed: %w", err)
+	}
+	if debugDir != "" {
+		writeTuneDebug(errW, debugDir, "response.txt", out)
 	}
 
 	templates, err := parseTuneOutput(out)
