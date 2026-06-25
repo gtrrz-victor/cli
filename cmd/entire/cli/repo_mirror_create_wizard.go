@@ -658,6 +658,8 @@ func reportMirrorResults(outW, errW io.Writer, results []mirrorResult) error {
 	if len(results) == 0 {
 		return nil
 	}
+	// Headroom between the live progress block and the summary table.
+	fmt.Fprintln(outW)
 	if err := printTable(outW, mirrorCreateResultColumns, results, mirrorCreateResultRow); err != nil {
 		return err
 	}
