@@ -30,9 +30,10 @@ const (
 	mirrorStatusReady      = "ready"      // clone landed, ready to use
 	mirrorStatusRegistered = "registered" // placement created, clone in progress (--no-wait)
 	mirrorStatusEmpty      = "empty"      // upstream has no commits, nothing to clone
-	mirrorStatusSuspended  = "suspended"  // placement exists but the cluster won't issue clone tokens
+	mirrorStatusSuspended  = "suspended"  // placement exists but the cluster won't serve it
+	mirrorStatusFailed     = "failed"     // initial clone reached the terminal failed status
 	mirrorStatusTimedOut   = "timed out"  // clone didn't finish within --wait-timeout
-	mirrorStatusError      = "error"      // create or probe failed
+	mirrorStatusError      = "error"      // create or poll failed
 )
 
 // regionChoice is one mirrorable region offered by the create wizard's region
@@ -431,37 +432,45 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 		res.status, res.err = mirrorStatusError, clientErr
 		return res
 	}
-	created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
-		Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
-		Owner:       t.owner,
-		Repo:        t.repo,
-		ClusterHost: t.region.host,
-	})
-	if err != nil {
+	// Same create-then-wait path as the one-shot `repo mirror create <url>`
+	// (createAndAwaitMirror), so both report identical lifecycle states. The
+	// poll is silent; the wizard's aggregate spinner shows liveness.
+	outcome, err := createAndAwaitMirror(ctx, c, t.owner, t.repo, t.region.host, noWait, waitTimeout)
+	if outcome.created == nil {
 		res.status, res.err = mirrorStatusError, renderCoreError(err)
 		return res
 	}
-	res.cloneURL = created.MirrorUrl
+	res.cloneURL = outcome.created.MirrorUrl
 
-	switch {
-	case created.Empty:
-		res.status = mirrorStatusEmpty
-	case noWait:
-		res.status = mirrorStatusRegistered
-	default:
-		// Discard the per-mirror heartbeat: concurrent waits would interleave
-		// their dots on a shared writer. The aggregate spinner shows liveness.
-		werr := waitForMirrorClone(ctx, io.Discard, t.region.host, t.owner, t.repo, waitTimeout)
-		switch {
-		case werr == nil:
-			res.status = mirrorStatusReady
-		case errors.Is(werr, auth.ErrRepoTargetUnknown):
-			res.status, res.err = mirrorStatusSuspended, werr
-		case errors.Is(werr, context.DeadlineExceeded):
-			res.status, res.err = mirrorStatusTimedOut, werr
-		default:
-			res.status, res.err = mirrorStatusError, werr
+	if !outcome.polled {
+		if outcome.created.Empty {
+			res.status = mirrorStatusEmpty
+		} else {
+			res.status = mirrorStatusRegistered
 		}
+		return res
+	}
+
+	// nonTerminal classifies a still-processing/unknown result: the poll ended
+	// without a terminal status, so the wait timed out or a poll call errored.
+	nonTerminal := func() {
+		if errors.Is(err, context.DeadlineExceeded) {
+			res.status, res.err = mirrorStatusTimedOut, err
+		} else {
+			res.status, res.err = mirrorStatusError, err
+		}
+	}
+	switch outcome.status {
+	case coreapi.MirrorStatusReady:
+		res.status = mirrorStatusReady
+	case coreapi.MirrorStatusSuspended:
+		res.status, res.err = mirrorStatusSuspended, err
+	case coreapi.MirrorStatusFailed:
+		res.status, res.err = mirrorStatusFailed, err
+	case coreapi.MirrorStatusProcessing:
+		nonTerminal()
+	default:
+		nonTerminal()
 	}
 	return res
 }

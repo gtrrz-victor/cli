@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/coreapi"
 )
 
@@ -78,10 +77,10 @@ var clusterHostLabelRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-
 
 // validateClusterHost rejects a cluster host that is anything other than a
 // bare DNS name or IP with an optional :port. The host is concatenated as
-// "https://"+host both into the smart-HTTP probe URL (waitForMirrorClone) and
-// into the STS audience (auth.RepoScopedToken), so a value carrying URL
-// metacharacters can redirect the request — and the repo-scoped basic-auth
-// token it carries — somewhere other than the intended cluster. Classic case:
+// "https://"+host into the clone URL and the STS audience
+// (auth.RepoScopedToken), so a value carrying URL metacharacters can redirect
+// the request — and the repo-scoped basic-auth token it carries — somewhere
+// other than the intended cluster. Classic case:
 // `aws-us-east-2.entire.io@evil.com`, which Go's URL parser reads as
 // host=evil.com with the real cluster demoted to userinfo, leaking the token
 // to evil.com. We parse the host the same way the rest of the code does and
@@ -167,28 +166,14 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				return fmt.Errorf("invalid [cluster-host]: %w", err)
 			}
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
-				created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
-					Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
-					Owner:       owner,
-					Repo:        repo,
-					ClusterHost: clusterHost,
-				})
-				if err != nil {
-					return err
-				}
-				out := cmd.OutOrStdout()
-				repoSlug := "/gh/" + owner + "/" + repo
-				return finishMirrorCreate(out, cmd.ErrOrStderr(), created, noWait,
-					func() error {
-						if _, terr := auth.RepoScopedToken(ctx, clusterHost, repoSlug, "pull"); terr != nil {
-							return fmt.Errorf("probe mirror for suspension: %w", terr)
-						}
-						return nil
-					},
-					func() error {
-						return waitForMirrorClone(ctx, out, clusterHost, owner, repo, waitTimeout)
-					},
-				)
+				errW := cmd.ErrOrStderr()
+				stop := startSpinner(errW, fmt.Sprintf("Cloning %s/%s into %s", owner, repo, clusterHost))
+				outcome, err := createAndAwaitMirror(ctx, c, owner, repo, clusterHost, noWait, waitTimeout)
+				// Only a confirmed-ready clone earns the ✓; everything else
+				// (empty, --no-wait, suspended, failed, timeout) erases the line
+				// and lets reportOneShotMirror print the specific outcome.
+				stop(err == nil && outcome.polled && outcome.status == coreapi.MirrorStatusReady)
+				return reportOneShotMirror(cmd.OutOrStdout(), errW, outcome, err)
 			})
 		},
 	}
@@ -197,23 +182,52 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 	return cmd
 }
 
-// finishMirrorCreate prints the post-create status for `repo mirror create`
-// and, unless noWait, makes sure the mirror is usable before returning.
-//
-// Empty upstream and suspended placement interact. An empty upstream has no
-// clone to wait for, so the HEAD-poll loop is skipped — it could only spin to
-// the timeout, since an empty repo never advertises a HEAD. But an *existing*
-// placement can be suspended even when its upstream is empty, and the
-// repo-scoped token exchange is the only signal that surfaces that; a *fresh*
-// create can't be suspended (suspension follows upstream access loss), so it
-// needs neither the probe nor the wait. Non-empty mirrors take the normal
-// clone-wait path.
-//
-// probeSuspended mints a repo-scoped pull token and returns its error for
-// explainSuspendedMirror to classify; waitClone runs the HEAD-poll loop. Both
-// are injected so the branching is unit-testable without the auth and
-// control-plane stack the production caller wires up.
-func finishMirrorCreate(out, errW io.Writer, created *coreapi.CreatedMirror, noWait bool, probeSuspended, waitClone func() error) error {
+// mirrorCreateOutcome bundles the create response with the clone status
+// observed while waiting. polled is false for --no-wait and for empty upstreams,
+// where there is nothing to await; in those cases status is unset.
+type mirrorCreateOutcome struct {
+	created *coreapi.CreatedMirror
+	status  coreapi.MirrorStatus
+	polled  bool
+}
+
+// createAndAwaitMirror is the single create-then-wait path shared by the
+// `repo mirror create <github-url>` one-shot and the onboarding wizard, so both
+// report identical lifecycle states. It registers the GitHub mirror on
+// clusterHost (idempotent on (upstream, cluster)) and, unless noWait or the
+// upstream is empty, polls the control plane until the clone reaches a terminal
+// status. The returned error is the create error (when outcome.created is nil)
+// or the wait error — a status sentinel (errMirrorCloneFailed /
+// errMirrorSuspended) or a timeout; callers read outcome.status for the state.
+func createAndAwaitMirror(ctx context.Context, c *coreapi.Client, owner, repo, clusterHost string, noWait bool, timeout time.Duration) (mirrorCreateOutcome, error) {
+	created, err := c.CreateMirror(ctx, &coreapi.CreateMirrorInputBody{
+		Provider:    coreapi.CreateMirrorInputBodyProviderGithub,
+		Owner:       owner,
+		Repo:        repo,
+		ClusterHost: clusterHost,
+	})
+	if err != nil {
+		return mirrorCreateOutcome{}, err
+	}
+	outcome := mirrorCreateOutcome{created: created}
+	if noWait || created.Empty {
+		return outcome, nil
+	}
+	status, werr := awaitMirrorReady(ctx, c, created.MirrorId, timeout)
+	outcome.status = status
+	outcome.polled = true
+	return outcome, werr
+}
+
+// reportOneShotMirror renders the human output for `repo mirror create
+// <github-url>` from the shared createAndAwaitMirror result. A nil
+// outcome.created means CreateMirror itself failed — surface that error (nothing
+// was printed yet). Otherwise echo the placement, then the lifecycle outcome.
+func reportOneShotMirror(out, errW io.Writer, outcome mirrorCreateOutcome, err error) error {
+	created := outcome.created
+	if created == nil {
+		return err
+	}
 	if created.Created {
 		fmt.Fprintf(out, "Registered mirror %s\n", created.MirrorId)
 	} else {
@@ -221,36 +235,31 @@ func finishMirrorCreate(out, errW io.Writer, created *coreapi.CreatedMirror, noW
 	}
 	fmt.Fprintf(out, "  %s\n", created.MirrorUrl)
 
-	if created.Empty {
-		// An existing placement can sit behind a suspension even with an empty
-		// upstream, so probe the token exchange to surface it. A fresh create
-		// can't be suspended, so skip the probe there.
-		if !created.Created {
-			if err := probeSuspended(); err != nil {
-				if handled, serr := explainSuspendedMirror(errW, created.MirrorId, created.Created, err); handled {
-					return serr
-				}
-				// A non-suspension probe error isn't fatal: the placement exists
-				// and the upstream is genuinely empty, so report that rather than
-				// failing the create on a transient token hiccup.
-			}
+	if !outcome.polled {
+		if created.Empty {
+			fmt.Fprintln(out, "Upstream has no commits yet — nothing to clone. The mirror will pick up refs once the upstream is pushed to.")
+		} else {
+			fmt.Fprintf(out, "Initial clone may still be in progress; `git clone %s` will work once it completes.\n", created.MirrorUrl)
 		}
-		fmt.Fprintln(out, "Upstream has no commits yet — nothing to clone. The mirror will pick up refs once the upstream is pushed to.")
 		return nil
 	}
 
-	if noWait {
-		fmt.Fprintf(out, "Initial clone may still be in progress; `git clone %s` will work once it completes.\n", created.MirrorUrl)
+	switch outcome.status {
+	case coreapi.MirrorStatusReady:
+		fmt.Fprintf(out, "\nClone it:\n  git clone %s\n", created.MirrorUrl)
 		return nil
-	}
-	if err := waitClone(); err != nil {
-		if handled, serr := explainSuspendedMirror(errW, created.MirrorId, created.Created, err); handled {
-			return serr
-		}
+	case coreapi.MirrorStatusSuspended:
+		explainSuspendedMirror(errW, created.MirrorId)
+		return NewSilentError(errMirrorSuspended)
+	case coreapi.MirrorStatusFailed:
+		return fmt.Errorf("initial clone of mirror %s failed", created.MirrorId)
+	case coreapi.MirrorStatusProcessing:
+		// Still processing when the poll returned: the wait timed out (or a
+		// transport error broke the poll). awaitMirrorReady's err carries which.
+		return err
+	default:
 		return err
 	}
-	fmt.Fprintf(out, "\nClone it:\n  git clone %s\n", created.MirrorUrl)
-	return nil
 }
 
 func newRepoMirrorListCmd() *cobra.Command {
