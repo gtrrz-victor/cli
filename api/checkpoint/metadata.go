@@ -283,7 +283,7 @@ type CheckpointInfo struct {
 	SessionIDs   []string // All session IDs that contributed
 
 	// Imported is true when this checkpoint was imported from pre-existing
-	// agent history (Kind == "imported"): read-only, commit-less, local-only.
+	// agent history (Kind == "imported"): read-only and commit-less.
 	Imported bool
 }
 
@@ -465,8 +465,8 @@ type CheckpointSummary struct {
 	HasInvestigation bool `json:"has_investigation,omitempty"`
 
 	// Imported is true when this checkpoint was imported from pre-existing
-	// agent history (a session with Kind == "imported"): read-only,
-	// commit-less, and local-only this pass.
+	// agent history (a session with Kind == "imported"): read-only and
+	// commit-less.
 	Imported bool `json:"imported,omitempty"`
 }
 

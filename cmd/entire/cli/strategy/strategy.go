@@ -98,7 +98,7 @@ type RewindPoint struct {
 	SessionPrompts []string
 
 	// Imported indicates this point is a read-only imported (commit-less)
-	// checkpoint from entire/imports/v1. Imported points are not rewindable.
+	// checkpoint on the v1 metadata branch. Imported points are not rewindable.
 	Imported bool
 }
 

@@ -146,6 +146,12 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 		if splitErr != nil {
 			return res, fmt.Errorf("split %s session %s: %w", imp.Name(), sf.SessionID, splitErr)
 		}
+		// Redact the session transcript once and reuse it for every turn's
+		// checkpoint (each turn stores the full session transcript with its own
+		// CheckpointTranscriptStart). Redacting per turn would be O(turns).
+		// Computed lazily so a fully-skipped or dry-run file pays nothing.
+		var red redact.RedactedBytes
+		redacted := false
 		for _, turn := range turns {
 			cid := DeriveCheckpointID(sf.SessionID, turn.UUID)
 			if existing[cid.String()] {
@@ -156,7 +162,14 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 				res.TurnsImported++ // counts what would import
 				continue
 			}
-			if err := writeTurn(ctx, stores, imp, cid, sf, full, turn); err != nil {
+			if !redacted {
+				r, rerr := redact.JSONLBytes(full)
+				if rerr != nil {
+					return res, fmt.Errorf("redact %s transcript: %w", sf.SessionID, rerr)
+				}
+				red, redacted = r, true
+			}
+			if err := writeTurn(ctx, stores, imp, cid, sf, red, turn); err != nil {
 				return res, err
 			}
 			existing[cid.String()] = true
@@ -166,11 +179,7 @@ func Run(ctx context.Context, repo *git.Repository, imp Importer, opts Options) 
 	return res, nil
 }
 
-func writeTurn(ctx context.Context, stores *cp.Stores, imp Importer, cid id.CheckpointID, sf SessionFile, full []byte, turn Turn) error {
-	red, err := redact.JSONLBytes(full)
-	if err != nil {
-		return fmt.Errorf("redact transcript: %w", err)
-	}
+func writeTurn(ctx context.Context, stores *cp.Stores, imp Importer, cid id.CheckpointID, sf SessionFile, red redact.RedactedBytes, turn Turn) error {
 	prov := &cp.Provenance{
 		Source: imp.Name(), TranscriptPath: sf.Path, SessionID: sf.SessionID,
 		TurnUUID: turn.UUID, ParentUUID: turn.ParentUUID,

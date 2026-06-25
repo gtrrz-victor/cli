@@ -2154,18 +2154,26 @@ func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) 
 	tempPoints := getReachableTemporaryCheckpoints(ctx, repo, stores.Ephemeral(), head.Hash(), isOnDefault, limit)
 	points = append(points, tempPoints...)
 
-	// Add imported (read-only, commit-less) checkpoints from entire/imports/v1.
-	points = append(points, getImportedRewindPoints(ctx, repo)...)
-
-	// Sort by date, most recent first
+	// Sort live points (commit-linked + temporary) and apply the limit FIRST, so
+	// a large historical import can't evict recent commit-linked checkpoints.
 	sort.Slice(points, func(i, j int) bool {
 		return points[i].Date.After(points[j].Date)
 	})
-
-	// Apply limit
 	if len(points) > limit {
 		points = points[:limit]
 	}
+
+	// Append imported (read-only, commit-less) checkpoints after the live points,
+	// bounded by the same limit so a one-month import doesn't produce an
+	// unbounded list. They get their own budget and never displace live points.
+	imported := getImportedRewindPoints(ctx, repo)
+	sort.Slice(imported, func(i, j int) bool {
+		return imported[i].Date.After(imported[j].Date)
+	})
+	if len(imported) > limit {
+		imported = imported[:limit]
+	}
+	points = append(points, imported...)
 
 	return points, nil
 }
