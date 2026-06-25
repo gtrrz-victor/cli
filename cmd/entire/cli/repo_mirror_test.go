@@ -452,6 +452,41 @@ func TestAvailableMirrorRow(t *testing.T) {
 	}
 }
 
+func TestPickDefaultRegionHost(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prefers the is-default cluster", func(t *testing.T) {
+		t.Parallel()
+		host, err := pickDefaultRegionHost([]regionChoice{
+			{host: "eu-west-1.entire.io"},
+			{host: "aws-us-east-2.entire.io", isDefault: true},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "aws-us-east-2.entire.io", host)
+	})
+
+	t.Run("sole cluster is the default", func(t *testing.T) {
+		t.Parallel()
+		host, err := pickDefaultRegionHost([]regionChoice{{host: "only.entire.io"}})
+		require.NoError(t, err)
+		require.Equal(t, "only.entire.io", host)
+	})
+
+	t.Run("empty catalog errors", func(t *testing.T) {
+		t.Parallel()
+		_, err := pickDefaultRegionHost(nil)
+		require.Error(t, err)
+	})
+
+	t.Run("ambiguous (multiple, none default) errors", func(t *testing.T) {
+		t.Parallel()
+		_, err := pickDefaultRegionHost([]regionChoice{
+			{host: "a.entire.io"}, {host: "b.entire.io"},
+		})
+		require.Error(t, err)
+	})
+}
+
 func TestClusterArg(t *testing.T) {
 	t.Parallel()
 	if got := clusterArg([]string{"github.com/o/r", "eu-west-1.entire.io"}); got != "eu-west-1.entire.io" {

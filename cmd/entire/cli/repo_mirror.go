@@ -145,8 +145,8 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			"the target cluster, then waits for the initial GitHub→EntireDB clone " +
 			"to finish so `git clone` works on return. Pass --no-wait to return " +
 			"as soon as the placement is registered. Idempotent on " +
-			"(upstream, cluster). The cluster-host defaults to " +
-			defaultClusterHost + " when omitted.",
+			"(upstream, cluster). The cluster-host defaults to your catalog's " +
+			"default cluster when omitted.",
 		Example: "  entire repo mirror create\n" +
 			"  entire repo mirror create github.com/octocat/hello-world\n" +
 			"  entire repo mirror create github.com/octocat/hello-world eu-west-1.entire.io",
@@ -160,10 +160,29 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("invalid <github-url>: %w", err)
 			}
-			clusterHost := clusterArg(args)
-			if err := validateClusterHost(clusterHost); err != nil {
-				cmd.SilenceUsage = true
-				return fmt.Errorf("invalid [cluster-host]: %w", err)
+			var clusterHost string
+			if len(args) > 1 {
+				clusterHost = args[1]
+				if err := validateClusterHost(clusterHost); err != nil {
+					cmd.SilenceUsage = true
+					return fmt.Errorf("invalid [cluster-host]: %w", err)
+				}
+			} else {
+				// No cluster given: pick the catalog's default cluster (the same
+				// GET /api/v1/clusters source the wizard uses), resolved via the
+				// active context. runCore owns the active-client preamble
+				// (silence-usage, --insecure-http-auth, error mapping).
+				if err := runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
+					h, rerr := resolveDefaultClusterHost(ctx, c)
+					if rerr != nil {
+						return rerr
+					}
+					clusterHost = h
+					fmt.Fprintf(cmd.ErrOrStderr(), "Using default cluster %s\n", clusterHost)
+					return nil
+				}); err != nil {
+					return err
+				}
 			}
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
 				errW := cmd.ErrOrStderr()
@@ -180,6 +199,40 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once the placement is registered, without waiting for the initial clone")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 30*time.Minute, "how long to wait for the initial clone to finish")
 	return cmd
+}
+
+// resolveDefaultClusterHost picks the cluster a `repo mirror create
+// <github-url>` targets when [cluster-host] is omitted, from the control plane's
+// cluster catalog (the same GET /api/v1/clusters the wizard uses): the cluster
+// flagged is_default, or the sole cluster when there is exactly one. It errors
+// when the catalog is empty or has no clear default so the user knows to pass
+// [cluster-host] explicitly, rather than silently guessing.
+func resolveDefaultClusterHost(ctx context.Context, c *coreapi.Client) (string, error) {
+	regions, err := availableRegions(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	return pickDefaultRegionHost(regions)
+}
+
+// pickDefaultRegionHost chooses the default cluster host from the catalog: the
+// is-default cluster, or the sole cluster when there's exactly one. Empty or
+// ambiguous catalogs error so the caller can tell the user to pass
+// [cluster-host]. Pure, so the selection is unit-testable without a live core.
+func pickDefaultRegionHost(regions []regionChoice) (string, error) {
+	for _, r := range regions {
+		if r.isDefault {
+			return r.host, nil
+		}
+	}
+	switch len(regions) {
+	case 0:
+		return "", errors.New("no clusters available to mirror into; pass [cluster-host] explicitly")
+	case 1:
+		return regions[0].host, nil
+	default:
+		return "", errors.New("no default cluster configured; pass [cluster-host] explicitly")
+	}
 }
 
 // mirrorCreateOutcome bundles the create response with the clone status
