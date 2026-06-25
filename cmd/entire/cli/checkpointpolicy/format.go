@@ -24,17 +24,12 @@ func ParseFormat(raw string) (CheckpointFormat, error) {
 		return CheckpointFormat{}, fmt.Errorf("invalid checkpoint format %q", raw)
 	}
 
-	family := CheckpointFamily(familyRaw)
-	if _, ok := knownFamilies[family]; !ok {
-		return CheckpointFormat{}, fmt.Errorf("unknown checkpoint family %q", familyRaw)
-	}
-
 	major, err := strconv.Atoi(majorRaw)
 	if err != nil || major <= 0 {
 		return CheckpointFormat{}, fmt.Errorf("invalid checkpoint major %q", majorRaw)
 	}
 
-	return CheckpointFormat{Family: family, Major: major}, nil
+	return CheckpointFormat{Family: CheckpointFamily(familyRaw), Major: major}, nil
 }
 
 func (f CheckpointFormat) String() string {
@@ -46,11 +41,6 @@ func (f CheckpointFormat) String() string {
 
 func CanRead(format CheckpointFormat) bool {
 	return readFormats[format]
-}
-
-var knownFamilies = map[CheckpointFamily]bool{
-	CheckpointFamilyBranch: true,
-	CheckpointFamilyRefs:   true,
 }
 
 var branchV1Format = CheckpointFormat{Family: CheckpointFamilyBranch, Major: 1}
