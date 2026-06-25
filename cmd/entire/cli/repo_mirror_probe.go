@@ -150,16 +150,16 @@ func classifyWaitContextErr(err error) error {
 	return fmt.Errorf("timed out waiting for initial clone: %w", err)
 }
 
-// explainSuspendedMirror prints operator-recovery guidance for a suspended
-// placement: the cluster won't serve clones until upstream GitHub access is
-// restored and an operator resumes it. Suspension usually follows upstream
-// access loss (App uninstalled, repo went private, or a transient API error).
+// explainSuspendedMirror tells the user a suspended placement can't be served
+// and to contact support. Suspension usually follows a loss of upstream GitHub
+// access (App uninstalled, repo went private, or a transient API error); the
+// fix is operator-side, so we point at support rather than leaking an internal
+// admin command.
 func explainSuspendedMirror(w io.Writer, mirrorID string) {
 	fmt.Fprintf(w,
-		"\nMirror %s is registered but suspended — the cluster won't serve it.\n"+
+		"\nMirror %s is registered but suspended, so it can't be cloned yet.\n"+
 			"This usually means upstream GitHub access was lost (App uninstalled,\n"+
-			"the repo went private, or a transient API error). An operator can\n"+
-			"re-enable it once access is restored:\n"+
-			"  entire-core admin mirrors resume %s\n",
-		mirrorID, mirrorID)
+			"the repo went private, or a transient API error). Contact support to\n"+
+			"restore it.\n",
+		mirrorID)
 }

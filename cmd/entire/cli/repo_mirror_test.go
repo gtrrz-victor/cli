@@ -22,7 +22,9 @@ func TestExplainSuspendedMirror(t *testing.T) {
 	explainSuspendedMirror(&buf, id)
 	out := buf.String()
 	require.Contains(t, out, id, "message must name the mirror")
-	require.Contains(t, out, "entire-core admin mirrors resume "+id, "message must give the resume command")
+	require.Contains(t, out, "suspended")
+	require.Contains(t, out, "Contact support", "must point at support, not an internal admin command")
+	require.NotContains(t, out, "entire-core", "must not leak internal terminology")
 }
 
 // fakeMirrorGetter feeds awaitMirrorReady a scripted sequence of statuses (the
@@ -142,14 +144,15 @@ func TestReportOneShotMirror(t *testing.T) {
 		require.Contains(t, out.String(), "git clone "+mirrorURL)
 	})
 
-	t.Run("suspended surfaces resume guidance as SilentError", func(t *testing.T) {
+	t.Run("suspended surfaces support guidance as SilentError", func(t *testing.T) {
 		t.Parallel()
 		var out, errW bytes.Buffer
 		outcome := mirrorCreateOutcome{created: mk(false, false), status: coreapi.MirrorStatusSuspended, polled: true}
 		err := reportOneShotMirror(&out, &errW, outcome, errMirrorSuspended)
 		var silent *SilentError
 		require.ErrorAs(t, err, &silent)
-		require.Contains(t, errW.String(), "entire-core admin mirrors resume "+id)
+		require.Contains(t, errW.String(), "Contact support")
+		require.NotContains(t, errW.String(), "entire-core")
 		require.NotContains(t, out.String(), "git clone")
 	})
 

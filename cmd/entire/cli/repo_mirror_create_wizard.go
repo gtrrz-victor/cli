@@ -535,13 +535,9 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 	case coreapi.MirrorStatusReady:
 		res.status = mirrorStatusReady
 	case coreapi.MirrorStatusSuspended:
-		// Carry the mirror id + resume command so the failure summary is
-		// actionable, matching the one-shot's explainSuspendedMirror guidance.
-		res.status, res.err = mirrorStatusSuspended,
-			fmt.Errorf("suspended — an operator can resume it: entire-core admin mirrors resume %s", outcome.created.MirrorId)
+		res.status, res.err = mirrorStatusSuspended, errors.New("the mirror is suspended; contact support")
 	case coreapi.MirrorStatusFailed:
-		res.status, res.err = mirrorStatusFailed,
-			fmt.Errorf("initial clone failed (mirror %s)", outcome.created.MirrorId)
+		res.status, res.err = mirrorStatusFailed, errors.New("the initial clone failed; contact support")
 	case coreapi.MirrorStatusProcessing:
 		nonTerminal()
 	default:
