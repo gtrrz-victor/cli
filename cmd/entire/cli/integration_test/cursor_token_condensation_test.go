@@ -101,7 +101,7 @@ func TestCursorTokenUsage_SurvivesCondensation(t *testing.T) {
 	content, found := env.ReadFileFromBranch(paths.MetadataBranchName, metadataPath)
 	require.True(t, found, "session metadata should exist at %s", metadataPath)
 
-	var meta checkpoint.CommittedMetadata
+	var meta checkpoint.Metadata
 	require.NoError(t, json.Unmarshal([]byte(content), &meta))
 
 	require.NotNilf(t, meta.TokenUsage,
@@ -207,7 +207,7 @@ func readCommittedTokenUsage(t *testing.T, env *TestEnv, checkpointID string) *a
 	t.Helper()
 	content, found := env.ReadFileFromBranch(paths.MetadataBranchName, SessionMetadataPath(checkpointID))
 	require.Truef(t, found, "session metadata should exist for checkpoint %s", checkpointID)
-	var meta checkpoint.CommittedMetadata
+	var meta checkpoint.Metadata
 	require.NoError(t, json.Unmarshal([]byte(content), &meta))
 	return meta.TokenUsage
 }
