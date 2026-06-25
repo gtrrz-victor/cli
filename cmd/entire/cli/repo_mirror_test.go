@@ -29,21 +29,28 @@ func TestExplainSuspendedMirror(t *testing.T) {
 
 // fakeMirrorGetter feeds awaitMirrorReady a scripted sequence of statuses (the
 // last entry repeats) or a fixed error, standing in for *coreapi.Client.GetMirror.
+// errsBefore makes the first N calls return a transient error before the status
+// sequence begins, to exercise the poll's retry tolerance.
 type fakeMirrorGetter struct {
-	statuses []coreapi.MirrorStatus
-	err      error
-	calls    int
+	statuses   []coreapi.MirrorStatus
+	err        error
+	errsBefore int
+	calls      int
 }
 
 func (f *fakeMirrorGetter) GetMirror(_ context.Context, _ coreapi.GetMirrorParams) (*coreapi.Mirror, error) {
+	n := f.calls
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
-	i := f.calls
+	if n < f.errsBefore {
+		return nil, errors.New("transient: connection reset")
+	}
+	i := n - f.errsBefore
 	if i >= len(f.statuses) {
 		i = len(f.statuses) - 1
 	}
-	f.calls++
 	m := &coreapi.Mirror{}
 	m.Status = coreapi.NewOptMirrorStatus(f.statuses[i])
 	return m, nil
@@ -95,6 +102,21 @@ func TestAwaitMirrorReady(t *testing.T) {
 		f := &fakeMirrorGetter{statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusProcessing}}
 		_, err := awaitMirrorReady(ctx, f, "m", 20*time.Millisecond, nil)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+
+	t.Run("transient errors are tolerated, then ready", func(t *testing.T) {
+		// Fewer consecutive errors than the cap, so the poll rides them out.
+		f := &fakeMirrorGetter{errsBefore: maxConsecutivePollErrors - 1, statuses: []coreapi.MirrorStatus{coreapi.MirrorStatusReady}}
+		status, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
+		require.NoError(t, err)
+		require.Equal(t, coreapi.MirrorStatusReady, status)
+	})
+
+	t.Run("persistent errors give up after the cap", func(t *testing.T) {
+		f := &fakeMirrorGetter{err: errors.New("boom")}
+		_, err := awaitMirrorReady(ctx, f, "m", time.Second, nil)
+		require.ErrorContains(t, err, "poll mirror status")
+		require.Equal(t, maxConsecutivePollErrors, f.calls, "should stop at the cap, not spin to the deadline")
 	})
 }
 

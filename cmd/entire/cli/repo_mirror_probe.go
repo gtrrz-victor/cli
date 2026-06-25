@@ -67,6 +67,13 @@ func parseGitHubURL(rawURL string) (owner, repo string, err error) {
 // for the initial clone. A package var (not const) so tests can shorten it.
 var mirrorPollInterval = 2 * time.Second
 
+// maxConsecutivePollErrors bounds how many back-to-back GetMirror failures the
+// clone wait tolerates before giving up. A brief network/API glitch during a
+// long initial clone shouldn't fail the create, but a persistent error
+// (deleted mirror, revoked auth) should surface rather than spin to the
+// deadline. The counter resets on any successful poll.
+const maxConsecutivePollErrors = 5
+
 var (
 	// errMirrorCloneFailed reports the mirror's initial clone reached the
 	// terminal "failed" status — the server gave up cloning the upstream.
@@ -89,7 +96,8 @@ type mirrorStatusGetter interface {
 //   - nil                     when ready (the repo is clonable)
 //   - errMirrorCloneFailed    when the initial clone failed
 //   - errMirrorSuspended      when the placement is suspended
-//   - a timeout/transport err when the wait deadline passed or a poll errored
+//   - a timeout/transport err when the wait deadline passed, or polls kept
+//     erroring past maxConsecutivePollErrors (transient glitches are retried)
 //
 // "processing" keeps the loop running. This replaces the old smart-HTTP
 // info/refs probe: the control plane now reports clone readiness directly via
@@ -108,28 +116,37 @@ func awaitMirrorReady(ctx context.Context, c mirrorStatusGetter, mirrorID string
 	defer ticker.Stop()
 
 	var last coreapi.MirrorStatus
+	var consecutiveErrs int
 	for {
 		m, err := c.GetMirror(ctx, coreapi.GetMirrorParams{MirrorId: mirrorID})
-		if err != nil {
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return last, classifyWaitContextErr(ctx.Err())
 			}
-			return last, fmt.Errorf("poll mirror status: %w", err)
-		}
-		if s, ok := m.Status.Get(); ok {
-			last = s
-			if onStatus != nil {
-				onStatus(s)
+			// Tolerate transient glitches: the clone may still be progressing,
+			// so retry on the next tick. Only give up once errors persist.
+			consecutiveErrs++
+			if consecutiveErrs >= maxConsecutivePollErrors {
+				return last, fmt.Errorf("poll mirror status: %w", err)
 			}
-			switch s {
-			case coreapi.MirrorStatusReady:
-				return s, nil
-			case coreapi.MirrorStatusFailed:
-				return s, errMirrorCloneFailed
-			case coreapi.MirrorStatusSuspended:
-				return s, errMirrorSuspended
-			case coreapi.MirrorStatusProcessing:
-				// keep waiting
+		default:
+			consecutiveErrs = 0
+			if s, ok := m.Status.Get(); ok {
+				last = s
+				if onStatus != nil {
+					onStatus(s)
+				}
+				switch s {
+				case coreapi.MirrorStatusReady:
+					return s, nil
+				case coreapi.MirrorStatusFailed:
+					return s, errMirrorCloneFailed
+				case coreapi.MirrorStatusSuspended:
+					return s, errMirrorSuspended
+				case coreapi.MirrorStatusProcessing:
+					// keep waiting
+				}
 			}
 		}
 		select {
