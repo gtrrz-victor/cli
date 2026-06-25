@@ -136,13 +136,17 @@ func selectableAvailableRepos(avail []coreapi.AvailableMirror) []coreapi.Availab
 	return out
 }
 
-// clusterChoices maps regions to multi-select options (value = bare host) and
-// the hosts that should start checked (the is-default regions).
-func clusterChoices(regions []regionChoice) (opts []huh.Option[string], defaults []string) {
+// clusterChoices maps regions to multi-select options (value = bare host),
+// listing every cluster, and returns the host(s) that should start checked:
+// the default cluster for the caller's jurisdiction. is_default is
+// per-jurisdiction, so pre-selecting only the caller's avoids defaulting a repo
+// into every jurisdiction. With no jurisdiction nothing is pre-checked (the user
+// picks). All clusters stay selectable regardless.
+func clusterChoices(regions []regionChoice, jurisdiction string) (opts []huh.Option[string], defaults []string) {
 	opts = make([]huh.Option[string], 0, len(regions))
 	for _, r := range regions {
 		opts = append(opts, huh.NewOption(regionLabel(r), r.host))
-		if r.isDefault {
+		if jurisdiction != "" && r.isDefault && r.jurisdiction == jurisdiction {
 			defaults = append(defaults, r.host)
 		}
 	}
@@ -218,7 +222,8 @@ func runMirrorCreateWizard(cmd *cobra.Command, noWait bool, waitTimeout time.Dur
 		auth.EnableInsecureHTTP()
 	}
 
-	if err := ensureMirrorWizardAuth(ctx, errW, insecure); err != nil {
+	jurisdiction, err := ensureMirrorWizardAuth(ctx, errW, insecure)
+	if err != nil {
 		return err
 	}
 
@@ -257,7 +262,7 @@ func runMirrorCreateWizard(cmd *cobra.Command, noWait bool, waitTimeout time.Dur
 	if len(regions) == 0 {
 		return errors.New("no regions available to mirror into")
 	}
-	selectedRegions, err := pickRegions(outW, regions)
+	selectedRegions, err := pickRegions(outW, regions, jurisdiction)
 	if err != nil || len(selectedRegions) == 0 {
 		return err
 	}
@@ -272,31 +277,37 @@ func runMirrorCreateWizard(cmd *cobra.Command, noWait bool, waitTimeout time.Dur
 // ensureMirrorWizardAuth mirrors `entire auth status`: resolve the active
 // target (honouring ENTIRE_TOKEN), enforce TLS on the core we'll dial, and
 // validate the token with a /me probe so the wizard fails fast with a re-login
-// hint rather than deep inside the first API call.
-func ensureMirrorWizardAuth(ctx context.Context, errW io.Writer, insecure bool) error {
+// hint rather than deep inside the first API call. Returns the caller's home
+// jurisdiction (from /me, may be "") so the region picker can pre-select that
+// jurisdiction's default cluster.
+func ensureMirrorWizardAuth(ctx context.Context, errW io.Writer, insecure bool) (string, error) {
 	target, err := resolveAuthStatusTarget(ctx, auth.Contexts, auth.RefreshedLoginToken)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if target.token == "" {
 		fmt.Fprintln(errW, "Not logged in. Run 'entire login' to authenticate.")
-		return NewSilentError(errors.New("not logged in"))
+		return "", NewSilentError(errors.New("not logged in"))
 	}
 	if !insecure && target.coreURL != "" {
 		if err := api.RequireSecureURL(target.coreURL); err != nil {
-			return fmt.Errorf("login server URL check: %w", err)
+			return "", fmt.Errorf("login server URL check: %w", err)
 		}
 	}
 	profile, err := defaultFetchProfile(ctx, target.coreURL, target.token)
 	if err != nil {
 		if isKeychainTokenRejected(err) {
 			fmt.Fprintf(errW, "Login for %s is no longer valid. Run 'entire login' to re-authenticate.\n", target.coreURL)
-			return NewSilentError(errors.New("login no longer valid"))
+			return "", NewSilentError(errors.New("login no longer valid"))
 		}
-		return fmt.Errorf("validate auth: %w", err)
+		return "", fmt.Errorf("validate auth: %w", err)
 	}
-	fmt.Fprintf(errW, "Signed in as %s via %s\n", profile.Handle, target.coreURL)
-	return nil
+	if profile.Jurisdiction != "" {
+		fmt.Fprintf(errW, "Signed in as %s (%s) via %s\n", profile.Handle, profile.Jurisdiction, target.coreURL)
+	} else {
+		fmt.Fprintf(errW, "Signed in as %s via %s\n", profile.Handle, target.coreURL)
+	}
+	return profile.Jurisdiction, nil
 }
 
 // pickRepos runs the repo multi-select and returns the chosen available
@@ -339,10 +350,10 @@ func pickRepos(w io.Writer, repos []coreapi.AvailableMirror) ([]coreapi.Availabl
 	return chosen, nil
 }
 
-// pickRegions runs the region multi-select, pre-selecting the default
-// region(s). A clean cancel returns (nil, nil).
-func pickRegions(w io.Writer, regions []regionChoice) ([]regionChoice, error) {
-	opts, defaults := clusterChoices(regions)
+// pickRegions runs the region multi-select, pre-selecting the default cluster
+// for the caller's jurisdiction. A clean cancel returns (nil, nil).
+func pickRegions(w io.Writer, regions []regionChoice, jurisdiction string) ([]regionChoice, error) {
+	opts, defaults := clusterChoices(regions, jurisdiction)
 	regionByHost := make(map[string]regionChoice, len(regions))
 	for _, r := range regions {
 		regionByHost[r.host] = r

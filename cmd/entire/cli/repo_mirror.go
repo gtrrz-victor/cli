@@ -212,27 +212,55 @@ func resolveDefaultClusterHost(ctx context.Context, c *coreapi.Client) (string, 
 	if err != nil {
 		return "", err
 	}
-	return pickDefaultRegionHost(regions)
+	jurisdiction, err := callerJurisdiction(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	return pickDefaultRegionHost(regions, jurisdiction)
 }
 
-// pickDefaultRegionHost chooses the default cluster host from the catalog: the
-// is-default cluster, or the sole cluster when there's exactly one. Empty or
-// ambiguous catalogs error so the caller can tell the user to pass
-// [cluster-host]. Pure, so the selection is unit-testable without a live core.
-func pickDefaultRegionHost(regions []regionChoice) (string, error) {
+// callerJurisdiction returns the active principal's home jurisdiction slug from
+// GET /me (e.g. "eu"). May return "" if the server doesn't report one.
+func callerJurisdiction(ctx context.Context, c *coreapi.Client) (string, error) {
+	me, err := c.GetMe(ctx)
+	if err != nil {
+		return "", renderCoreError(err)
+	}
+	j, _ := me.Jurisdiction.Get()
+	return j, nil
+}
+
+// pickDefaultRegionHost chooses the default cluster host for the caller's
+// jurisdiction. is_default is per-jurisdiction (each jurisdiction has one), so a
+// known jurisdiction selects its default directly. With no jurisdiction it falls
+// back to a lone cluster or a lone default; anything ambiguous errors so the
+// caller can tell the user to pass [cluster-host]. Pure, so the selection is
+// unit-testable without a live core.
+func pickDefaultRegionHost(regions []regionChoice, jurisdiction string) (string, error) {
+	if len(regions) == 0 {
+		return "", errors.New("no clusters available to mirror into; pass [cluster-host] explicitly")
+	}
+	if jurisdiction != "" {
+		for _, r := range regions {
+			if r.isDefault && r.jurisdiction == jurisdiction {
+				return r.host, nil
+			}
+		}
+		return "", fmt.Errorf("no default cluster for your jurisdiction (%s); pass [cluster-host] explicitly", jurisdiction)
+	}
+	if len(regions) == 1 {
+		return regions[0].host, nil
+	}
+	var defaults []regionChoice
 	for _, r := range regions {
 		if r.isDefault {
-			return r.host, nil
+			defaults = append(defaults, r)
 		}
 	}
-	switch len(regions) {
-	case 0:
-		return "", errors.New("no clusters available to mirror into; pass [cluster-host] explicitly")
-	case 1:
-		return regions[0].host, nil
-	default:
-		return "", errors.New("no default cluster configured; pass [cluster-host] explicitly")
+	if len(defaults) == 1 {
+		return defaults[0].host, nil
 	}
+	return "", errors.New("could not determine your jurisdiction's default cluster; pass [cluster-host] explicitly")
 }
 
 // mirrorCreateOutcome bundles the create response with the clone status

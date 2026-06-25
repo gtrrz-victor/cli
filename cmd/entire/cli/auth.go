@@ -199,6 +199,9 @@ type authProfile struct {
 	Email          string
 	Provider       string
 	ProviderUserID string
+	// Jurisdiction is the caller's home jurisdiction slug (e.g. "eu"), used to
+	// pick the default mirror cluster for that jurisdiction. May be empty.
+	Jurisdiction string
 }
 
 // profileFetcher fetches a user's profile via GET /me on coreURL, authenticated
@@ -319,6 +322,7 @@ func defaultFetchProfile(ctx context.Context, coreURL, token string) (*authProfi
 		ProviderUserID: me.Auth.ProviderUserId,
 	}
 	p.Handle, _ = me.Global.Handle.Get()
+	p.Jurisdiction, _ = me.Jurisdiction.Get()
 	if reg, ok := me.Regional.Get(); ok {
 		p.DisplayName, _ = reg.DisplayName.Get()
 		p.Email, _ = reg.Email.Get()

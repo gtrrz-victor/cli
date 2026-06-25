@@ -66,19 +66,26 @@ func TestHostFromPublicURL(t *testing.T) {
 func TestClusterChoices(t *testing.T) {
 	t.Parallel()
 	regions := []regionChoice{
+		// Both us-east and eu-west are defaults — for their own jurisdictions.
 		{slug: "us-east", jurisdiction: "us", host: "aws-us-east-2.entire.io", isDefault: true},
-		{slug: "eu-west", jurisdiction: "eu", host: "eu-west-1.entire.io"},
+		{slug: "eu-west", jurisdiction: "eu", host: "eu-west-1.entire.io", isDefault: true},
 		{host: "bare.entire.io"}, // no slug/jurisdiction
 	}
 
-	opts, defaults := clusterChoices(regions)
+	// Caller is in "eu": every cluster is listed, but only the eu default
+	// pre-selects (is_default is per-jurisdiction, so the us default must not).
+	opts, defaults := clusterChoices(regions, "eu")
 
 	require.Len(t, opts, 3)
 	require.Equal(t, "us-east (us)", opts[0].Key)
 	require.Equal(t, "aws-us-east-2.entire.io", opts[0].Value)
 	require.Equal(t, "eu-west (eu)", opts[1].Key)
 	require.Equal(t, "bare.entire.io", opts[2].Key) // falls back to host
-	require.Equal(t, []string{"aws-us-east-2.entire.io"}, defaults)
+	require.Equal(t, []string{"eu-west-1.entire.io"}, defaults)
+
+	// Unknown jurisdiction: all still listed, nothing pre-selected.
+	_, noneDefault := clusterChoices(regions, "")
+	require.Empty(t, noneDefault)
 }
 
 func TestRegionLabel(t *testing.T) {
