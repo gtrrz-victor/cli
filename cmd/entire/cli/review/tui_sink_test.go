@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
 
@@ -79,6 +80,31 @@ func TestTUIPostRunCompleteSinkFlushesAfterExit(t *testing.T) {
 	}
 	if got := postRunOut.String(); got != "final verdict\n" {
 		t.Fatalf("flushed output = %q, want final verdict", got)
+	}
+}
+
+func TestTUISink_PostRunCompleteDoesNotHangWhenProgramNeverConsumesQuit(t *testing.T) {
+	oldGrace := tuiPostRunCompleteGrace
+	tuiPostRunCompleteGrace = 10 * time.Millisecond
+	t.Cleanup(func() { tuiPostRunCompleteGrace = oldGrace })
+
+	var buf bytes.Buffer
+	sink := &TUISink{
+		program: tea.NewProgram(newReviewTUIModel([]string{"agent-a"}, func() {}), tea.WithOutput(&buf), tea.WithInput(bytes.NewReader(nil))),
+		started: true,
+		done:    make(chan struct{}), // deliberately never closed: models a stuck Bubble Tea shutdown.
+	}
+
+	done := make(chan struct{})
+	go func() {
+		sink.PostRunComplete()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("PostRunComplete hung when the TUI did not consume postRunCompleteMsg")
 	}
 }
 

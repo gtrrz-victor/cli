@@ -10,6 +10,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
@@ -43,6 +44,8 @@ type TUISink struct {
 
 // Compile-time interface check.
 var _ reviewtypes.Sink = (*TUISink)(nil)
+
+var tuiPostRunCompleteGrace = 2 * time.Second
 
 // NewTUISink creates a TUISink wired to cancel for Ctrl+C handling. agents is
 // the ordered list of agent names that will run; the dashboard pre-renders one
@@ -198,6 +201,27 @@ func (s *TUISink) PostRunComplete() {
 	if !ok {
 		return
 	}
-	s.program.Send(postRunCompleteMsg{})
-	s.Wait()
+
+	// Program.Send can block if Bubble Tea has not entered its event loop yet.
+	// Send from a goroutine and fall back to Kill so a lost post-run quit cannot
+	// leave the CLI stuck on "Finalizing output..." forever.
+	sent := make(chan struct{})
+	go func() {
+		s.program.Send(postRunCompleteMsg{})
+		close(sent)
+	}()
+
+	select {
+	case <-s.done:
+		return
+	case <-sent:
+	case <-time.After(tuiPostRunCompleteGrace):
+		s.program.Kill()
+	}
+
+	select {
+	case <-s.done:
+	case <-time.After(tuiPostRunCompleteGrace):
+		s.program.Kill()
+	}
 }
