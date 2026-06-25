@@ -103,9 +103,12 @@ func hostFromPublicURL(raw string) (string, error) {
 	// Reject anything beyond scheme://host[:port]. url.Parse demotes the
 	// `host@evil.com` userinfo trick into u.User (leaving u.Host=evil.com) and
 	// stashes a trailing path in u.Path, neither of which validateClusterHost
-	// would otherwise see. Same belt-and-suspenders the positional <cluster-host>
-	// arg gets — the host flows into clone URLs and the STS audience.
-	if u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+	// would otherwise see. A bare "/" path is tolerated: publicUrl is a trusted
+	// catalog field, and a trailing slash (https://host/) is benign — rejecting
+	// it would silently drop the cluster and could leave the wizard with no
+	// regions. Anything richer (a real path, query, fragment, userinfo) is still
+	// refused, since the host flows into clone URLs and the STS audience.
+	if u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("public_url %q must be scheme://host[:port] only", raw)
 	}
 	if err := validateClusterHost(u.Host); err != nil {

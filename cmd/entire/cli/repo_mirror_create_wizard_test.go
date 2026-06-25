@@ -67,6 +67,8 @@ func TestHostFromPublicURL(t *testing.T) {
 		{name: "bare host", in: "eu-west-1.entire.io", want: "eu-west-1.entire.io"},
 		{name: "host with port", in: "https://localhost:8080", want: "localhost:8080"},
 		{name: "trims space", in: "  https://aws-us-east-2.entire.io  ", want: "aws-us-east-2.entire.io"},
+		// A trailing slash is a benign catalog shape, not a path injection.
+		{name: "trailing slash", in: "https://aws-us-east-2.entire.io/", want: "aws-us-east-2.entire.io"},
 		{name: "empty", in: "", wantErr: true},
 		// userinfo trick rejected by validateClusterHost
 		{name: "userinfo injection", in: "https://aws-us-east-2.entire.io@evil.com", wantErr: true},
