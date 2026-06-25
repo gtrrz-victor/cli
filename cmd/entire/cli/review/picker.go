@@ -372,17 +372,11 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 			if convErr != nil || idx < 0 || idx >= len(slots) {
 				continue
 			}
-			action, err := promptSlotAction(ctx, slots[idx], len(candidates) > 1)
+			action, err := promptSlotAction(ctx, slots[idx])
 			if err != nil {
 				return nil, err
 			}
 			switch action {
-			case "agent":
-				slot, err := promptChangeAgent(ctx, candidates, slots[idx])
-				if err != nil {
-					return nil, err
-				}
-				slots[idx] = slot
 			case "model":
 				slot, err := promptChangeModel(ctx, slots[idx])
 				if err != nil {
@@ -399,26 +393,7 @@ func pickSlotList(ctx context.Context, title, desc string, candidates []string, 
 // promptCrewSlot prompts for one reviewer slot: agent plus model. seed
 // pre-selects the current agent/model when editing (zero value when adding).
 func promptCrewSlot(ctx context.Context, launchable []string, seed crewSlot) (crewSlot, error) {
-	agentName, err := promptCrewAgent(ctx, launchable, seed.agent, false)
-	if err != nil {
-		return crewSlot{}, err
-	}
-	seedModel := ""
-	if agentName == seed.agent {
-		seedModel = seed.model
-	}
-	model, err := promptCrewModel(ctx, agentName, seedModel)
-	if err != nil {
-		return crewSlot{}, err
-	}
-	return crewSlot{agent: agentName, model: model}, nil
-}
-
-// promptChangeAgent swaps the agent on an existing reviewer slot and then asks
-// for that agent's model. Keeping the same agent preserves the current model as
-// the preselected value.
-func promptChangeAgent(ctx context.Context, candidates []string, seed crewSlot) (crewSlot, error) {
-	agentName, err := promptCrewAgent(ctx, candidates, seed.agent, true)
+	agentName, err := promptCrewAgent(ctx, launchable, seed.agent)
 	if err != nil {
 		return crewSlot{}, err
 	}
@@ -469,16 +444,8 @@ func buildCrewProfile(ctx context.Context, profileName string, slots []crewSlot)
 }
 
 // promptSlotAction asks what to do with an existing reviewer slot row.
-func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool) (string, error) {
-	options := make([]huh.Option[string], 0, 4)
-	if allowAgentChange {
-		options = append(options, huh.NewOption("Change agent", "agent"))
-	}
-	options = append(options,
-		huh.NewOption("Change model", "model"),
-		huh.NewOption("Remove", "remove"),
-		huh.NewOption("Cancel", "cancel"),
-	)
+func promptSlotAction(ctx context.Context, slot crewSlot) (string, error) {
+	options := slotActionOptions()
 	picked := "cancel"
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
@@ -492,6 +459,14 @@ func promptSlotAction(ctx context.Context, slot crewSlot, allowAgentChange bool)
 	return picked, nil
 }
 
+func slotActionOptions() []huh.Option[string] {
+	return []huh.Option[string]{
+		huh.NewOption("Change model", "model"),
+		huh.NewOption("Remove", "remove"),
+		huh.NewOption("Cancel", "cancel"),
+	}
+}
+
 func slotLabel(s crewSlot) string {
 	// Surface the model when one was set explicitly.
 	if model := strings.TrimSpace(s.model); model != "" {
@@ -500,10 +475,9 @@ func slotLabel(s crewSlot) string {
 	return labelForSimpleAgent(s.agent)
 }
 
-// promptCrewAgent picks the agent for a slot. Auto-selects when only one
-// launchable agent exists. editing tailors the title for changing an existing
-// slot's agent versus choosing one for a brand-new slot.
-func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string, editing bool) (string, error) {
+// promptCrewAgent picks the agent for a new slot. Auto-selects when only one
+// launchable agent exists.
+func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string) (string, error) {
 	if len(launchable) == 1 {
 		return launchable[0], nil
 	}
@@ -520,13 +494,9 @@ func promptCrewAgent(ctx context.Context, launchable []string, seedAgent string,
 			}
 		}
 	}
-	title := "Add a slot: which agent?"
-	if editing {
-		title = "Change agent"
-	}
 	form := newAccessibleForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(title).
+			Title("Add a slot: which agent?").
 			Options(options...).
 			Height(reviewPickerHeight(len(options))).
 			Value(&picked),

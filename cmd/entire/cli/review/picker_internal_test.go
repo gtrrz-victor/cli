@@ -2,8 +2,28 @@ package review
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
+
+func TestSlotActionOptionsOnlyModelRemoveCancel(t *testing.T) {
+	t.Parallel()
+	options := slotActionOptions()
+	keys := make([]string, 0, len(options))
+	values := make([]string, 0, len(options))
+	for _, opt := range options {
+		keys = append(keys, opt.Key)
+		values = append(values, opt.Value)
+	}
+	wantKeys := []string{"Change model", "Remove", "Cancel"}
+	wantValues := []string{"model", "remove", "cancel"}
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("slot action labels = %v, want %v", keys, wantKeys)
+	}
+	if !reflect.DeepEqual(values, wantValues) {
+		t.Fatalf("slot action values = %v, want %v", values, wantValues)
+	}
+}
 
 func TestReviewModelSelectOptionsPreservesCurrentCustomModel(t *testing.T) {
 	t.Parallel()
