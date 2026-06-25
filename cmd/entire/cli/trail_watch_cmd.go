@@ -84,11 +84,12 @@ Events emitted by the server:
 }
 
 func runTrailWatch(cmd *cobra.Command, number int, jsonOutput, showPings, once bool) error {
-	return runAuthenticatedDataAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
 		trailID, description, err := resolveTrailWatchTarget(ctx, client, number)
 		if err != nil {
 			return err
 		}
+		saveTrailsEnabledForRepoBestEffort(ctx, true)
 		return runTrailWatchResolved(cmd, client, trailID, description, jsonOutput, showPings, once)
 	})
 }
