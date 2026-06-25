@@ -145,8 +145,9 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			"the target cluster, then waits for the initial GitHub→EntireDB clone " +
 			"to finish so `git clone` works on return. Pass --no-wait to return " +
 			"as soon as the placement is registered. Idempotent on " +
-			"(upstream, cluster). The cluster-host defaults to your catalog's " +
-			"default cluster when omitted.",
+			"(upstream, cluster). The cluster-host defaults to " +
+			defaultClusterHost + " when omitted (the interactive wizard, with " +
+			"no args, instead lets you pick clusters).",
 		Example: "  entire repo mirror create\n" +
 			"  entire repo mirror create github.com/octocat/hello-world\n" +
 			"  entire repo mirror create github.com/octocat/hello-world aws-us-east-2.entire.io",
@@ -160,29 +161,14 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("invalid <github-url>: %w", err)
 			}
-			var clusterHost string
-			if len(args) > 1 {
-				clusterHost = args[1]
-				if err := validateClusterHost(clusterHost); err != nil {
-					cmd.SilenceUsage = true
-					return fmt.Errorf("invalid [cluster-host]: %w", err)
-				}
-			} else {
-				// No cluster given: pick the catalog's default cluster (the same
-				// GET /api/v1/clusters source the wizard uses), resolved via the
-				// active context. runCore owns the active-client preamble
-				// (silence-usage, --insecure-http-auth, error mapping).
-				if err := runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-					h, rerr := resolveDefaultClusterHost(ctx, c)
-					if rerr != nil {
-						return rerr
-					}
-					clusterHost = h
-					fmt.Fprintf(cmd.ErrOrStderr(), "Using default cluster %s\n", clusterHost)
-					return nil
-				}); err != nil {
-					return err
-				}
+			// The non-interactive one-shot keeps a fixed default cluster
+			// (defaultClusterHost) when [cluster-host] is omitted — catalog-based
+			// cluster guessing is intentionally limited to the interactive
+			// wizard (the no-args path above), so scripts get stable behavior.
+			clusterHost := clusterArg(args)
+			if err := validateClusterHost(clusterHost); err != nil {
+				cmd.SilenceUsage = true
+				return fmt.Errorf("invalid [cluster-host]: %w", err)
 			}
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
 				errW := cmd.ErrOrStderr()
@@ -199,68 +185,6 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once the placement is registered, without waiting for the initial clone")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 30*time.Minute, "how long to wait for the initial clone to finish")
 	return cmd
-}
-
-// resolveDefaultClusterHost picks the cluster a `repo mirror create
-// <github-url>` targets when [cluster-host] is omitted, from the control plane's
-// cluster catalog (the same GET /api/v1/clusters the wizard uses): the cluster
-// flagged is_default, or the sole cluster when there is exactly one. It errors
-// when the catalog is empty or has no clear default so the user knows to pass
-// [cluster-host] explicitly, rather than silently guessing.
-func resolveDefaultClusterHost(ctx context.Context, c *coreapi.Client) (string, error) {
-	regions, err := availableRegions(ctx, c)
-	if err != nil {
-		return "", err
-	}
-	jurisdiction, err := callerJurisdiction(ctx, c)
-	if err != nil {
-		return "", err
-	}
-	return pickDefaultRegionHost(regions, jurisdiction)
-}
-
-// callerJurisdiction returns the active principal's home jurisdiction slug from
-// GET /me (e.g. "eu"). May return "" if the server doesn't report one.
-func callerJurisdiction(ctx context.Context, c *coreapi.Client) (string, error) {
-	me, err := c.GetMe(ctx)
-	if err != nil {
-		return "", renderCoreError(err)
-	}
-	j, _ := me.Jurisdiction.Get()
-	return j, nil
-}
-
-// pickDefaultRegionHost chooses the default cluster host for the caller's
-// jurisdiction. is_default is per-jurisdiction (each jurisdiction has one), so a
-// known jurisdiction selects its default directly. With no jurisdiction it falls
-// back to a lone cluster or a lone default; anything ambiguous errors so the
-// caller can tell the user to pass [cluster-host]. Pure, so the selection is
-// unit-testable without a live core.
-func pickDefaultRegionHost(regions []regionChoice, jurisdiction string) (string, error) {
-	if len(regions) == 0 {
-		return "", errors.New("no clusters available to mirror into; pass [cluster-host] explicitly")
-	}
-	if jurisdiction != "" {
-		for _, r := range regions {
-			if r.isDefault && r.jurisdiction == jurisdiction {
-				return r.host, nil
-			}
-		}
-		return "", fmt.Errorf("no default cluster for your jurisdiction (%s); pass [cluster-host] explicitly", jurisdiction)
-	}
-	if len(regions) == 1 {
-		return regions[0].host, nil
-	}
-	var defaults []regionChoice
-	for _, r := range regions {
-		if r.isDefault {
-			defaults = append(defaults, r)
-		}
-	}
-	if len(defaults) == 1 {
-		return defaults[0].host, nil
-	}
-	return "", errors.New("could not determine your jurisdiction's default cluster; pass [cluster-host] explicitly")
 }
 
 // mirrorCreateOutcome bundles the create response with the clone status

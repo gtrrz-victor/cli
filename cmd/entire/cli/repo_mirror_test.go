@@ -452,59 +452,6 @@ func TestAvailableMirrorRow(t *testing.T) {
 	}
 }
 
-func TestPickDefaultRegionHost(t *testing.T) {
-	t.Parallel()
-
-	// Three per-jurisdiction defaults, like prod.
-	threeDefaults := []regionChoice{
-		{host: "aws-ap-southeast-2.entire.io", jurisdiction: "au", isDefault: true},
-		{host: "aws-eu-central-1.entire.io", jurisdiction: "eu", isDefault: true},
-		{host: "aws-us-east-2.entire.io", jurisdiction: "us", isDefault: true},
-	}
-
-	t.Run("picks the default for the caller's jurisdiction", func(t *testing.T) {
-		t.Parallel()
-		host, err := pickDefaultRegionHost(threeDefaults, "eu")
-		require.NoError(t, err)
-		require.Equal(t, "aws-eu-central-1.entire.io", host)
-	})
-
-	t.Run("jurisdiction with no default errors", func(t *testing.T) {
-		t.Parallel()
-		_, err := pickDefaultRegionHost(threeDefaults, "antarctica")
-		require.Error(t, err)
-	})
-
-	t.Run("unknown jurisdiction, sole cluster is the default", func(t *testing.T) {
-		t.Parallel()
-		host, err := pickDefaultRegionHost([]regionChoice{{host: "only.entire.io"}}, "")
-		require.NoError(t, err)
-		require.Equal(t, "only.entire.io", host)
-	})
-
-	t.Run("unknown jurisdiction, lone default wins", func(t *testing.T) {
-		t.Parallel()
-		host, err := pickDefaultRegionHost([]regionChoice{
-			{host: "a.entire.io"},
-			{host: "b.entire.io", isDefault: true},
-		}, "")
-		require.NoError(t, err)
-		require.Equal(t, "b.entire.io", host)
-	})
-
-	t.Run("empty catalog errors", func(t *testing.T) {
-		t.Parallel()
-		_, err := pickDefaultRegionHost(nil, "eu")
-		require.Error(t, err)
-	})
-
-	t.Run("unknown jurisdiction with multiple defaults errors", func(t *testing.T) {
-		t.Parallel()
-		_, err := pickDefaultRegionHost(threeDefaults, "")
-		require.Error(t, err)
-	})
-}
-
 func TestClusterArg(t *testing.T) {
 	t.Parallel()
 	if got := clusterArg([]string{"github.com/o/r", "eu-west-1.entire.io"}); got != "eu-west-1.entire.io" {
