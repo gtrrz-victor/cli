@@ -3,6 +3,7 @@ package checkpointpolicy_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
@@ -47,6 +48,16 @@ func TestReadLocalPolicyRejectsMalformedJSON(t *testing.T) {
 	t.Parallel()
 	repo := initPolicyRepo(t)
 	writeRawPolicyCommit(t, repo, []byte(`{"checkpoint_version":`), plumbing.ZeroHash)
+
+	_, err := checkpointpolicy.ReadLocal(t.Context(), repo)
+	require.ErrorContains(t, err, "parse policy.json")
+}
+
+func TestReadLocalPolicyRejectsOversizedJSON(t *testing.T) {
+	t.Parallel()
+	repo := initPolicyRepo(t)
+	data := []byte(`{"checkpoint_version":"branch-v1","checkpoint_min_version":"` + strings.Repeat("a", 70*1024) + `"}`)
+	writeRawPolicyCommit(t, repo, data, plumbing.ZeroHash)
 
 	_, err := checkpointpolicy.ReadLocal(t.Context(), repo)
 	require.ErrorContains(t, err, "parse policy.json")
