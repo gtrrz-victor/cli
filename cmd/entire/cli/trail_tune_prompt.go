@@ -108,6 +108,7 @@ Guidelines:
 - Keep the template's overall shape: the role line, the context-gathering steps, the scored dimensions, the score bands, and the final "output ONLY this JSON object" contract. Preserve every {{placeholder}} (e.g. {{branch}}, {{base_branch}}, {{previous_findings}}) exactly.
 - Re-weight and reword the dimensions toward this repo's real risk/quality surface. Drop dimensions that don't apply here; add ones that do.
 - Re-anchor the score bands to concrete things in THIS repo, informed by the empirical signal (incident themes, hot files, past findings) where present.
+- The gathered signal is tuning-time context ONLY. When the runner later executes this template it sees just the diff — it has NO access to PRs, issues, or repo history. So do NOT cite issue/PR numbers (e.g. "#77", "issue #67"), commit hashes, or other gathered-only references in the rewritten template; fold the lesson in as a generic, diff-checkable criterion instead (e.g. "watch for credential tokens leaked into usage output", not "(PR #77)").
 - Be concise. Do not turn a tight template into an essay.
 - Only include a runner in your output if you are changing it.
 
