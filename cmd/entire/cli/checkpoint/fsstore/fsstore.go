@@ -12,10 +12,11 @@
 // git leakage concrete.
 //
 // It is faithful to the contract's per-session metadata and write-request
-// semantics, but it does not replicate the git store's cross-session
-// aggregation: the root summary's TokenUsage reflects the latest session rather
-// than a sum across sessions. That aggregation is not needed to validate the
-// pluggable seam and is intentionally omitted.
+// semantics — including prompt and summary redaction via the shared
+// checkpoint helpers — but it does not replicate two git-writer behaviors:
+// cross-session aggregation (the root summary's TokenUsage reflects the latest
+// session, not a sum) and derived stamps the git writer adds (CLI version,
+// skill-events version). Neither is needed to validate the pluggable seam.
 package fsstore
 
 import (
@@ -188,7 +189,7 @@ func (s *Store) writeSessionSummary(r cp.SessionSummary) error {
 	if sc == nil || len(sc.Sessions) == 0 {
 		return fmt.Errorf("fsstore: cannot set summary for unknown checkpoint %s", r.CheckpointID)
 	}
-	sc.Sessions[len(sc.Sessions)-1].Metadata.Summary = r.Summary
+	sc.Sessions[len(sc.Sessions)-1].Metadata.Summary = checkpoint.RedactSummary(r.Summary)
 	return s.save(sc)
 }
 
@@ -335,7 +336,7 @@ func metadataFromWriteOptions(opts cp.WriteOptions) cp.Metadata {
 		SkillEvents:                 opts.SkillEvents,
 		PromptAttributions:          opts.PromptAttributionsJSON,
 		SessionMetrics:              opts.SessionMetrics,
-		Summary:                     opts.Summary,
+		Summary:                     checkpoint.RedactSummary(opts.Summary),
 		Attribution:                 opts.Attribution,
 		Kind:                        opts.Kind,
 		ReviewSkills:                opts.ReviewSkills,
