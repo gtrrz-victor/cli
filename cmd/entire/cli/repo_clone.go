@@ -29,6 +29,17 @@ var mirrorCloneRefRe = regexp.MustCompile(`^/?gh/` + gitHubOwnerPat + `/` + gitH
 // borrowing a constant named for an unrelated (checkpoint) concern.
 const mirrorCloneProviderGitHub = "github"
 
+// entireCloneURLScheme is the scheme of a full mirror clone URL, which
+// git-remote-entire resolves directly. Such a URL already names the cluster, so
+// `entire clone` passes it through to `git clone` untouched.
+const entireCloneURLScheme = "entire://"
+
+// isEntireCloneURL reports whether ref is a full entire:// clone URL (vs. the
+// `/gh/<owner>/<repo>` shorthand that needs a mirror lookup).
+func isEntireCloneURL(ref string) bool {
+	return strings.HasPrefix(strings.TrimSpace(ref), entireCloneURLScheme)
+}
+
 // parseMirrorCloneRef turns a clone ref like `/gh/entirehq/entire-api` into the
 // API provider ("github") and the lowercased owner/repo. The `gh` token is the
 // path provider used in entire:// clone URLs; it maps to the "github" upstream
@@ -61,24 +72,38 @@ func newRepoCloneCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clone <repo> [target-dir]",
 		Short: "Clone a mirrored repository",
-		Long: "Clone a GitHub mirror by its `/gh/<owner>/<repo>` ref. Looks up where " +
-			"the repo is mirrored: if it's on a single cluster, clones it directly; " +
-			"if it's mirrored on more than one, prompts you to pick which to clone " +
-			"from (or pass --cluster to choose non-interactively). The optional " +
-			"[target-dir] is passed straight through to `git clone`.",
+		Long: "Clone a GitHub mirror by its `/gh/<owner>/<repo>` ref, or by a full " +
+			"`entire://<cluster>/gh/<owner>/<repo>` clone URL.\n\n" +
+			"With a `/gh/<owner>/<repo>` ref, looks up where the repo is mirrored: if " +
+			"it's on a single cluster, clones it directly; if it's mirrored on more " +
+			"than one, prompts you to pick which to clone from (or pass --cluster to " +
+			"choose non-interactively).\n\n" +
+			"A full `entire://` URL already names the cluster, so it's passed straight " +
+			"through to `git clone` with no lookup (and --cluster is ignored). The " +
+			"optional [target-dir] is passed through to `git clone` either way.",
 		Example: "  entire repo clone /gh/entirehq/entire-api\n" +
 			"  entire repo clone /gh/entirehq/entire-api ./entire-api\n" +
-			"  entire repo clone /gh/entirehq/entire-api --cluster aws-us-east-2.entire.io",
+			"  entire repo clone /gh/entirehq/entire-api --cluster aws-us-east-2.entire.io\n" +
+			"  entire repo clone entire://aws-us-east-2.entire.io/gh/entirehq/entire-api",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			provider, owner, repo, err := parseMirrorCloneRef(args[0])
-			if err != nil {
-				return fmt.Errorf("invalid <repo>: %w", err)
-			}
+			ref := args[0]
 			var targetDir string
 			if len(args) > 1 {
 				targetDir = args[1]
+			}
+
+			// A full entire:// clone URL already embeds the cluster host (it's what
+			// --cluster would otherwise resolve to), so pass it verbatim to git clone
+			// — no mirror lookup or cluster resolution. --cluster is irrelevant here.
+			if isEntireCloneURL(ref) {
+				return runGitClone(cmd.Context(), cmd, ref, targetDir)
+			}
+
+			provider, owner, repo, err := parseMirrorCloneRef(ref)
+			if err != nil {
+				return fmt.Errorf("invalid <repo>: %w", err)
 			}
 
 			var mirrors []coreapi.Mirror

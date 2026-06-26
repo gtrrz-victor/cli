@@ -46,6 +46,26 @@ func TestParseMirrorCloneRef(t *testing.T) {
 	}
 }
 
+func TestIsEntireCloneURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		ref  string
+		want bool
+	}{
+		{ref: "entire://aws-us-east-2.entire.io/gh/entirehq/entire-api", want: true},
+		{ref: "  entire://host/gh/a/b", want: true},
+		{ref: "/gh/entirehq/entire-api", want: false},
+		{ref: "gh/entirehq/entire-api", want: false},
+		{ref: "https://github.com/entirehq/entire-api", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ref, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, isEntireCloneURL(tt.ref))
+		})
+	}
+}
+
 func TestMirrorCellLabel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
