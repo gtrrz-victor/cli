@@ -96,6 +96,20 @@ func TestNewCloneAliasCmd(t *testing.T) {
 	require.NotNil(t, cmd.Flags().Lookup("cluster"))
 }
 
+// TestRepoClone_InvalidClusterFlag locks in that a malformed --cluster is
+// rejected up front (before any core is dialled), so the anti-token-leak guard
+// validateClusterHost applies to the user-supplied cluster the clone routes to.
+func TestRepoClone_InvalidClusterFlag(t *testing.T) {
+	t.Parallel()
+	cmd := newRepoCloneCmd()
+	cmd.SetOut(&nopWriter{})
+	cmd.SetErr(&nopWriter{})
+	cmd.SetArgs([]string{"/gh/entirehq/entire-api", "--cluster", "aws-us-east-2.entire.io@evil.com"})
+	err := cmd.ExecuteContext(t.Context())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid --cluster")
+}
+
 func newCloneTestCmd() *cobra.Command {
 	cmd := newRepoCloneCmd()
 	cmd.SetOut(&nopWriter{})
