@@ -16,6 +16,11 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 )
 
+// maxCopilotLineBytes bounds the scanner buffer when reading events.jsonl;
+// individual Copilot events (e.g. large tool payloads) can exceed bufio's
+// default 64 KB line limit.
+const maxCopilotLineBytes = 10 * 1024 * 1024
+
 // copilotImporter imports Copilot CLI transcripts. Copilot stores sessions
 // flat (~/.copilot/session-state/<id>/events.jsonl), not per-repo, so Discover
 // reads each session's session.start event and keeps only those whose
@@ -83,7 +88,7 @@ func copilotSessionInRepo(path, repoRoot string) bool {
 	// Scan line-by-line and stop at the first session.start (normally line 0)
 	// rather than slurping the whole transcript, which can be large.
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), 10*1024*1024) // 10 MB max line
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), maxCopilotLineBytes)
 	for scanner.Scan() {
 		var evt struct {
 			Type string `json:"type"`
