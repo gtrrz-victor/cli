@@ -3,6 +3,7 @@ package agentimport
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -39,10 +40,17 @@ func (factoryImporter) Discover(repoRoot, overridePath string, now time.Time, se
 
 // SplitTurns produces one Turn per user-prompt envelope, bounded by the next.
 // Token usage (including spawned subagents) is delegated to the Factory agent;
-// the model is read once from the session's adjacent settings file.
+// the model is read once from the session's adjacent settings file. Droid
+// envelopes carry no per-message timestamp (the agent stamps events with
+// time.Now() at hook time), so every turn falls back to the transcript file's
+// modtime — the same fallback the Gemini importer uses.
 func (factoryImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 	subagentsDir := filepath.Join(filepath.Dir(sf.Path), sf.SessionID, "subagents")
 	model := factoryaidroid.ExtractModelFromTranscript(sf.Path)
+	var createdAt time.Time
+	if info, statErr := os.Stat(sf.Path); statErr == nil {
+		createdAt = info.ModTime()
+	}
 	ag := &factoryaidroid.FactoryAIDroidAgent{}
 	return splitLineTurns(splitRawLines(full),
 		func(raw []byte) bool { _, ok := factoryPromptText(raw); return ok },
@@ -59,7 +67,7 @@ func (factoryImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 				return nil, nil
 			}
 			prompt, _ := factoryPromptText(rawLines[start])
-			return &Turn{UUID: env.ID, Prompt: prompt, Model: model, Tokens: tokens}, nil
+			return &Turn{UUID: env.ID, Prompt: prompt, Model: model, CreatedAt: createdAt, Tokens: tokens}, nil
 		})
 }
 

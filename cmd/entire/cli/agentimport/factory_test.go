@@ -57,6 +57,12 @@ func TestFactorySplitTurns_PromptsTokensSettingsModel(t *testing.T) {
 	if err := os.WriteFile(sessPath, full, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Droid carries no per-message timestamp, so turns fall back to the file
+	// modtime; pin it so we can assert CreatedAt is populated from it.
+	modTime := time.Date(2026, 6, 24, 9, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(sessPath, modTime, modTime); err != nil {
+		t.Fatal(err)
+	}
 	// Model comes from the adjacent <session>.settings.json, not the transcript.
 	if err := os.WriteFile(filepath.Join(dir, "sess.settings.json"), []byte(`{"model":"custom:Gemini-2.5-Pro-0"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -80,6 +86,9 @@ func TestFactorySplitTurns_PromptsTokensSettingsModel(t *testing.T) {
 	}
 	if turns[0].Model != "Gemini-2.5-Pro-0" {
 		t.Errorf("turn0 model = %q, want Gemini-2.5-Pro-0 (cleaned from settings)", turns[0].Model)
+	}
+	if !turns[0].CreatedAt.Equal(modTime) {
+		t.Errorf("turn0 CreatedAt = %v, want file modtime %v", turns[0].CreatedAt, modTime)
 	}
 	if turns[0].Tokens == nil || turns[0].Tokens.OutputTokens != 5 {
 		t.Errorf("turn0 tokens not bounded to its own turn: %+v", turns[0].Tokens)
