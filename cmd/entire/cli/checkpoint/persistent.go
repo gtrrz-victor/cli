@@ -424,7 +424,7 @@ func (s *GitStore) writeSessionToSubdirectory(ctx context.Context, opts WriteOpt
 	// Write prompts via the 7-layer pipeline. OPF runs only in the
 	// pre-push rewrite path (manual_commit_opf_rewrite.go).
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(opts.Prompts)
+		promptContent := RedactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return filePaths, err
@@ -1610,7 +1610,7 @@ func (s *GitStore) backfillTranscript(ctx context.Context, opts UpdateOptions) e
 
 	// Replace prompts with 7-layer-redacted content.
 	if len(opts.Prompts) > 0 {
-		promptContent := redactedJoinedPrompts(opts.Prompts)
+		promptContent := RedactedJoinedPrompts(opts.Prompts)
 		blobHash, err := CreateBlobFromContent(s.repo, []byte(promptContent))
 		if err != nil {
 			return fmt.Errorf("failed to create prompt blob: %w", err)

@@ -32,7 +32,6 @@ import (
 	cp "github.com/entireio/cli/api/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/redact"
 )
 
 // BackendType is the registry type name for the filesystem reference backend.
@@ -142,7 +141,7 @@ func (s *Store) writeSession(opts cp.WriteOptions) error {
 		SessionID:  opts.SessionID,
 		Metadata:   metadataFromWriteOptions(opts),
 		Transcript: opts.Transcript.Bytes(),
-		Prompts:    redact.String(strings.Join(opts.Prompts, checkpoint.PromptSeparator)),
+		Prompts:    checkpoint.RedactedJoinedPrompts(opts.Prompts),
 	}
 	sc.Sessions = upsertSession(sc.Sessions, session)
 
@@ -174,7 +173,7 @@ func (s *Store) backfillTranscript(opts cp.UpdateOptions) error {
 	// Replace semantics, but do not clobber sibling fields (matches the git
 	// store's stop-time transcript backfill).
 	sc.Sessions[idx].Transcript = opts.Transcript.Bytes()
-	sc.Sessions[idx].Prompts = redact.String(strings.Join(opts.Prompts, checkpoint.PromptSeparator))
+	sc.Sessions[idx].Prompts = checkpoint.RedactedJoinedPrompts(opts.Prompts)
 	if len(opts.SkillEvents) > 0 {
 		sc.Sessions[idx].Metadata.SkillEvents = opts.SkillEvents
 	}

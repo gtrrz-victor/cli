@@ -377,11 +377,7 @@ func Load(ctx context.Context) (*EntireSettings, error) {
 		return loadForWorktreeRoot(ctx, worktreeRoot)
 	}
 
-	// Get absolute paths for settings files
-	settingsFileAbs, err := paths.AbsPath(ctx, EntireSettingsFile)
-	if err != nil {
-		settingsFileAbs = EntireSettingsFile // Fallback to relative
-	}
+	settingsFileAbs, localSettingsFileAbs := settingsAbsPaths(ctx)
 	preferencesFileAbs := ""
 	if path, prefErr := ClonePreferencesPath(ctx); prefErr == nil {
 		preferencesFileAbs = path
@@ -394,16 +390,33 @@ func Load(ctx context.Context) (*EntireSettings, error) {
 		logging.Debug(ctx, "clone preferences path unresolved; skipping preferences layer",
 			slog.String("error", prefErr.Error()))
 	}
-	localSettingsFileAbs, err := paths.AbsPath(ctx, EntireSettingsLocalFile)
-	if err != nil {
-		localSettingsFileAbs = EntireSettingsLocalFile // Fallback to relative
-	}
 
 	return loadMergedSettings(settingsFileAbs, preferencesFileAbs, localSettingsFileAbs)
 }
 
+// settingsAbsPaths resolves the base and local settings file paths relative to
+// the current working directory, falling back to the relative path when
+// absolute resolution fails.
+func settingsAbsPaths(ctx context.Context) (base, local string) {
+	base, err := paths.AbsPath(ctx, EntireSettingsFile)
+	if err != nil {
+		base = EntireSettingsFile // Fallback to relative
+	}
+	local, err = paths.AbsPath(ctx, EntireSettingsLocalFile)
+	if err != nil {
+		local = EntireSettingsLocalFile // Fallback to relative
+	}
+	return base, local
+}
+
+// worktreeSettingsPaths resolves the base and local settings file paths under
+// an explicit worktree root.
+func worktreeSettingsPaths(worktreeRoot string) (base, local string) {
+	return filepath.Join(worktreeRoot, EntireSettingsFile), filepath.Join(worktreeRoot, EntireSettingsLocalFile)
+}
+
 func loadForWorktreeRoot(ctx context.Context, worktreeRoot string) (*EntireSettings, error) {
-	settingsFileAbs := filepath.Join(worktreeRoot, EntireSettingsFile)
+	settingsFileAbs, localSettingsFileAbs := worktreeSettingsPaths(worktreeRoot)
 	preferencesFileAbs := ""
 	if path, prefErr := clonePreferencesPathForWorktreeRoot(ctx, worktreeRoot); prefErr == nil {
 		preferencesFileAbs = path
@@ -411,7 +424,6 @@ func loadForWorktreeRoot(ctx context.Context, worktreeRoot string) (*EntireSetti
 		logging.Debug(ctx, "clone preferences path unresolved; skipping preferences layer",
 			slog.String("error", prefErr.Error()))
 	}
-	localSettingsFileAbs := filepath.Join(worktreeRoot, EntireSettingsLocalFile)
 	return loadMergedSettings(settingsFileAbs, preferencesFileAbs, localSettingsFileAbs)
 }
 

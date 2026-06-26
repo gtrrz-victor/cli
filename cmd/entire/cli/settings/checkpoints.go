@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/entireio/cli/cmd/entire/cli/logging"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
 // ErrInvalidCheckpointsConfig is returned when a present "checkpoints" settings
@@ -128,15 +126,7 @@ func (c *CheckpointsConfig) validate() error {
 // same way Load does (minus clone preferences, which carry no checkpoint config).
 func checkpointsSettingsPaths(ctx context.Context) (base, local string) {
 	if worktreeRoot, ok := worktreeRootFromContext(ctx); ok {
-		return filepath.Join(worktreeRoot, EntireSettingsFile), filepath.Join(worktreeRoot, EntireSettingsLocalFile)
+		return worktreeSettingsPaths(worktreeRoot)
 	}
-	base, err := paths.AbsPath(ctx, EntireSettingsFile)
-	if err != nil {
-		base = EntireSettingsFile
-	}
-	local, err = paths.AbsPath(ctx, EntireSettingsLocalFile)
-	if err != nil {
-		local = EntireSettingsLocalFile
-	}
-	return base, local
+	return settingsAbsPaths(ctx)
 }
