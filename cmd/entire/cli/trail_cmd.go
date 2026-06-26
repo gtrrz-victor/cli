@@ -171,7 +171,7 @@ Otherwise, <trail> may be a trail number, id, or branch in the target repo.`,
 
 // runTrailShow shows one trail, defaulting to the current branch's trail.
 func runTrailShow(ctx context.Context, w, errW io.Writer, insecureHTTP bool, selector, repoOverride, branchOverride string) error {
-	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, repoOverride, func(ctx context.Context, client *api.Client) error {
 		forge, owner, repo, err := resolveTrailRepoOrRemote(ctx, repoOverride)
 		if err != nil {
 			return err
@@ -386,7 +386,7 @@ func runTrailListAll(ctx context.Context, w, errW io.Writer, opts trailListOptio
 	if err != nil {
 		return err
 	}
-	return runAuthenticatedTrailAPI(ctx, errW, opts.InsecureHTTP, func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(ctx, errW, opts.InsecureHTTP, opts.Repo, func(ctx context.Context, client *api.Client) error {
 		return runTrailListAllWithClient(ctx, w, client, opts, statusFilters)
 	})
 }
@@ -1055,7 +1055,7 @@ type trailUpdateInputs struct {
 }
 
 func runTrailUpdate(ctx context.Context, w, errW io.Writer, insecureHTTP bool, inputs trailUpdateInputs) error {
-	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, inputs.Repo, func(ctx context.Context, client *api.Client) error {
 		forge, owner, repoName, err := resolveTrailRepoOrRemote(ctx, inputs.Repo)
 		if err != nil {
 			return err
@@ -1266,7 +1266,9 @@ trail is looked up against that repository's origin remote.`,
 }
 
 func runTrailCheckout(ctx context.Context, w, errW io.Writer, insecureHTTP bool, selector string, force bool) error {
-	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, func(ctx context.Context, client *api.Client) error {
+	// checkout rejects --repo (it operates on the local clone), so the enablement
+	// cache always tracks the local origin here.
+	return runAuthenticatedTrailAPI(ctx, errW, insecureHTTP, "", func(ctx context.Context, client *api.Client) error {
 		forge, owner, repo, err := resolveTrailRemote(ctx)
 		if err != nil {
 			return err
@@ -1374,7 +1376,7 @@ func runTrailDelete(cmd *cobra.Command, number int, branch string, force bool) e
 	ctx := cmd.Context()
 	w := cmd.OutOrStdout()
 
-	return runAuthenticatedTrailAPI(ctx, cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+	return runAuthenticatedTrailAPI(ctx, cmd.ErrOrStderr(), trailInsecureHTTP(cmd), trailRepoFlag(cmd), func(ctx context.Context, client *api.Client) error {
 		forge, owner, repo, err := resolveTrailRepoOrRemote(ctx, trailRepoFlag(cmd))
 		if err != nil {
 			return err

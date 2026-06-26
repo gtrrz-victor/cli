@@ -480,7 +480,7 @@ func authenticatedTrailReviewTarget(cmd *cobra.Command, selector string) (*api.C
 	}
 	var target trailReviewTarget
 	var resolvedClient *api.Client
-	err := runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
+	err := runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), repoOverride, func(ctx context.Context, client *api.Client) error {
 		var err error
 		resolvedClient = client
 		target, err = resolveTrailReviewTarget(ctx, client, selector, repoOverride, branchOverride)
