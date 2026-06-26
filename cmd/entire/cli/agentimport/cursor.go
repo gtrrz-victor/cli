@@ -64,38 +64,25 @@ func cursorSessionFile(dir string, e os.DirEntry) (sessionID, path string) {
 // reuses the package's shared JSONL helpers; Cursor carries no token usage or
 // model, so those fields are left zero.
 func (cursorImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
-	rawLines := splitRawLines(full)
-	var starts []int
-	for i, raw := range rawLines {
-		if isUserPromptLine(raw) {
-			starts = append(starts, i)
-		}
-	}
-	turns := make([]Turn, 0, len(starts))
-	for k, start := range starts {
-		end := len(rawLines)
-		if k+1 < len(starts) {
-			end = starts[k+1]
-		}
-		var rec struct {
-			UUID      string          `json:"uuid"`
-			Message   json.RawMessage `json:"message"`
-			Timestamp string          `json:"timestamp"`
-		}
-		if err := json.Unmarshal(rawLines[start], &rec); err != nil {
-			continue
-		}
-		ts, parseErr := time.Parse(time.RFC3339, rec.Timestamp)
-		if parseErr != nil {
-			ts = time.Time{}
-		}
-		turns = append(turns, Turn{
-			LineStart: start,
-			LineEnd:   end,
-			UUID:      rec.UUID,
-			Prompt:    transcript.ExtractUserContent(rec.Message),
-			CreatedAt: ts,
+	return splitLineTurns(splitRawLines(full), isUserPromptLine,
+		func(rawLines [][]byte, start, _ int, _ []byte) (*Turn, error) {
+			var rec struct {
+				UUID      string          `json:"uuid"`
+				Message   json.RawMessage `json:"message"`
+				Timestamp string          `json:"timestamp"`
+			}
+			if err := json.Unmarshal(rawLines[start], &rec); err != nil {
+				//nolint:nilerr // skip defensively; the line already parsed in isUserPromptLine
+				return nil, nil
+			}
+			ts, parseErr := time.Parse(time.RFC3339, rec.Timestamp)
+			if parseErr != nil {
+				ts = time.Time{}
+			}
+			return &Turn{
+				UUID:      rec.UUID,
+				Prompt:    transcript.ExtractUserContent(rec.Message),
+				CreatedAt: ts,
+			}, nil
 		})
-	}
-	return turns, nil
 }

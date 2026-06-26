@@ -41,48 +41,26 @@ func (factoryImporter) Discover(repoRoot, overridePath string, now time.Time, se
 // Token usage (including spawned subagents) is delegated to the Factory agent;
 // the model is read once from the session's adjacent settings file.
 func (factoryImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
-	rawLines := splitRawLines(full)
-	var starts []int
-	for i, raw := range rawLines {
-		if _, ok := factoryPromptText(raw); ok {
-			starts = append(starts, i)
-		}
-	}
-
 	subagentsDir := filepath.Join(filepath.Dir(sf.Path), sf.SessionID, "subagents")
 	model := factoryaidroid.ExtractModelFromTranscript(sf.Path)
 	ag := &factoryaidroid.FactoryAIDroidAgent{}
-	turns := make([]Turn, 0, len(starts))
-	for k, start := range starts {
-		end := len(rawLines)
-		if k+1 < len(starts) {
-			end = starts[k+1]
-		}
-
-		truncated := joinLines(rawLines[:end])
-		tokens, err := ag.CalculateTotalTokenUsage(truncated, start, subagentsDir)
-		if err != nil {
-			return nil, fmt.Errorf("token usage for turn %d: %w", k, err)
-		}
-
-		var env struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(rawLines[start], &env); err != nil {
-			continue
-		}
-		prompt, _ := factoryPromptText(rawLines[start])
-
-		turns = append(turns, Turn{
-			LineStart: start,
-			LineEnd:   end,
-			UUID:      env.ID,
-			Prompt:    prompt,
-			Model:     model,
-			Tokens:    tokens,
+	return splitLineTurns(splitRawLines(full),
+		func(raw []byte) bool { _, ok := factoryPromptText(raw); return ok },
+		func(rawLines [][]byte, start, _ int, truncated []byte) (*Turn, error) {
+			tokens, err := ag.CalculateTotalTokenUsage(truncated, start, subagentsDir)
+			if err != nil {
+				return nil, fmt.Errorf("token usage: %w", err)
+			}
+			var env struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(rawLines[start], &env); err != nil {
+				//nolint:nilerr // skip defensively; the line already parsed in factoryPromptText
+				return nil, nil
+			}
+			prompt, _ := factoryPromptText(rawLines[start])
+			return &Turn{UUID: env.ID, Prompt: prompt, Model: model, Tokens: tokens}, nil
 		})
-	}
-	return turns, nil
 }
 
 // factoryPromptText reports whether a raw Droid JSONL line is a user-prompt

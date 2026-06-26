@@ -112,41 +112,22 @@ func codexReadSessionMeta(path string) (codexSessionMeta, error) {
 // its (append-only) start line index. Token usage is delegated to the Codex
 // agent, which computes the cumulative-usage delta for the line range.
 func (codexImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
-	rawLines := splitRawLines(full)
-	var starts []int
-	for i, raw := range rawLines {
-		if _, ok := codexPromptText(raw); ok {
-			starts = append(starts, i)
-		}
-	}
-
 	ag := &codex.CodexAgent{}
-	turns := make([]Turn, 0, len(starts))
-	for k, start := range starts {
-		end := len(rawLines)
-		if k+1 < len(starts) {
-			end = starts[k+1]
-		}
-
-		truncated := joinLines(rawLines[:end])
-		tokens, err := ag.CalculateTokenUsage(truncated, start)
-		if err != nil {
-			return nil, fmt.Errorf("token usage for turn %d: %w", k, err)
-		}
-
-		prompt, _ := codexPromptText(rawLines[start])
-		ts := codexLineTime(rawLines[start])
-
-		turns = append(turns, Turn{
-			LineStart: start,
-			LineEnd:   end,
-			UUID:      strconv.Itoa(start),
-			Prompt:    prompt,
-			CreatedAt: ts,
-			Tokens:    tokens,
+	return splitLineTurns(splitRawLines(full),
+		func(raw []byte) bool { _, ok := codexPromptText(raw); return ok },
+		func(rawLines [][]byte, start, _ int, truncated []byte) (*Turn, error) {
+			tokens, err := ag.CalculateTokenUsage(truncated, start)
+			if err != nil {
+				return nil, fmt.Errorf("token usage: %w", err)
+			}
+			prompt, _ := codexPromptText(rawLines[start])
+			return &Turn{
+				UUID:      strconv.Itoa(start),
+				Prompt:    prompt,
+				CreatedAt: codexLineTime(rawLines[start]),
+				Tokens:    tokens,
+			}, nil
 		})
-	}
-	return turns, nil
 }
 
 // codexPromptText reports whether a raw rollout line is a user-prompt

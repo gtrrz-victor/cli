@@ -92,53 +92,30 @@ func copilotSessionInRepo(path, repoRoot string) bool {
 // Token usage is delegated to the Copilot agent (per-turn slices sum
 // assistant.message outputTokens); the model is read once from the transcript.
 func (copilotImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
-	rawLines := splitRawLines(full)
-	var starts []int
-	for i, raw := range rawLines {
-		if _, ok := copilotPromptText(raw); ok {
-			starts = append(starts, i)
-		}
-	}
-
 	ag := &copilotcli.CopilotCLIAgent{}
 	model := copilotcli.ExtractModelFromTranscript(context.Background(), sf.Path)
-	turns := make([]Turn, 0, len(starts))
-	for k, start := range starts {
-		end := len(rawLines)
-		if k+1 < len(starts) {
-			end = starts[k+1]
-		}
-
-		truncated := joinLines(rawLines[:end])
-		tokens, err := ag.CalculateTokenUsage(truncated, start)
-		if err != nil {
-			return nil, fmt.Errorf("token usage for turn %d: %w", k, err)
-		}
-
-		var evt struct {
-			ID        string `json:"id"`
-			Timestamp string `json:"timestamp"`
-		}
-		if err := json.Unmarshal(rawLines[start], &evt); err != nil {
-			continue
-		}
-		ts, parseErr := time.Parse(time.RFC3339, evt.Timestamp)
-		if parseErr != nil {
-			ts = time.Time{}
-		}
-		prompt, _ := copilotPromptText(rawLines[start])
-
-		turns = append(turns, Turn{
-			LineStart: start,
-			LineEnd:   end,
-			UUID:      evt.ID,
-			Prompt:    prompt,
-			Model:     model,
-			CreatedAt: ts,
-			Tokens:    tokens,
+	return splitLineTurns(splitRawLines(full),
+		func(raw []byte) bool { _, ok := copilotPromptText(raw); return ok },
+		func(rawLines [][]byte, start, _ int, truncated []byte) (*Turn, error) {
+			tokens, err := ag.CalculateTokenUsage(truncated, start)
+			if err != nil {
+				return nil, fmt.Errorf("token usage: %w", err)
+			}
+			var evt struct {
+				ID        string `json:"id"`
+				Timestamp string `json:"timestamp"`
+			}
+			if err := json.Unmarshal(rawLines[start], &evt); err != nil {
+				//nolint:nilerr // skip defensively; the line already parsed in copilotPromptText
+				return nil, nil
+			}
+			ts, parseErr := time.Parse(time.RFC3339, evt.Timestamp)
+			if parseErr != nil {
+				ts = time.Time{}
+			}
+			prompt, _ := copilotPromptText(rawLines[start])
+			return &Turn{UUID: evt.ID, Prompt: prompt, Model: model, CreatedAt: ts, Tokens: tokens}, nil
 		})
-	}
-	return turns, nil
 }
 
 // copilotPromptText reports whether a raw events.jsonl line is a user.message
