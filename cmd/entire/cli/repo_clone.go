@@ -23,6 +23,12 @@ import (
 // (owner/repo flow unescaped into the synthesised entire:// clone URL).
 var mirrorCloneRefRe = regexp.MustCompile(`^/?gh/` + gitHubOwnerPat + `/` + gitHubRepoPat + `$`)
 
+// mirrorCloneProviderGitHub is the upstream provider the `gh` path token maps to
+// — the value the control plane records and the list API filters on. Kept local
+// to the clone path so the provider mapping is self-contained rather than
+// borrowing a constant named for an unrelated (checkpoint) concern.
+const mirrorCloneProviderGitHub = "github"
+
 // parseMirrorCloneRef turns a clone ref like `/gh/entirehq/entire-api` into the
 // API provider ("github") and the lowercased owner/repo. The `gh` token is the
 // path provider used in entire:// clone URLs; it maps to the "github" upstream
@@ -30,13 +36,13 @@ var mirrorCloneRefRe = regexp.MustCompile(`^/?gh/` + gitHubOwnerPat + `/` + gitH
 func parseMirrorCloneRef(ref string) (provider, owner, repo string, err error) {
 	m := mirrorCloneRefRe.FindStringSubmatch(strings.TrimSpace(ref))
 	if m == nil {
-		return "", "", "", fmt.Errorf("expected /gh/<owner>/<repo>, got %q", ref)
+		return "", "", "", fmt.Errorf("expected gh/<owner>/<repo> (leading slash optional), got %q", ref)
 	}
 	owner, repo = strings.ToLower(m[1]), strings.ToLower(m[2])
 	if gitHubDotOnlyRe.MatchString(repo) {
 		return "", "", "", fmt.Errorf("repo cannot be dot-only: %s", ref)
 	}
-	return checkpointProviderGitHub, owner, repo, nil
+	return mirrorCloneProviderGitHub, owner, repo, nil
 }
 
 // newCloneAliasCmd is the top-level `entire clone` alias for `entire repo
@@ -106,7 +112,7 @@ func newRepoCloneCmd() *cobra.Command {
 			}
 
 			if len(mirrors) == 0 {
-				return fmt.Errorf("no mirror found for gh/%s/%s; run 'entire repo mirror create github.com/%s/%s' to onboard it", owner, repo, owner, repo)
+				return fmt.Errorf("no mirror found for /gh/%s/%s; run 'entire repo mirror create github.com/%s/%s' to onboard it", owner, repo, owner, repo)
 			}
 
 			chosen, err := selectCloneTarget(cmd, mirrors, cluster)
@@ -114,6 +120,13 @@ func newRepoCloneCmd() *cobra.Command {
 				return err
 			}
 
+			// chosen.ClusterHost is server-provided, but it's interpolated into the
+			// entire:// clone URL just like the user-supplied --cluster, so apply the
+			// same anti-token-leak guard (validateClusterHost) before building it —
+			// defense-in-depth against a malformed host reaching git / the STS audience.
+			if err := validateClusterHost(chosen.ClusterHost); err != nil {
+				return fmt.Errorf("mirror has an invalid cluster host %q: %w", chosen.ClusterHost, err)
+			}
 			cloneURL := fmt.Sprintf("entire://%s/gh/%s/%s", chosen.ClusterHost, owner, repo)
 			return runGitClone(cmd.Context(), cmd, cloneURL, targetDir)
 		},
