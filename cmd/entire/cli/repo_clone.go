@@ -199,20 +199,24 @@ func listMirrorsForRepo(ctx context.Context, c *coreapi.Client, provider, owner,
 // interactively, failing fast with a --cluster pointer when there's no terminal.
 func selectCloneTarget(cmd *cobra.Command, mirrors []coreapi.Mirror, clusterFlag string) (coreapi.Mirror, error) {
 	// Dedupe by cluster host: one placement per cluster is what a clone targets,
-	// and the same host appearing twice would only confuse the picker.
+	// and the same host appearing twice would only confuse the picker. Key on the
+	// case-folded host — DNS is case-insensitive, so a --cluster value differing
+	// only in case from the API's ClusterHost must still match (the alternative is
+	// a misleading "not mirrored on ..." after a successful lookup + dial).
 	byHost := make(map[string]coreapi.Mirror, len(mirrors))
 	hosts := make([]string, 0, len(mirrors))
 	for _, m := range mirrors {
-		if _, seen := byHost[m.ClusterHost]; seen {
+		key := strings.ToLower(m.ClusterHost)
+		if _, seen := byHost[key]; seen {
 			continue
 		}
-		byHost[m.ClusterHost] = m
-		hosts = append(hosts, m.ClusterHost)
+		byHost[key] = m
+		hosts = append(hosts, key)
 	}
 	sort.Strings(hosts)
 
 	if clusterFlag != "" {
-		m, ok := byHost[clusterFlag]
+		m, ok := byHost[strings.ToLower(strings.TrimSpace(clusterFlag))]
 		if !ok {
 			return coreapi.Mirror{}, fmt.Errorf("repo is not mirrored on %q; available: %s", clusterFlag, strings.Join(hosts, ", "))
 		}

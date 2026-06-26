@@ -168,6 +168,15 @@ func TestSelectCloneTarget(t *testing.T) {
 		require.Equal(t, "aws-eu-west-1.entire.io", got.ClusterHost)
 	})
 
+	t.Run("--cluster matches case-insensitively", func(t *testing.T) {
+		t.Parallel()
+		// DNS hosts are case-insensitive: a mixed-case --cluster must still match
+		// the API's lowercase ClusterHost rather than falsely "not mirrored".
+		got, err := selectCloneTarget(newCloneTestCmd(), []coreapi.Mirror{usEast, euWest}, "AWS-EU-West-1.Entire.IO")
+		require.NoError(t, err)
+		require.Equal(t, "aws-eu-west-1.entire.io", got.ClusterHost)
+	})
+
 	t.Run("--cluster with no match errors and lists hosts", func(t *testing.T) {
 		t.Parallel()
 		_, err := selectCloneTarget(newCloneTestCmd(), []coreapi.Mirror{usEast, euWest}, "aws-ap-south-1.entire.io")
