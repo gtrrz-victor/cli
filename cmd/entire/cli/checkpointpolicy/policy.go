@@ -32,13 +32,13 @@ func Normalize(policy Policy) Policy {
 	return policy
 }
 
-func CheckpointVersion(policy Policy) (string, bool) {
+func CheckpointVersion(policy Policy) string {
 	policy = Normalize(policy)
 	version, err := ParseFormat(policy.CheckpointVersion)
 	if err != nil || !CanWrite(version) {
-		return DefaultCheckpointVersion(), true
+		return DefaultCheckpointVersion()
 	}
-	return policy.CheckpointVersion, false
+	return policy.CheckpointVersion
 }
 
 func ValidatePolicy(policy Policy) error {

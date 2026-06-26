@@ -69,7 +69,7 @@ func TestAttach_TranscriptNotFound(t *testing.T) {
 	}
 }
 
-func TestAttachRejectsUnsupportedCheckpointWritePolicy(t *testing.T) {
+func TestAttachUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	setupAttachTestRepo(t)
 
 	repoRoot := mustGetwd(t)
@@ -91,14 +91,26 @@ func TestAttachRejectsUnsupportedCheckpointWritePolicy(t *testing.T) {
 
 	var out bytes.Buffer
 	err = runAttach(context.Background(), &out, sessionID, agent.AgentNameClaudeCode, attachOptions{Force: true})
-	if err == nil {
-		t.Fatal("expected unsupported checkpoint policy error")
+	if err != nil {
+		t.Fatalf("runAttach failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), `checkpoint_version "refs-v1"`) {
-		t.Fatalf("error = %v, want checkpoint policy version", err)
+	stateStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, refErr := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true); refErr == nil {
-		t.Fatal("metadata branch exists after rejected attach")
+	state, err := stateStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || state.LastCheckpointID.IsEmpty() {
+		t.Fatalf("expected attach to record checkpoint state, got %+v", state)
+	}
+	summary, err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Read(context.Background(), state.LastCheckpointID)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if summary.CheckpointVersion != checkpointpolicy.DefaultCheckpointVersion() {
+		t.Fatalf("CheckpointVersion = %q, want %q", summary.CheckpointVersion, checkpointpolicy.DefaultCheckpointVersion())
 	}
 }
 

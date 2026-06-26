@@ -255,9 +255,7 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 		return nil
 	}
 
-	if err := ensureCommittedCheckpointWritePolicy(ctx, repo); err != nil {
-		return err
-	}
+	checkpointVersion := committedCheckpointVersion(ctx, repo)
 
 	// Resolve agent and transcript path.
 	ag, transcriptPath, err := resolveAgentAndTranscript(logCtx, w, sessionID, agentName, existingState)
@@ -349,17 +347,18 @@ func runAttach(ctx context.Context, w io.Writer, sessionID string, agentName typ
 	}
 
 	writeOpts := cpkg.WriteOptions{
-		CheckpointID:     checkpointID,
-		SessionID:        sessionID,
-		Strategy:         strategy.StrategyNameManualCommit,
-		Transcript:       redactedTranscript,
-		Prompts:          attachPrompts(meta),
-		CheckpointsCount: attachStepCount(meta.TurnCount),
-		AuthorName:       author.Name,
-		AuthorEmail:      author.Email,
-		Agent:            ag.Type(),
-		Model:            meta.Model,
-		TokenUsage:       tokenUsage,
+		CheckpointID:      checkpointID,
+		SessionID:         sessionID,
+		Strategy:          strategy.StrategyNameManualCommit,
+		CheckpointVersion: checkpointVersion,
+		Transcript:        redactedTranscript,
+		Prompts:           attachPrompts(meta),
+		CheckpointsCount:  attachStepCount(meta.TurnCount),
+		AuthorName:        author.Name,
+		AuthorEmail:       author.Email,
+		Agent:             ag.Type(),
+		Model:             meta.Model,
+		TokenUsage:        tokenUsage,
 	}
 	if opts.Review {
 		writeOpts.Kind = string(session.KindAgentReview)

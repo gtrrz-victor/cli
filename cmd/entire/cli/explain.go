@@ -926,9 +926,6 @@ func generateCheckpointSummary(ctx context.Context, w, errW io.Writer, repo *git
 			{Label: "id", Value: checkpointID.String()},
 		}, fmt.Errorf("checkpoint %s has no transcript content for this checkpoint (scoped)", checkpointID))
 	}
-	if err := ensureCommittedCheckpointWritePolicy(ctx, repo); err != nil {
-		return err
-	}
 	provider, err := resolveCheckpointSummaryProvider(ctx, w)
 	if err != nil {
 		return fmt.Errorf("failed to resolve summary provider: %w", err)

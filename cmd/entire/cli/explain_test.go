@@ -1123,8 +1123,9 @@ func TestGenerateCheckpointSummary_AdvancesV1Metadata(t *testing.T) {
 	require.NotEqual(t, fixture.v1Hash, v1After.Hash(), "v1 metadata branch must advance after UpdateSummary")
 }
 
-func TestGenerateCheckpointSummaryRejectsUnsupportedCheckpointWritePolicy(t *testing.T) {
+func TestGenerateCheckpointSummaryUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	fixture := setupGenerateSummaryFixture(t)
+	stubSummaryProviderForTest(t)
 	_, err := checkpointpolicy.WriteLocal(fixture.ctx, fixture.repo, plumbing.ZeroHash, checkpointpolicy.Policy{
 		CheckpointVersion:    "refs-v1",
 		CheckpointMinVersion: "branch-v1",
@@ -1144,11 +1145,11 @@ func TestGenerateCheckpointSummaryRejectsUnsupportedCheckpointWritePolicy(t *tes
 		false,
 		0,
 	)
-	require.ErrorContains(t, err, `checkpoint_version "refs-v1"`)
+	require.NoError(t, err)
 
 	v1After, refErr := fixture.repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
 	require.NoError(t, refErr)
-	require.Equal(t, fixture.v1Hash, v1After.Hash(), "v1 metadata branch must not advance after rejected summary write")
+	require.NotEqual(t, fixture.v1Hash, v1After.Hash(), "v1 metadata branch must advance after summary write")
 }
 
 func TestGenerateCheckpointAISummary_ClampsLongParentDeadlineToDefaultTimeout(t *testing.T) {

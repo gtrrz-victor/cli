@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -15,21 +14,15 @@ import (
 	"github.com/go-git/go-git/v6"
 )
 
-var errCommittedCheckpointWriteBlocked = errors.New("checkpoint write blocked by policy")
-
-func checkCommittedCheckpointWritePolicy(ctx context.Context, repo *git.Repository) error {
+func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (checkpointpolicy.Policy, bool) {
 	state, err := checkpointpolicy.ReadLocal(ctx, repo)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint policy read failed; allowing checkpoint write",
 			slog.String("error", err.Error()),
 		)
-		return nil
+		return checkpointpolicy.Policy{}, false
 	}
-	if !checkpointpolicy.UnsupportedWrite(state.Policy) {
-		return nil
-	}
-	warnOrLogUnsupportedCheckpointWrite(ctx, state.Policy)
-	return errCommittedCheckpointWriteBlocked
+	return state.Policy, true
 }
 
 func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
@@ -54,21 +47,17 @@ func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
 	if err != nil {
 		warnOrLogCheckpointPolicySyncFailure(ctx, err)
 		localState, readErr := checkpointpolicy.ReadLocal(ctx, repo)
-		if readErr == nil && checkpointpolicy.UnsupportedWrite(localState.Policy) {
-			warnOrLogUnsupportedCheckpointWrite(ctx, localState.Policy)
-			return false
+		if readErr == nil {
+			warnIfCheckpointPolicyNeedsUpgrade(ctx, localState.Policy)
 		}
 		return true
 	}
 	if state.Source == checkpointpolicy.SourceLocalDiverged {
 		warnOrLogCheckpointPolicyDiverged(ctx, state)
-		return false
-	}
-	if !checkpointpolicy.UnsupportedWrite(state.Policy) {
 		return true
 	}
-	warnOrLogUnsupportedCheckpointWrite(ctx, state.Policy)
-	return false
+	warnIfCheckpointPolicyNeedsUpgrade(ctx, state.Policy)
+	return true
 }
 
 func warnOrLogCheckpointPolicySyncFailure(ctx context.Context, err error) {
@@ -91,20 +80,28 @@ func warnOrLogCheckpointPolicyDiverged(ctx context.Context, state checkpointpoli
 		)
 		return
 	}
-	logging.Warn(ctx, "checkpoint policy diverged; skipping checkpoint push",
+	logging.Warn(ctx, "checkpoint policy diverged; allowing checkpoint push",
 		slog.String("local_hash", state.Hash.String()),
 		slog.String("remote_hash", state.RemoteHash.String()),
 	)
 }
 
-func warnOrLogUnsupportedCheckpointWrite(ctx context.Context, policy checkpointpolicy.Policy) {
+func warnIfCheckpointPolicyNeedsUpgrade(ctx context.Context, policy checkpointpolicy.Policy) {
+	if !checkpointpolicy.UnsupportedWrite(policy) && !checkpointpolicy.RequiresUpgrade(policy) {
+		return
+	}
+	warnOrLogCheckpointPolicyUpgrade(ctx, policy, checkpointpolicy.CheckpointVersion(policy))
+}
+
+func warnOrLogCheckpointPolicyUpgrade(ctx context.Context, policy checkpointpolicy.Policy, version string) {
 	warning := checkpointpolicy.UpgradeWarning(versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version))
 	if interactive.CanPromptInteractively() {
 		fmt.Fprint(stderrWriter, warning)
 		return
 	}
-	logging.Warn(ctx, "checkpoint write skipped by policy",
+	logging.Warn(ctx, "checkpoint policy requires newer CLI; using checkpoint version",
 		slog.String("checkpoint_version", policy.CheckpointVersion),
 		slog.String("checkpoint_min_version", policy.CheckpointMinVersion),
+		slog.String("using_checkpoint_version", version),
 	)
 }

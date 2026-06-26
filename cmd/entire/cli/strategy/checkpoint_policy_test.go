@@ -9,17 +9,19 @@ import (
 	"strings"
 	"testing"
 
+	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/entireio/cli/redact"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCondenseSessionPolicyBlockReturnsRetryableError(t *testing.T) {
+func TestCondenseSessionUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -29,27 +31,32 @@ func TestCondenseSessionPolicyBlockReturnsRetryableError(t *testing.T) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
+
+	strategy := NewManualCommitStrategy()
+	sessionID := "policy-fallback-condense"
+	setupSessionWithCheckpoint(t, strategy, repo, workDir, sessionID)
+	state, err := strategy.loadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+
 	writeUnsupportedCheckpointPolicy(t, repo)
 
-	state := &SessionState{
-		SessionID:  "policy-block-condense",
-		AgentType:  "Claude Code",
-		BaseCommit: getHeadHash(t, repo),
-		Phase:      session.PhaseActive,
-	}
-
-	result, err := NewManualCommitStrategy().CondenseSession(
+	result, err := strategy.CondenseSession(
 		context.Background(),
 		repo,
 		testTrailerCheckpointID,
 		state,
 		nil,
 	)
-	require.Nil(t, result)
-	require.ErrorIs(t, err, errCommittedCheckpointWriteBlocked)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	summary, err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Read(context.Background(), testTrailerCheckpointID)
+	require.NoError(t, err)
+	require.Equal(t, checkpointpolicy.DefaultCheckpointVersion(), summary.CheckpointVersion)
 }
 
-func TestCondenseAndMarkFullyCondensedPolicyBlockLeavesSessionRetryable(t *testing.T) {
+func TestCondenseAndMarkFullyCondensedUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -75,11 +82,10 @@ func TestCondenseAndMarkFullyCondensedPolicyBlockLeavesSessionRetryable(t *testi
 	state, err := strategy.loadSessionState(context.Background(), sessionID)
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.False(t, state.FullyCondensed)
-	require.Positive(t, state.StepCount)
+	require.True(t, state.FullyCondensed)
 }
 
-func TestFinalizeAllTurnCheckpointsPolicyBlockClearsTurnCheckpointIDs(t *testing.T) {
+func TestFinalizeAllTurnCheckpointsAllowsUnsupportedPolicy(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -92,6 +98,18 @@ func TestFinalizeAllTurnCheckpointsPolicyBlockClearsTurnCheckpointIDs(t *testing
 	writeUnsupportedCheckpointPolicy(t, repo)
 
 	sessionID := "policy-block-turn-finalize"
+	store := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs())
+	require.NoError(t, store.Write(context.Background(), cpkg.Session{
+		CheckpointID: testTrailerCheckpointID,
+		SessionID:    sessionID,
+		Strategy:     StrategyNameManualCommit,
+		Transcript:   redact.AlreadyRedacted([]byte("old transcript\n")),
+		Prompts:      []string{"old prompt"},
+		AuthorName:   "Test",
+		AuthorEmail:  "test@test.com",
+		Agent:        "Claude Code",
+	}))
+
 	metadataDir := filepath.Join(workDir, ".entire", "metadata", sessionID)
 	require.NoError(t, os.MkdirAll(metadataDir, 0o755))
 	transcriptPath := filepath.Join(metadataDir, paths.TranscriptFileName)
@@ -101,15 +119,15 @@ func TestFinalizeAllTurnCheckpointsPolicyBlockClearsTurnCheckpointIDs(t *testing
 		SessionID:         sessionID,
 		AgentType:         "Claude Code",
 		TranscriptPath:    transcriptPath,
-		TurnCheckpointIDs: []string{"a1b2c3d4e5f6"},
+		TurnCheckpointIDs: []string{testTrailerCheckpointID.String()},
 	}
 
 	errCount := NewManualCommitStrategy().finalizeAllTurnCheckpoints(context.Background(), state)
-	require.Equal(t, 1, errCount)
+	require.Zero(t, errCount)
 	require.Empty(t, state.TurnCheckpointIDs)
 }
 
-func TestPrePushSkipsCheckpointPushWhenPolicyWriteUnsupported(t *testing.T) {
+func TestPrePushWarnsAndPushesWhenPolicyWriteUnsupported(t *testing.T) {
 	workDir := setupRepoWithCheckpointBranch(t)
 	bareDir := filepath.Join(t.TempDir(), "remote.git")
 	_, err := git.PlainInit(bareDir, true)
@@ -140,10 +158,10 @@ func TestPrePushSkipsCheckpointPushWhenPolicyWriteUnsupported(t *testing.T) {
 	require.Contains(t, stderr.String(), "requires checkpoint support newer than this Entire CLI")
 
 	out := runCheckpointPolicyGit(t, workDir, "ls-remote", bareDir, "refs/heads/"+paths.MetadataBranchName)
-	require.Empty(t, strings.TrimSpace(out))
+	require.NotEmpty(t, strings.TrimSpace(out))
 }
 
-func TestPrePushSkipsCheckpointPushWhenPolicyDiverged(t *testing.T) {
+func TestPrePushWarnsAndPushesWhenPolicyDiverged(t *testing.T) {
 	workDir := setupRepoWithCheckpointBranch(t)
 	bareDir := filepath.Join(t.TempDir(), "remote.git")
 	_, err := git.PlainInit(bareDir, true)
@@ -182,37 +200,7 @@ func TestPrePushSkipsCheckpointPushWhenPolicyDiverged(t *testing.T) {
 	require.Contains(t, stderr.String(), "Could not reconcile checkpoint policy")
 
 	out := runCheckpointPolicyGit(t, workDir, "ls-remote", bareDir, "refs/heads/"+paths.MetadataBranchName)
-	require.Empty(t, strings.TrimSpace(out))
-}
-
-func TestPrePushSkipsCheckpointPushWhenSyncFailsAndLocalPolicyWriteUnsupported(t *testing.T) {
-	workDir := setupRepoWithCheckpointBranch(t)
-	bareDir := filepath.Join(t.TempDir(), "remote.git")
-	_, err := git.PlainInit(bareDir, true)
-	require.NoError(t, err)
-	runCheckpointPolicyGit(t, workDir, "remote", "add", "origin", bareDir)
-
-	repo, err := git.PlainOpen(workDir)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-	writeUnsupportedCheckpointPolicy(t, repo)
-
-	t.Chdir(workDir)
-	paths.ClearWorktreeRootCache()
-	t.Setenv(interactive.EnvTestTTY, "1")
-	oldWriter := stderrWriter
-	var stderr bytes.Buffer
-	stderrWriter = &stderr
-	t.Cleanup(func() { stderrWriter = oldWriter })
-
-	require.NoError(t, os.RemoveAll(bareDir))
-
-	err = NewManualCommitStrategy().PrePush(context.Background(), "origin")
-	require.NoError(t, err)
-	require.Contains(t, stderr.String(), "Could not refresh checkpoint policy")
-	require.Contains(t, stderr.String(), "requires checkpoint support newer than this Entire CLI")
+	require.NotEmpty(t, strings.TrimSpace(out))
 }
 
 func TestSyncCheckpointPolicyForPrePushUsesPushTarget(t *testing.T) {
