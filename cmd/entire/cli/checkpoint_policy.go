@@ -11,12 +11,15 @@ import (
 )
 
 type checkpointPolicyOptions struct {
-	version         string
-	minVersion      string
-	unsetVersion    bool
-	unsetMinVersion bool
-	force           bool
+	version    string
+	minVersion string
+	force      bool
 }
+
+const (
+	checkpointVersionFlag    = "checkpoint-version"
+	checkpointMinVersionFlag = "checkpoint-min-version"
+)
 
 func newCheckpointPolicyCmd() *cobra.Command {
 	var opts checkpointPolicyOptions
@@ -28,11 +31,11 @@ func newCheckpointPolicyCmd() *cobra.Command {
 checkpoint_version selects the checkpoint metadata format used for new writes.
 If no policy is configured, Entire uses the CLI default. If this CLI reads a
 configured checkpoint_version it cannot write, it warns and writes the default
-version instead. Unset checkpoint_version to inherit the CLI default.
+version instead. Set checkpoint_version to "" to inherit the CLI default.
 
 checkpoint_min_version is an upgrade nudge. Clients that cannot read that
 version warn users to upgrade, but policy alone does not block checkpoint writes
-or app usage. Unset checkpoint_min_version to inherit the CLI default.`,
+or app usage. Set checkpoint_min_version to "" to inherit the CLI default.`,
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -40,10 +43,8 @@ or app usage. Unset checkpoint_min_version to inherit the CLI default.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.version, "checkpoint-version", "", "Set the checkpoint version used for new writes")
-	cmd.Flags().StringVar(&opts.minVersion, "checkpoint-min-version", "", "Set the checkpoint version used for upgrade warnings")
-	cmd.Flags().BoolVar(&opts.unsetVersion, "unset-checkpoint-version", false, "Unset checkpoint_version so new writes use the CLI default")
-	cmd.Flags().BoolVar(&opts.unsetMinVersion, "unset-checkpoint-min-version", false, "Unset checkpoint_min_version so upgrade warnings use the CLI default")
+	cmd.Flags().StringVar(&opts.version, checkpointVersionFlag, "", `Set the checkpoint version used for new writes. Use "" to unset`)
+	cmd.Flags().StringVar(&opts.minVersion, checkpointMinVersionFlag, "", `Set the checkpoint version used for upgrade warnings. Use "" to unset`)
 	cmd.Flags().BoolVar(&opts.force, "force", false, "Allow checkpoint policy version downgrades")
 	return cmd
 }
@@ -65,13 +66,15 @@ func runCheckpointPolicy(cmd *cobra.Command, opts checkpointPolicyOptions) error
 	}
 
 	var state checkpointpolicy.State
-	if hasCheckpointPolicyUpdate(opts) {
+	checkpointVersionSet := cmd.Flags().Changed(checkpointVersionFlag)
+	checkpointMinVersionSet := cmd.Flags().Changed(checkpointMinVersionFlag)
+	if hasCheckpointPolicyUpdate(checkpointVersionSet, checkpointMinVersionSet) {
 		state, err = checkpointpolicy.Update(ctx, repo, target, checkpointpolicy.UpdateOptions{
-			CheckpointVersion:         opts.version,
-			CheckpointMinVersion:      opts.minVersion,
-			UnsetCheckpointVersion:    opts.unsetVersion,
-			UnsetCheckpointMinVersion: opts.unsetMinVersion,
-			Force:                     opts.force,
+			CheckpointVersion:       opts.version,
+			CheckpointVersionSet:    checkpointVersionSet,
+			CheckpointMinVersion:    opts.minVersion,
+			CheckpointMinVersionSet: checkpointMinVersionSet,
+			Force:                   opts.force,
 		})
 		if err != nil {
 			return checkpointPolicyError("update checkpoint policy", err)
@@ -94,8 +97,8 @@ func runCheckpointPolicy(cmd *cobra.Command, opts checkpointPolicyOptions) error
 	return nil
 }
 
-func hasCheckpointPolicyUpdate(opts checkpointPolicyOptions) bool {
-	return opts.version != "" || opts.minVersion != "" || opts.unsetVersion || opts.unsetMinVersion
+func hasCheckpointPolicyUpdate(checkpointVersionSet, checkpointMinVersionSet bool) bool {
+	return checkpointVersionSet || checkpointMinVersionSet
 }
 
 func formatCheckpointPolicyValue(configured, effective string) string {

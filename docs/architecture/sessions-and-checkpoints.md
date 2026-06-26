@@ -289,15 +289,27 @@ points at a commit whose tree contains `policy.json`:
 }
 ```
 
+Either field may be omitted. An empty policy file means both fields inherit the
+CLI defaults:
+
+```json
+{}
+```
+
 `checkpoint_version` selects the checkpoint format for new writes. If no policy
-is configured, or a policy omits `checkpoint_version`, the CLI writes its
-default checkpoint version. If another client configures a `checkpoint_version`
-this CLI cannot write, the CLI warns and writes the default checkpoint version
-instead.
+is configured, a policy omits `checkpoint_version`, or the field was set to an
+empty string with `entire checkpoint policy --checkpoint-version ""`, the CLI
+writes its default checkpoint version. The quotes are required so the shell
+passes an empty value instead of omitting the flag value. If another client
+configures a `checkpoint_version` this CLI cannot write, the CLI warns and
+writes the default checkpoint version instead.
 
 `checkpoint_min_version` is a soft upgrade nudge. Clients that cannot read that
 version warn users to upgrade, but policy alone does not block checkpoint
-writes or app usage. Missing policy fields default to `branch-v1`.
+writes or app usage. If no policy is configured, a policy omits
+`checkpoint_min_version`, or the field was set to an empty string with
+`entire checkpoint policy --checkpoint-min-version ""`, the CLI uses its default
+minimum checkpoint version for warning decisions.
 
 `entire checkpoint policy` validates requested policy values against the
 current CLI, so it rejects setting unsupported checkpoint versions.

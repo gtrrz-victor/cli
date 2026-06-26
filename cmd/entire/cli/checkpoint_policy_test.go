@@ -44,6 +44,8 @@ func TestCheckpointPolicyCmd_HelpDocumentsAdvisoryBehavior(t *testing.T) {
 	require.Contains(t, help, "checkpoint_min_version is an upgrade nudge")
 	require.Contains(t, help, "Set the checkpoint version used for new writes")
 	require.Contains(t, help, "Set the checkpoint version used for upgrade warnings")
+	require.Contains(t, help, `Use "" to unset`)
+	require.NotContains(t, help, "unset-checkpoint-version")
 }
 
 func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
@@ -107,7 +109,7 @@ func TestCheckpointPolicyCmd_UnsetsPolicyFields(t *testing.T) {
 	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.DefaultPolicy())
 	pushCheckpointPolicyRefForCommandTest(t, dir, bareDir)
 
-	stdout, err := executeCheckpointPolicyCmd(t, "--unset-checkpoint-version", "--unset-checkpoint-min-version")
+	stdout, err := executeCheckpointPolicyCmd(t, "--checkpoint-version", "", "--checkpoint-min-version", "")
 	require.NoError(t, err)
 	require.Contains(t, stdout, "checkpoint_version: branch-v1 (default)")
 	require.Contains(t, stdout, "checkpoint_min_version: branch-v1 (default)")
@@ -117,13 +119,6 @@ func TestCheckpointPolicyCmd_UnsetsPolicyFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, localState.Policy)
 	require.Equal(t, checkpointpolicy.DefaultPolicy(), checkpointpolicy.Normalize(localState.Policy))
-}
-
-func TestCheckpointPolicyCmd_RejectsSetAndUnsetSameField(t *testing.T) {
-	_, _ = setupCheckpointPolicyRepo(t)
-
-	_, err := executeCheckpointPolicyCmd(t, "--checkpoint-version", "branch-v1", "--unset-checkpoint-version")
-	require.ErrorContains(t, err, "checkpoint_version cannot be both set and unset")
 }
 
 func TestCheckpointPolicyCmd_SilencesContextCanceled(t *testing.T) {
