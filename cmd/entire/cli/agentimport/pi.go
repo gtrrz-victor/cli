@@ -3,9 +3,6 @@ package agentimport
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -37,32 +34,7 @@ func (piImporter) Discover(repoRoot, overridePath string, now time.Time, session
 		}
 		dir = d
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read pi session dir: %w", err)
-	}
-	cutoff := now.AddDate(0, 0, -LookbackDays)
-	var out []SessionFile
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		stem := strings.TrimSuffix(e.Name(), ".jsonl")
-		sessionID := piSessionID(stem)
-		if len(sessionFilter) > 0 && !slices.Contains(sessionFilter, sessionID) {
-			continue
-		}
-		info, statErr := e.Info()
-		if statErr != nil || info.ModTime().Before(cutoff) {
-			continue
-		}
-		out = append(out, SessionFile{Path: filepath.Join(dir, e.Name()), SessionID: sessionID})
-	}
-	slices.SortFunc(out, func(a, b SessionFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".jsonl", piSessionID))
 }
 
 // piSessionID extracts the <uuid> portion of a "<timestamp>_<uuid>" file stem.

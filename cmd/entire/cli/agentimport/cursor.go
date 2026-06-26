@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -38,31 +37,10 @@ func (cursorImporter) Discover(repoRoot, overridePath string, now time.Time, ses
 		}
 		dir = d
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read cursor session dir: %w", err)
-	}
-	cutoff := now.AddDate(0, 0, -LookbackDays)
-	var out []SessionFile
-	for _, e := range entries {
-		stem, path := cursorSessionFile(dir, e)
-		if path == "" {
-			continue
-		}
-		if len(sessionFilter) > 0 && !slices.Contains(sessionFilter, stem) {
-			continue
-		}
-		info, statErr := os.Stat(path)
-		if statErr != nil || info.ModTime().Before(cutoff) {
-			continue
-		}
-		out = append(out, SessionFile{Path: path, SessionID: stem})
-	}
-	slices.SortFunc(out, func(a, b SessionFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return discoverSessionFiles(dir, now, sessionFilter, func(dir string, e os.DirEntry) (string, string, bool) {
+		id, path := cursorSessionFile(dir, e)
+		return id, path, path != ""
+	})
 }
 
 // cursorSessionFile maps a directory entry to a (sessionID, transcript path),

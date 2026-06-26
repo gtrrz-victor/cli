@@ -3,9 +3,7 @@ package agentimport
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -36,34 +34,7 @@ func (claudeImporter) Discover(repoRoot, overridePath string, now time.Time, ses
 		}
 		dir = d
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // no transcripts for this repo
-		}
-		return nil, fmt.Errorf("read claude session dir: %w", err)
-	}
-	cutoff := now.AddDate(0, 0, -LookbackDays)
-	var out []SessionFile
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		stem := strings.TrimSuffix(e.Name(), ".jsonl")
-		if len(sessionFilter) > 0 && !slices.Contains(sessionFilter, stem) {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(cutoff) {
-			continue
-		}
-		out = append(out, SessionFile{Path: filepath.Join(dir, e.Name()), SessionID: stem})
-	}
-	slices.SortFunc(out, func(a, b SessionFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".jsonl", identitySessionID))
 }
 
 // SplitTurns produces one Turn per user-prompt line. Token usage for each turn

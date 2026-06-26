@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -44,35 +42,18 @@ func (copilotImporter) Discover(repoRoot, overridePath string, now time.Time, se
 		}
 		dir = d
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read copilot session dir: %w", err)
-	}
-	cutoff := now.AddDate(0, 0, -LookbackDays)
-	var out []SessionFile
-	for _, e := range entries {
+	// Each session is a subdirectory holding events.jsonl; keep only those whose
+	// session.start places them in this repo.
+	return discoverSessionFiles(dir, now, sessionFilter, func(dir string, e os.DirEntry) (string, string, bool) {
 		if !e.IsDir() {
-			continue
+			return "", "", false
 		}
-		sessionID := e.Name()
-		if len(sessionFilter) > 0 && !slices.Contains(sessionFilter, sessionID) {
-			continue
-		}
-		path := filepath.Join(dir, sessionID, "events.jsonl")
-		info, statErr := os.Stat(path)
-		if statErr != nil || info.ModTime().Before(cutoff) {
-			continue
-		}
+		path := filepath.Join(dir, e.Name(), "events.jsonl")
 		if !copilotSessionInRepo(path, repoRoot) {
-			continue
+			return "", "", false
 		}
-		out = append(out, SessionFile{Path: path, SessionID: sessionID})
-	}
-	slices.SortFunc(out, func(a, b SessionFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+		return e.Name(), path, true
+	})
 }
 
 // copilotSessionInRepo reports whether the session's session.start event places

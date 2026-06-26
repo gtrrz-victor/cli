@@ -3,9 +3,6 @@ package agentimport
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -36,31 +33,7 @@ func (geminiImporter) Discover(repoRoot, overridePath string, now time.Time, ses
 		}
 		dir = d
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read gemini session dir: %w", err)
-	}
-	cutoff := now.AddDate(0, 0, -LookbackDays)
-	var out []SessionFile
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		stem := strings.TrimSuffix(e.Name(), ".json")
-		if len(sessionFilter) > 0 && !slices.Contains(sessionFilter, stem) {
-			continue
-		}
-		info, statErr := e.Info()
-		if statErr != nil || info.ModTime().Before(cutoff) {
-			continue
-		}
-		out = append(out, SessionFile{Path: filepath.Join(dir, e.Name()), SessionID: stem})
-	}
-	slices.SortFunc(out, func(a, b SessionFile) int { return strings.Compare(a.Path, b.Path) })
-	return out, nil
+	return discoverSessionFiles(dir, now, sessionFilter, jsonlSessionResolver(".json", identitySessionID))
 }
 
 // SplitTurns returns a single Turn covering the whole session. Offsets are
