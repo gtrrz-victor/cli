@@ -905,6 +905,8 @@ func trailRestoredSessionSortRank(session strategy.RestoredSession) int {
 	switch sessionpkg.Kind(session.Kind) {
 	case sessionpkg.KindAgentReview, sessionpkg.KindAgentInvestigate:
 		return 1
+	case sessionpkg.KindImported:
+		return 0
 	default:
 		if trailRestoredSessionLooksReviewLike(session) {
 			return 1
@@ -946,6 +948,8 @@ func trailRestoredSessionKindLabel(kind string) string {
 		return "review"
 	case sessionpkg.KindAgentInvestigate:
 		return "investigation"
+	case sessionpkg.KindImported:
+		return "imported"
 	default:
 		return ""
 	}
