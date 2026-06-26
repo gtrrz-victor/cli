@@ -88,7 +88,9 @@ func newRepoCloneCmd() *cobra.Command {
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			ref := args[0]
+			// Trim once up front so the entire:// detection and the value forwarded
+			// to git clone agree (the shorthand path trims inside parseMirrorCloneRef).
+			ref := strings.TrimSpace(args[0])
 			var targetDir string
 			if len(args) > 1 {
 				targetDir = args[1]
