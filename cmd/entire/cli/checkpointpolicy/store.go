@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
@@ -15,6 +16,8 @@ import (
 )
 
 const PolicyFileName = "policy.json"
+
+const maxPolicyFileBytes = 64 * 1024
 
 const RefName = plumbing.ReferenceName("refs/entire/policies/checkpoint")
 
@@ -103,12 +106,25 @@ func readFromHash(ctx context.Context, repo *git.Repository, hash plumbing.Hash,
 	if err != nil {
 		return State{}, fmt.Errorf("read %s: %w", PolicyFileName, err)
 	}
-	content, err := file.Contents()
+	if file.Size > maxPolicyFileBytes {
+		return State{}, fmt.Errorf("parse %s: file exceeds %d bytes", PolicyFileName, maxPolicyFileBytes)
+	}
+	reader, err := file.Reader()
 	if err != nil {
 		return State{}, fmt.Errorf("read %s contents: %w", PolicyFileName, err)
 	}
+	defer reader.Close()
+
 	var policy Policy
-	if err := json.Unmarshal([]byte(content), &policy); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(reader, maxPolicyFileBytes))
+	if err := decoder.Decode(&policy); err != nil {
+		return State{}, fmt.Errorf("parse %s: %w", PolicyFileName, err)
+	}
+	var trailingValue json.RawMessage
+	if err := decoder.Decode(&trailingValue); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return State{}, fmt.Errorf("parse %s: multiple JSON values", PolicyFileName)
+		}
 		return State{}, fmt.Errorf("parse %s: %w", PolicyFileName, err)
 	}
 	return State{Policy: Normalize(policy), Source: source, Hash: hash}, nil
