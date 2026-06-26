@@ -7,7 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -457,9 +460,9 @@ func loadMergedSettings(settingsFileAbs, preferencesFileAbs, localSettingsFileAb
 	}
 
 	// Apply local overrides if they exist
-	localData, err := os.ReadFile(localSettingsFileAbs) //nolint:gosec // path is from AbsPath or constant
+	localData, err := readConfined(localSettingsFileAbs)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("reading local settings file: %w", err)
 		}
 		// Local file doesn't exist, continue without overrides
@@ -506,9 +509,9 @@ func LoadProjectRaw(ctx context.Context) (path string, raw map[string]json.RawMe
 	if err != nil {
 		path = EntireSettingsFile
 	}
-	data, readErr := os.ReadFile(path) //nolint:gosec // path is from AbsPath or a project-relative constant
+	data, readErr := readConfined(path)
 	if readErr != nil {
-		if os.IsNotExist(readErr) {
+		if errors.Is(readErr, fs.ErrNotExist) {
 			return path, map[string]json.RawMessage{}, false, nil
 		}
 		return path, nil, false, fmt.Errorf("reading project settings: %w", readErr)
@@ -533,9 +536,9 @@ func LoadLocalRaw(ctx context.Context) (path string, raw map[string]json.RawMess
 	if err != nil {
 		path = EntireSettingsLocalFile
 	}
-	data, readErr := os.ReadFile(path) //nolint:gosec // path is from AbsPath or a project-relative constant
+	data, readErr := readConfined(path)
 	if readErr != nil {
-		if os.IsNotExist(readErr) {
+		if errors.Is(readErr, fs.ErrNotExist) {
 			return path, map[string]json.RawMessage{}, false, nil
 		}
 		return path, nil, false, fmt.Errorf("reading local settings: %w", readErr)
@@ -633,6 +636,33 @@ func LoadFromBytes(data []byte) (*EntireSettings, error) {
 	return s, nil
 }
 
+// readConfined reads filePath through an os.Root anchored at its parent
+// directory. The root confines the open to that directory, so the read cannot
+// be redirected outside it by a swapped or symlinked path between resolution and
+// open (TOCTOU) — unlike a bare os.ReadFile of an absolute path. A symlink that
+// escapes the directory surfaces as a non-ENOENT error. Callers must classify
+// "missing" with errors.Is(err, fs.ErrNotExist) rather than os.IsNotExist,
+// since the returned errors are wrapped.
+func readConfined(filePath string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("open settings dir: %w", err)
+	}
+	defer root.Close()
+
+	f, err := root.Open(filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("open settings file: %w", err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read settings file: %w", err)
+	}
+	return data, nil
+}
+
 // loadFromFile loads settings from a specific file path.
 // Returns default settings if the file doesn't exist.
 func loadFromFile(filePath string) (*EntireSettings, error) {
@@ -640,9 +670,9 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 		Enabled: true, // Default to enabled
 	}
 
-	data, err := os.ReadFile(filePath) //nolint:gosec // path is from caller
+	data, err := readConfined(filePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return settings, nil
 		}
 		return nil, fmt.Errorf("%w", err)
@@ -675,9 +705,9 @@ func loadFromFile(filePath string) (*EntireSettings, error) {
 func loadClonePreferencesFromFile(filePath string) (*ClonePreferences, error) {
 	prefs := &ClonePreferences{}
 
-	data, err := os.ReadFile(filePath) //nolint:gosec // path is from caller
+	data, err := readConfined(filePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return prefs, nil
 		}
 		return nil, fmt.Errorf("%w", err)

@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 )
@@ -114,32 +111,6 @@ func rawCheckpointsBlock(ctx context.Context, filePath string) json.RawMessage {
 		return nil
 	}
 	return env.Checkpoints
-}
-
-// readConfined reads filePath through an os.Root anchored at its parent
-// directory. The root confines the open to that directory, so the read cannot
-// be redirected outside it by a swapped or symlinked path between resolution and
-// open (TOCTOU) — unlike a bare os.ReadFile of an absolute path. A symlink that
-// escapes the directory surfaces as a non-ENOENT error, which the caller treats
-// as fail-soft.
-func readConfined(filePath string) ([]byte, error) {
-	root, err := os.OpenRoot(filepath.Dir(filePath))
-	if err != nil {
-		return nil, fmt.Errorf("open settings dir: %w", err)
-	}
-	defer root.Close()
-
-	f, err := root.Open(filepath.Base(filePath))
-	if err != nil {
-		return nil, fmt.Errorf("open settings file: %w", err)
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, fmt.Errorf("read settings file: %w", err)
-	}
-	return data, nil
 }
 
 func (c *CheckpointsConfig) validate() error {
