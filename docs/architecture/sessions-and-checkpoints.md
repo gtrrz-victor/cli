@@ -289,23 +289,34 @@ points at a commit whose tree contains `policy.json`:
 }
 ```
 
-`checkpoint_version` is the checkpoint format new writes should use.
-`checkpoint_min_version` is the oldest checkpoint format clients must be able
-to read for this repo. Missing policy fields default to `branch-v1`.
+`checkpoint_version` selects the checkpoint format for new writes. If no policy
+is configured, or a policy omits `checkpoint_version`, the CLI writes its
+default checkpoint version. If another client configures a `checkpoint_version`
+this CLI cannot write, the CLI warns and writes the default checkpoint version
+instead.
 
-Policy follows the configured checkpoint remote. `entire policy checkpoint`
+`checkpoint_min_version` is a soft upgrade nudge. Clients that cannot read that
+version warn users to upgrade, but policy alone does not block checkpoint
+writes or app usage. Missing policy fields default to `branch-v1`.
+
+`entire checkpoint policy` validates requested policy values against the
+current CLI, so it rejects setting unsupported checkpoint versions.
+
+Policy follows the configured checkpoint remote. `entire checkpoint policy`
 fetches the latest remote policy before validating requested changes, updates
 the local policy ref, and pushes only `refs/entire/policies/checkpoint`.
 Policy commits use the same signing settings as checkpoint commits.
 
 Hooks that run while ordinary git operations must keep working offline:
 post-commit and agent lifecycle hooks read only the local policy ref. If the
-local policy requires checkpoint writes this CLI does not support, they skip
-writing checkpoint data and warn only when running in an interactive terminal.
+local policy requires checkpoint support this CLI does not have, they warn when
+running in an interactive terminal and otherwise keep writing checkpoint data
+with the default checkpoint version.
 The pre-push hook is the regular online sync point: it compares the remote
-policy ref with the local ref, fetches updated policy when needed, and evaluates
-the refreshed policy before pushing `entire/checkpoints/v1`. If policy refresh
-fails, the hook warns or logs the failure and lets the normal push continue.
+policy ref with the local ref and fetches updated policy when needed. If policy
+refresh fails, the policy diverges, or the refreshed policy requires checkpoint
+support this CLI does not have, the hook warns or logs the issue and still lets
+the normal push and checkpoint push continue.
 
 User-driven commands warn when the local policy indicates the CLI should be
 upgraded. Commands that need to decode checkpoint contents, such as

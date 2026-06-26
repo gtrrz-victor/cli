@@ -19,8 +19,18 @@ type checkpointPolicyOptions struct {
 func newCheckpointPolicyCmd() *cobra.Command {
 	var opts checkpointPolicyOptions
 	cmd := &cobra.Command{
-		Use:    "policy",
-		Short:  "Inspect and update checkpoint policy",
+		Use:   "policy",
+		Short: "Inspect and update checkpoint policy",
+		Long: `Inspect and update checkpoint policy.
+
+checkpoint_version selects the checkpoint metadata format used for new writes.
+If no policy is configured, Entire uses the CLI default. If this CLI reads a
+configured checkpoint_version it cannot write, it warns and writes the default
+version instead.
+
+checkpoint_min_version is an upgrade nudge. Clients that cannot read that
+version warn users to upgrade, but policy alone does not block checkpoint writes
+or app usage.`,
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -28,8 +38,8 @@ func newCheckpointPolicyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.version, "checkpoint-version", "", "Set the checkpoint version written by this repository")
-	cmd.Flags().StringVar(&opts.minVersion, "checkpoint-min-version", "", "Set the minimum checkpoint version required by this repository")
+	cmd.Flags().StringVar(&opts.version, "checkpoint-version", "", "Set the checkpoint version used for new writes")
+	cmd.Flags().StringVar(&opts.minVersion, "checkpoint-min-version", "", "Set the checkpoint version used for upgrade warnings")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "Allow checkpoint policy version downgrades")
 	return cmd
 }

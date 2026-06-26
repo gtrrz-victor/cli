@@ -27,6 +27,25 @@ func TestCheckpointPolicyCmd_PrintsDefaults(t *testing.T) {
 	require.Contains(t, stdout, "source: defaults")
 }
 
+func TestCheckpointPolicyCmd_HelpDocumentsAdvisoryBehavior(t *testing.T) {
+	t.Parallel()
+
+	cmd := newCheckpointGroupCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"policy", "--help"})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	help := stdout.String()
+	require.Contains(t, help, "checkpoint_version selects the checkpoint metadata format used for new writes")
+	require.Contains(t, help, "warns and writes the default")
+	require.Contains(t, help, "checkpoint_min_version is an upgrade nudge")
+	require.Contains(t, help, "Set the checkpoint version used for new writes")
+	require.Contains(t, help, "Set the checkpoint version used for upgrade warnings")
+}
+
 func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 	tests := []struct {
 		name    string
