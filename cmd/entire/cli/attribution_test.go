@@ -234,7 +234,7 @@ func TestAttributionWhyLineShowsPromptAndCheckpoint(t *testing.T) {
 	testutil.GitCommit(t, repoRoot, trailers.FormatCheckpoint("why update", checkpointid.MustCheckpointID("c1b2c3d4e5f6")))
 
 	var out bytes.Buffer
-	require.NoError(t, runAttributionWhy(context.Background(), &out, "auth.py:2", false))
+	require.NoError(t, runAttributionWhy(context.Background(), &out, "auth.py:2", attributionWhyOptions{}))
 	text := out.String()
 	require.Contains(t, text, "Prompt:")
 	require.Contains(t, text, "Create a line that can be explained.")
@@ -473,7 +473,7 @@ func TestAttributionFlagsSessionFallbackForUnmatchedFile(t *testing.T) {
 	require.True(t, payload.Lines[0].SessionFallback)
 
 	var whyOut bytes.Buffer
-	require.NoError(t, runAttributionWhy(context.Background(), &whyOut, "auth.py:2", false))
+	require.NoError(t, runAttributionWhy(context.Background(), &whyOut, "auth.py:2", attributionWhyOptions{}))
 	require.Contains(t, whyOut.String(), "may have been renamed")
 }
 
