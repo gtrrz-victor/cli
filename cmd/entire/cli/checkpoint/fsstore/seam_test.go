@@ -25,7 +25,7 @@ import (
 //
 // Not parallel: uses t.Chdir so settings + ref resolution target the test repo.
 func TestSeam_GitPrimaryWithFsMirror(t *testing.T) {
-	RegisterForTesting()
+	registerForTesting()
 
 	dir := t.TempDir()
 	testutil.InitRepo(t, dir)

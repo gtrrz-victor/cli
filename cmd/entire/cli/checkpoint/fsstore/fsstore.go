@@ -4,9 +4,10 @@
 // of the api/checkpoint contract, and to serve as a worked example for new
 // backends.
 //
-// It is deliberately NOT registered by production code: only RegisterForTesting
-// wires it into the checkpoint registry, so a production binary can never select
-// it. As a mirror it receives best-effort write fan-out; it intentionally ignores
+// It is deliberately NOT registered by production code: only a test-only helper
+// (registerForTesting, in register_test.go) wires it into the checkpoint
+// registry, so a production binary can never select it. As a mirror it receives
+// best-effort write fan-out; it intentionally ignores
 // the git-specific blob-hash fields of the contract and stores transcript bytes
 // directly, which keeps the example small and makes the contract's remaining
 // git leakage concrete.
@@ -35,9 +36,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 )
-
-// BackendType is the registry type name for the filesystem reference backend.
-const BackendType = "fs"
 
 // Store is a JSON-file-backed persistent checkpoint store. One file per
 // checkpoint (<root>/<checkpoint-id>.json) holds the root summary plus all

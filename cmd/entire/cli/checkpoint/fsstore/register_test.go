@@ -11,27 +11,30 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 )
 
-// Config is the fsstore backend's settings "config" block.
-type Config struct {
+// backendType is the registry type name for the filesystem reference backend.
+const backendType = "fs"
+
+// config is the fsstore backend's settings "config" block.
+type config struct {
 	Path string `json:"path"`
 }
 
 var registerOnce sync.Once
 
-// RegisterForTesting registers the fsstore backend under its type so tests can
-// select it as a checkpoint mirror (or primary in fsstore's own tests). It is
-// the only path that adds fsstore to the registry: production code never calls
-// it, so a production binary cannot resolve the "fs" backend. Registration is
-// process-wide and idempotent (checkpoint.Register panics on duplicates).
-func RegisterForTesting() {
+// registerForTesting registers the fsstore backend so tests can select it as a
+// checkpoint mirror. It lives in a _test.go file on purpose: the production
+// fsstore package exposes no way to add itself to the registry, so a production
+// binary can never resolve the "fs" backend. Registration is process-wide and
+// idempotent (checkpoint.Register panics on duplicates).
+func registerForTesting() {
 	registerOnce.Do(func() {
-		checkpoint.Register(BackendType, factory)
+		checkpoint.Register(backendType, factory)
 	})
 }
 
 //nolint:ireturn // must return the contract interface to satisfy checkpoint.Factory
 func factory(_ context.Context, _ checkpoint.OpenEnv, cfg json.RawMessage) (cp.PersistentStore, error) {
-	var c Config
+	var c config
 	if len(cfg) > 0 {
 		if err := json.Unmarshal(cfg, &c); err != nil {
 			return nil, fmt.Errorf("fsstore: invalid config: %w", err)

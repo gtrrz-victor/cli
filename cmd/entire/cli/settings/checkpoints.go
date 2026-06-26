@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 )
@@ -19,7 +22,7 @@ var ErrInvalidCheckpointsConfig = errors.New("invalid checkpoints config")
 // CheckpointsConfig selects checkpoint storage backends: one primary (source of
 // truth, serves all reads and writes) and zero or more mirrors (independent
 // backends that receive best-effort write fan-out). When absent, the checkpoint
-// layer defaults to the built-in git backend with no mirrors.
+// layer defaults to the built-in git-branch backend with no mirrors.
 type CheckpointsConfig struct {
 	Primary BackendConfig   `json:"primary"`
 	Mirrors []BackendConfig `json:"mirrors,omitempty"`
@@ -68,9 +71,14 @@ func LoadCheckpointsConfig(ctx context.Context) (*CheckpointsConfig, error) {
 
 	var cfg CheckpointsConfig
 	dec := json.NewDecoder(bytes.NewReader(raw))
+	// DisallowUnknownFields surfaces typos (e.g. "primry") instead of silently
+	// ignoring them. The trade-off is that this CLI is not forward-compatible
+	// with checkpoints fields added by a newer CLI: an unknown field errors here.
+	// Adding a field is therefore a coordinated rollout — ship the reader before
+	// any writer emits the field. The error below points users at that cause.
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("%w in %s: %w", ErrInvalidCheckpointsConfig, src, err)
+		return nil, fmt.Errorf("%w in %s: %w; an unrecognized field can also mean this file was written by a newer CLI — confirm you are on the latest version", ErrInvalidCheckpointsConfig, src, err)
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -84,12 +92,13 @@ func LoadCheckpointsConfig(ctx context.Context) (*CheckpointsConfig, error) {
 // must not block checkpoint construction (the strict Load path surfaces it for
 // normal commands).
 func rawCheckpointsBlock(ctx context.Context, filePath string) json.RawMessage {
-	data, err := os.ReadFile(filePath) //nolint:gosec // path is from AbsPath or a worktree-root join
+	data, err := readConfined(filePath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			// A non-ENOENT read error (bad perms, settings.json is a directory,
-			// etc.) is a broken setup; stay fail-soft so checkpoint construction
-			// defaults to git rather than newly failing resume/explain/hooks.
+		if !errors.Is(err, fs.ErrNotExist) {
+			// A non-ENOENT read error (bad perms, settings.json is a directory or
+			// an escaping symlink, etc.) is a broken/untrusted setup; stay
+			// fail-soft so checkpoint construction defaults to git rather than
+			// newly failing resume/explain/hooks.
 			logging.Debug(ctx, "checkpoints config unreadable; defaulting to git backend",
 				slog.String("path", filePath), slog.String("error", err.Error()))
 		}
@@ -105,6 +114,32 @@ func rawCheckpointsBlock(ctx context.Context, filePath string) json.RawMessage {
 		return nil
 	}
 	return env.Checkpoints
+}
+
+// readConfined reads filePath through an os.Root anchored at its parent
+// directory. The root confines the open to that directory, so the read cannot
+// be redirected outside it by a swapped or symlinked path between resolution and
+// open (TOCTOU) — unlike a bare os.ReadFile of an absolute path. A symlink that
+// escapes the directory surfaces as a non-ENOENT error, which the caller treats
+// as fail-soft.
+func readConfined(filePath string) ([]byte, error) {
+	root, err := os.OpenRoot(filepath.Dir(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("open settings dir: %w", err)
+	}
+	defer root.Close()
+
+	f, err := root.Open(filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("open settings file: %w", err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read settings file: %w", err)
+	}
+	return data, nil
 }
 
 func (c *CheckpointsConfig) validate() error {

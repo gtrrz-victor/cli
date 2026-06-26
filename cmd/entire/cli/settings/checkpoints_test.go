@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,6 +103,25 @@ func TestLoadCheckpointsConfig_LocalOverridesInvalidBase(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, "git", cfg.Primary.Type)
+}
+
+func TestLoadCheckpointsConfig_RejectsEscapingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	dir := newCheckpointsSettingsRepo(t)
+
+	// A valid checkpoints config that lives OUTSIDE the .entire directory.
+	outside := filepath.Join(t.TempDir(), "evil.json")
+	require.NoError(t, os.WriteFile(outside, []byte(`{"checkpoints": {"primary": {"type": "git-branch"}}}`), 0o644))
+	// Point .entire/settings.json at it via an (absolute) symlink that escapes
+	// the directory. The confined read must refuse to follow it, so the config
+	// is not picked up and we fail soft to the default.
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, ".entire", "settings.json")))
+
+	cfg, err := LoadCheckpointsConfig(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, cfg, "an escaping symlink must not be followed; config should fail soft to nil")
 }
 
 func TestLoadCheckpointsConfig_ToleratesUnreadableFile(t *testing.T) {
