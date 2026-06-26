@@ -962,10 +962,17 @@ func saveReviewProfileConfig(ctx context.Context, profileName string, agents map
 	if strings.TrimSpace(profile.Task) == "" {
 		profile.Task = profileTask(profileName, settings.ReviewProfileConfig{})
 	}
+	hadProfiles := len(profiles) > 0
 	profiles[profileName] = profile
 	defaultName := decodeRawReviewDefault(raw)
-	if strings.TrimSpace(defaultName) == "" {
-		defaultName = profileName
+	if strings.TrimSpace(defaultName) == "" && !hadProfiles {
+		hasLower, err := lowerReviewDefaultOrProfiles(ctx, scope)
+		if err != nil {
+			return err
+		}
+		if !hasLower {
+			defaultName = profileName
+		}
 	}
 	return writeRawReviewProfiles(path, raw, profiles, defaultName)
 }

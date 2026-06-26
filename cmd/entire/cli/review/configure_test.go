@@ -516,6 +516,85 @@ func TestSaveReviewProfileFirstProfileSetsDefault(t *testing.T) {
 	}
 }
 
+func TestSaveReviewProfileConfigPreservesImpliedProjectDefault(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.InitRepo(t, tmp)
+	t.Chdir(tmp)
+	ctx := context.Background()
+	testutil.WriteFile(t, tmp, settings.EntireSettingsFile, `{
+  "review_profiles": {
+    "general": {"agents": {"claude-code": {"skills": ["/review"]}}},
+    "security": {"agents": {"claude-code": {"skills": ["/old"]}}}
+  }
+}
+`)
+
+	if err := saveReviewProfileConfig(ctx, "security", map[string]settings.ReviewConfig{
+		tAgentCodex: {Skills: []string{"/review"}},
+	}, "", reviewScopeProject); err != nil {
+		t.Fatalf("saveReviewProfileConfig: %v", err)
+	}
+	_, raw, exists, err := settings.LoadProjectRaw(ctx)
+	if err != nil || !exists {
+		t.Fatalf("project raw: exists=%v err=%v", exists, err)
+	}
+	if got := decodeRawReviewDefault(raw); got != "" {
+		t.Fatalf("review_default_profile = %q, want empty so general remains implied default", got)
+	}
+	s, err := settings.Load(ctx)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	name, profile, err := selectReviewProfile(s, "")
+	if err != nil {
+		t.Fatalf("selectReviewProfile: %v", err)
+	}
+	if name != DefaultProfileName {
+		t.Fatalf("selected profile = %q, want %s", name, DefaultProfileName)
+	}
+	if _, ok := profile.Agents[tAgentClaude]; !ok {
+		t.Fatalf("general profile not selected: %#v", profile.Agents)
+	}
+}
+
+func TestSaveReviewProfileConfigLocalPreservesProjectDefault(t *testing.T) {
+	tmp := t.TempDir()
+	testutil.InitRepo(t, tmp)
+	t.Chdir(tmp)
+	ctx := context.Background()
+
+	general := settings.ReviewProfileConfig{
+		Task:   "General task.",
+		Agents: map[string]settings.ReviewConfig{tAgentClaude: {Agent: tAgentClaude}},
+	}
+	if err := saveReviewProfile(ctx, DefaultProfileName, general, true, reviewScopeProject); err != nil {
+		t.Fatalf("seed project profile: %v", err)
+	}
+	if err := saveReviewProfileConfig(ctx, "security", map[string]settings.ReviewConfig{
+		tAgentCodex: {Skills: []string{"/review"}},
+	}, "", reviewScopeLocal); err != nil {
+		t.Fatalf("saveReviewProfileConfig local: %v", err)
+	}
+
+	_, localRaw, localExists, err := settings.LoadLocalRaw(ctx)
+	if err != nil || !localExists {
+		t.Fatalf("local raw: exists=%v err=%v", localExists, err)
+	}
+	if got := decodeRawReviewDefault(localRaw); got != "" {
+		t.Fatalf("local review_default_profile = %q, want empty so project default remains effective", got)
+	}
+	s, err := settings.Load(ctx)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if s.ReviewDefaultProfile != DefaultProfileName {
+		t.Fatalf("effective default profile = %q, want %s", s.ReviewDefaultProfile, DefaultProfileName)
+	}
+	if _, ok := s.ReviewProfiles["security"]; !ok {
+		t.Fatalf("security profile was not saved locally: %#v", s.ReviewProfiles)
+	}
+}
+
 func TestProfileJudge_ResolvesWorkerAlias(t *testing.T) {
 	t.Parallel()
 	// Judge names a worker alias; it must resolve to the underlying agent the
