@@ -80,6 +80,32 @@ func TestPiSplitTurns_PromptsTokensModel(t *testing.T) {
 	}
 }
 
+// TestPiSplitTurns_ModelInheritedOverPrefix guards the branch-resolution fix:
+// a later turn whose own assistant message omits the model must still resolve
+// the model from an earlier active-branch message. This only works when the
+// model is extracted over the [0,end) prefix (chains intact); extracting over
+// the [start,end) slice would strip the earlier model and yield "".
+func TestPiSplitTurns_ModelInheritedOverPrefix(t *testing.T) {
+	t.Parallel()
+	full := []byte(strings.Join([]string{
+		`{"type":"message","id":"pu1","message":{"role":"user","content":"first"}}`,
+		`{"type":"message","id":"pa1","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"model":"model-A","usage":{"input":10,"output":5}}}`,
+		`{"type":"message","id":"pu2","message":{"role":"user","content":"second"}}`,
+		`{"type":"message","id":"pa2","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":20,"output":7}}}`,
+	}, "\n") + "\n")
+
+	turns, err := piImporter{}.SplitTurns(SessionFile{Path: filepath.Join(t.TempDir(), "s.jsonl"), SessionID: "s"}, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("want 2 turns, got %d", len(turns))
+	}
+	if turns[1].Model != "model-A" {
+		t.Errorf("turn1 model = %q, want model-A inherited from the active branch", turns[1].Model)
+	}
+}
+
 func TestPiSplitTurns_ToolResultIsNotATurn(t *testing.T) {
 	t.Parallel()
 	// A toolResult-role message is not a user prompt and must not start a turn.

@@ -1,6 +1,7 @@
 package agentimport
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,11 +74,17 @@ func (copilotImporter) Discover(repoRoot, overridePath string, now time.Time, se
 // it in this repo (gitRoot or cwd is the repo root or a descendant). Sessions
 // whose location can't be determined are treated as not belonging to the repo.
 func copilotSessionInRepo(path, repoRoot string) bool {
-	data, err := os.ReadFile(path) //nolint:gosec // path discovered under the configured session dir
+	f, err := os.Open(path) //nolint:gosec // path discovered under the configured session dir
 	if err != nil {
 		return false
 	}
-	for _, raw := range splitRawLines(data) {
+	defer func() { _ = f.Close() }()
+
+	// Scan line-by-line and stop at the first session.start (normally line 0)
+	// rather than slurping the whole transcript, which can be large.
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), 10*1024*1024) // 10 MB max line
+	for scanner.Scan() {
 		var evt struct {
 			Type string `json:"type"`
 			Data struct {
@@ -87,7 +94,7 @@ func copilotSessionInRepo(path, repoRoot string) bool {
 				} `json:"context"`
 			} `json:"data"`
 		}
-		if err := json.Unmarshal(raw, &evt); err != nil || evt.Type != "session.start" {
+		if err := json.Unmarshal(scanner.Bytes(), &evt); err != nil || evt.Type != "session.start" {
 			continue
 		}
 		return repoMatches(evt.Data.Context.GitRoot, repoRoot) || repoMatches(evt.Data.Context.Cwd, repoRoot)

@@ -94,14 +94,19 @@ func (piImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
 			end = starts[k+1]
 		}
 
-		// Bound token usage to [start, end): truncate to the first `end` lines,
-		// then let the agent helper slice from `start`.
+		// Bound this turn to [start, end) by truncating to the first `end` lines
+		// (keeping the file from line 0). Pi's branch-aware helpers resolve the
+		// active branch by walking parentId back to the root, so the prefix MUST
+		// retain the beginning — truncating the end is safe (parents are always
+		// earlier lines) but slicing off the start would break those chains.
+		// CalculateTokenUsage then slices forward from `start`; ExtractModel
+		// reports the active-branch model as of this turn's end.
 		truncated := joinLines(rawLines[:end])
 		tokens, err := ag.CalculateTokenUsage(truncated, start)
 		if err != nil {
 			return nil, fmt.Errorf("token usage for turn %d: %w", k, err)
 		}
-		model, mErr := ag.ExtractModel(joinLines(rawLines[start:end]))
+		model, mErr := ag.ExtractModel(truncated)
 		if mErr != nil {
 			model = ""
 		}
