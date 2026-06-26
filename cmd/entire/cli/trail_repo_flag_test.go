@@ -136,6 +136,31 @@ func TestTrailSelectorAndBranchAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+// --repo must not silently fall back to the local checkout's branch: the
+// branch-defaulting commands require an explicit branch or selector alongside it.
+func TestTrailRepoRequiresExplicitTarget(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "show", args: []string{"show", "--repo", "gh/acme/app"}},
+		{name: "watch", args: []string{"watch", "--repo", "gh/acme/app"}},
+		{name: "update", args: []string{"update", "--repo", "gh/acme/app"}},
+		{name: "delete", args: []string{"delete", "--repo", "gh/acme/app"}},
+		{name: "finding list", args: []string{"finding", "list", "--repo", "gh/acme/app"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := execTrailCmdExpectErr(t, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), "--repo requires an explicit target") {
+				t.Fatalf("err = %v, want '--repo requires an explicit target'", err)
+			}
+		})
+	}
+}
+
 // Sanity: the persistent --repo flag is registered on the trail root and shows
 // up in help, so every read subcommand inherits it.
 func TestTrailRepoFlagRegisteredOnRoot(t *testing.T) {

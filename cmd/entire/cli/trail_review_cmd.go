@@ -475,6 +475,9 @@ func authenticatedTrailReviewTarget(cmd *cobra.Command, selector string) (*api.C
 	if selector != "" && branchOverride != "" {
 		return nil, trailReviewTarget{}, errors.New("pass a trail selector or --branch, not both")
 	}
+	if repoOverride != "" && selector == "" && branchOverride == "" {
+		return nil, trailReviewTarget{}, errors.New("--repo requires an explicit target: pass a trail selector or --branch")
+	}
 	var target trailReviewTarget
 	var resolvedClient *api.Client
 	err := runAuthenticatedTrailAPI(cmd.Context(), cmd.ErrOrStderr(), trailInsecureHTTP(cmd), func(ctx context.Context, client *api.Client) error {
