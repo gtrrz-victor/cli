@@ -58,6 +58,36 @@ func TestUpdateAllowsDowngradeWithForce(t *testing.T) {
 	require.Equal(t, []plumbing.Hash{remoteHash}, commit.ParentHashes)
 }
 
+func TestUpdateUnsetsPolicyFields(t *testing.T) {
+	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
+	remoteHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())
+	require.NoError(t, err)
+	pushPolicyRefWithGit(t, remoteDir, bareDir)
+
+	localDir, localRepo := initPolicyRepoWithDir(t)
+	got, err := checkpointpolicy.Update(t.Context(), localRepo, checkpointpolicy.Target{Remote: bareDir, Dir: localDir}, checkpointpolicy.UpdateOptions{
+		UnsetCheckpointVersion:    true,
+		UnsetCheckpointMinVersion: true,
+	})
+	require.NoError(t, err)
+	require.Empty(t, got.Policy)
+	require.Equal(t, checkpointpolicy.DefaultPolicy(), checkpointpolicy.Normalize(got.Policy))
+
+	commit, err := localRepo.CommitObject(got.Hash)
+	require.NoError(t, err)
+	require.Equal(t, []plumbing.Hash{remoteHash}, commit.ParentHashes)
+}
+
+func TestUpdateRejectsSetAndUnsetSameField(t *testing.T) {
+	localDir, localRepo := initPolicyRepoWithDir(t)
+
+	_, err := checkpointpolicy.Update(t.Context(), localRepo, checkpointpolicy.Target{Remote: localDir, Dir: localDir}, checkpointpolicy.UpdateOptions{
+		CheckpointVersion:      checkpoint.CheckpointVersionBranchV1,
+		UnsetCheckpointVersion: true,
+	})
+	require.ErrorContains(t, err, "checkpoint_version cannot be both set and unset")
+}
+
 func TestUpdatePreservesLocalPolicyAheadOfRemote(t *testing.T) {
 	remoteDir, remoteRepo, bareDir := initPolicyRemoteFixture(t)
 	baseHash, err := checkpointpolicy.WriteLocal(t.Context(), remoteRepo, plumbing.ZeroHash, checkpointpolicy.DefaultPolicy())

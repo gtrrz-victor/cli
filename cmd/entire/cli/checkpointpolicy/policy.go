@@ -7,8 +7,8 @@ import (
 )
 
 type Policy struct {
-	CheckpointVersion    string `json:"checkpoint_version"`
-	CheckpointMinVersion string `json:"checkpoint_min_version"`
+	CheckpointVersion    string `json:"checkpoint_version,omitempty"`
+	CheckpointMinVersion string `json:"checkpoint_min_version,omitempty"`
 }
 
 func DefaultPolicy() Policy {

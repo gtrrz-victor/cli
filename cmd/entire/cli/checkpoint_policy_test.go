@@ -22,8 +22,8 @@ func TestCheckpointPolicyCmd_PrintsDefaults(t *testing.T) {
 
 	stdout, err := executeCheckpointPolicyCmd(t)
 	require.NoError(t, err)
-	require.Contains(t, stdout, "checkpoint_version: branch-v1")
-	require.Contains(t, stdout, "checkpoint_min_version: branch-v1")
+	require.Contains(t, stdout, "checkpoint_version: branch-v1 (default)")
+	require.Contains(t, stdout, "checkpoint_min_version: branch-v1 (default)")
 	require.Contains(t, stdout, "source: defaults")
 }
 
@@ -100,6 +100,30 @@ func TestCheckpointPolicyCmd_UpdatesAndPushesOnlyPolicyRef(t *testing.T) {
 
 	branches := runCheckpointPolicyGit(t, dir, "ls-remote", bareDir, "refs/heads/*")
 	require.Empty(t, strings.TrimSpace(branches))
+}
+
+func TestCheckpointPolicyCmd_UnsetsPolicyFields(t *testing.T) {
+	dir, bareDir := setupCheckpointPolicyRepo(t)
+	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.DefaultPolicy())
+	pushCheckpointPolicyRefForCommandTest(t, dir, bareDir)
+
+	stdout, err := executeCheckpointPolicyCmd(t, "--unset-checkpoint-version", "--unset-checkpoint-min-version")
+	require.NoError(t, err)
+	require.Contains(t, stdout, "checkpoint_version: branch-v1 (default)")
+	require.Contains(t, stdout, "checkpoint_min_version: branch-v1 (default)")
+
+	repo := openCheckpointPolicyRepoForCommandTest(t, dir)
+	localState, err := checkpointpolicy.ReadLocal(t.Context(), repo)
+	require.NoError(t, err)
+	require.Empty(t, localState.Policy)
+	require.Equal(t, checkpointpolicy.DefaultPolicy(), checkpointpolicy.Normalize(localState.Policy))
+}
+
+func TestCheckpointPolicyCmd_RejectsSetAndUnsetSameField(t *testing.T) {
+	_, _ = setupCheckpointPolicyRepo(t)
+
+	_, err := executeCheckpointPolicyCmd(t, "--checkpoint-version", "branch-v1", "--unset-checkpoint-version")
+	require.ErrorContains(t, err, "checkpoint_version cannot be both set and unset")
 }
 
 func TestCheckpointPolicyCmd_SilencesContextCanceled(t *testing.T) {

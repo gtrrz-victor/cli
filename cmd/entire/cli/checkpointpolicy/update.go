@@ -2,28 +2,39 @@ package checkpointpolicy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-git/go-git/v6"
 )
 
 type UpdateOptions struct {
-	CheckpointVersion    string
-	CheckpointMinVersion string
-	Force                bool
+	CheckpointVersion         string
+	CheckpointMinVersion      string
+	UnsetCheckpointVersion    bool
+	UnsetCheckpointMinVersion bool
+	Force                     bool
 }
 
 func Update(ctx context.Context, repo *git.Repository, target Target, opts UpdateOptions) (State, error) {
+	if err := validateUpdateOptions(opts); err != nil {
+		return State{}, err
+	}
+
 	baseline, err := updateBaseline(ctx, repo, target)
 	if err != nil {
 		return State{}, err
 	}
 
 	policy := baseline.Policy
-	if opts.CheckpointVersion != "" {
+	if opts.UnsetCheckpointVersion {
+		policy.CheckpointVersion = ""
+	} else if opts.CheckpointVersion != "" {
 		policy.CheckpointVersion = opts.CheckpointVersion
 	}
-	if opts.CheckpointMinVersion != "" {
+	if opts.UnsetCheckpointMinVersion {
+		policy.CheckpointMinVersion = ""
+	} else if opts.CheckpointMinVersion != "" {
 		policy.CheckpointMinVersion = opts.CheckpointMinVersion
 	}
 
@@ -39,11 +50,21 @@ func Update(ctx context.Context, repo *git.Repository, target Target, opts Updat
 		return State{}, err
 	}
 	return State{
-		Policy:     Normalize(policy),
+		Policy:     policy,
 		Source:     SourceLocal,
 		Hash:       hash,
 		RemoteHash: baseline.RemoteHash,
 	}, nil
+}
+
+func validateUpdateOptions(opts UpdateOptions) error {
+	if opts.CheckpointVersion != "" && opts.UnsetCheckpointVersion {
+		return errors.New("checkpoint_version cannot be both set and unset")
+	}
+	if opts.CheckpointMinVersion != "" && opts.UnsetCheckpointMinVersion {
+		return errors.New("checkpoint_min_version cannot be both set and unset")
+	}
+	return nil
 }
 
 func updateBaseline(ctx context.Context, repo *git.Repository, target Target) (State, error) {
@@ -87,12 +108,12 @@ func rejectDowngrades(before, after Policy, opts UpdateOptions) error {
 	if opts.Force {
 		return nil
 	}
-	if opts.CheckpointVersion != "" {
+	if opts.CheckpointVersion != "" || opts.UnsetCheckpointVersion {
 		if err := rejectFieldDowngrade("checkpoint_version", before.CheckpointVersion, after.CheckpointVersion); err != nil {
 			return err
 		}
 	}
-	if opts.CheckpointMinVersion != "" {
+	if opts.CheckpointMinVersion != "" || opts.UnsetCheckpointMinVersion {
 		if err := rejectFieldDowngrade("checkpoint_min_version", before.CheckpointMinVersion, after.CheckpointMinVersion); err != nil {
 			return err
 		}
