@@ -91,6 +91,19 @@ func TestLoadCheckpointsConfig_ToleratesWholeFileSyntaxError(t *testing.T) {
 	assert.Nil(t, cfg)
 }
 
+func TestLoadCheckpointsConfig_LocalOverridesInvalidBase(t *testing.T) {
+	dir := newCheckpointsSettingsRepo(t)
+	// Base has an invalid checkpoints block; local has a valid one. Since local
+	// replaces base wholesale, the base's invalidity must not block the load.
+	writeFile(t, dir, "settings.json", `{"enabled": true, "checkpoints": {"primary": {}}}`)
+	writeFile(t, dir, "settings.local.json", `{"checkpoints": {"primary": {"type": "git"}}}`)
+
+	cfg, err := LoadCheckpointsConfig(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "git", cfg.Primary.Type)
+}
+
 func TestLoadCheckpointsConfig_ToleratesUnreadableFile(t *testing.T) {
 	dir := newCheckpointsSettingsRepo(t)
 	// settings.json as a directory makes os.ReadFile fail with a non-ENOENT

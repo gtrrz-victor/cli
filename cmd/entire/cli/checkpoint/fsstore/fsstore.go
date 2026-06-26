@@ -33,6 +33,7 @@ import (
 	cp "github.com/entireio/cli/api/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
 )
 
 // BackendType is the registry type name for the filesystem reference backend.
@@ -96,16 +97,12 @@ func (s *Store) save(sc *storedCheckpoint) error {
 	if err != nil {
 		return fmt.Errorf("fsstore: encode %s: %w", sc.Summary.CheckpointID, err)
 	}
-	// Write atomically (temp + rename) so a reader never observes a partial
-	// document. This guards a single writer's in-progress write; cross-process
-	// concurrency is out of scope for this test-only backend.
-	final := s.path(sc.Summary.CheckpointID)
-	tmp := final + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// Write atomically via the shared helper (unique temp file, cleaned up on
+	// failure) so a reader never observes a partial document. This guards a
+	// single writer's in-progress write; cross-process concurrency is out of
+	// scope for this test-only backend.
+	if err := jsonutil.WriteFileAtomic(s.path(sc.Summary.CheckpointID), data, 0o600); err != nil {
 		return fmt.Errorf("fsstore: write %s: %w", sc.Summary.CheckpointID, err)
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		return fmt.Errorf("fsstore: commit %s: %w", sc.Summary.CheckpointID, err)
 	}
 	return nil
 }

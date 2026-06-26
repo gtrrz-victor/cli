@@ -54,60 +54,57 @@ type checkpointsEnvelope struct {
 func LoadCheckpointsConfig(ctx context.Context) (*CheckpointsConfig, error) {
 	base, local := checkpointsSettingsPaths(ctx)
 
-	cfg, err := loadCheckpointsFromFile(ctx, base)
-	if err != nil {
+	// "local replaces base wholesale": prefer a checkpoints block from local
+	// settings; fall back to base only when local has none. We extract the raw
+	// blocks fail-soft, then decode/validate just the one that wins — so a
+	// malformed block in the overridden file never blocks the file that wins.
+	raw, src := rawCheckpointsBlock(ctx, local), local
+	if raw == nil {
+		raw, src = rawCheckpointsBlock(ctx, base), base
+	}
+	if raw == nil {
+		return nil, nil //nolint:nilnil // no checkpoints block present => default git backend
+	}
+
+	var cfg CheckpointsConfig
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("%w in %s: %w", ErrInvalidCheckpointsConfig, src, err)
+	}
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	if local != "" {
-		localCfg, err := loadCheckpointsFromFile(ctx, local)
-		if err != nil {
-			return nil, err
-		}
-		if localCfg != nil {
-			cfg = localCfg
-		}
-	}
-
-	if cfg != nil {
-		if err := cfg.validate(); err != nil {
-			return nil, err
-		}
-	}
-	return cfg, nil
+	return &cfg, nil
 }
 
-func loadCheckpointsFromFile(ctx context.Context, filePath string) (*CheckpointsConfig, error) {
+// rawCheckpointsBlock returns the raw "checkpoints" JSON block from filePath, or
+// nil when the file is absent/unreadable, has a whole-file syntax error, or has
+// no checkpoints block. It never errors: unrelated breakage in a settings file
+// must not block checkpoint construction (the strict Load path surfaces it for
+// normal commands).
+func rawCheckpointsBlock(ctx context.Context, filePath string) json.RawMessage {
 	data, err := os.ReadFile(filePath) //nolint:gosec // path is from AbsPath or a worktree-root join
 	if err != nil {
 		if !os.IsNotExist(err) {
 			// A non-ENOENT read error (bad perms, settings.json is a directory,
-			// etc.) is a broken setup that the strict Load path surfaces for
-			// normal commands. Stay fail-soft here so checkpoint construction
+			// etc.) is a broken setup; stay fail-soft so checkpoint construction
 			// defaults to git rather than newly failing resume/explain/hooks.
 			logging.Debug(ctx, "checkpoints config unreadable; defaulting to git backend",
 				slog.String("path", filePath), slog.String("error", err.Error()))
 		}
-		return nil, nil //nolint:nilnil // absent or unreadable file => no checkpoints config, fail-soft
+		return nil
 	}
 
 	var env checkpointsEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		// A whole-file parse failure is an unrelated breakage that the strict
-		// Load path surfaces for normal commands. Stay fail-soft here so
-		// checkpoint construction defaults to git rather than failing.
-		return nil, nil //nolint:nilnil,nilerr // intentionally fail-soft on unrelated malformed settings
+		// Whole-file parse failure is unrelated breakage; stay fail-soft.
+		return nil
 	}
 	if len(env.Checkpoints) == 0 {
-		return nil, nil //nolint:nilnil // no checkpoints block present
+		return nil
 	}
-
-	var cfg CheckpointsConfig
-	dec := json.NewDecoder(bytes.NewReader(env.Checkpoints))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("invalid checkpoints config in %s: %w", filePath, err)
-	}
-	return &cfg, nil
+	return env.Checkpoints
 }
 
 func (c *CheckpointsConfig) validate() error {
