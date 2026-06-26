@@ -84,6 +84,18 @@ func TestMirrorCellLabel(t *testing.T) {
 	}
 }
 
+func TestNewCloneAliasCmd(t *testing.T) {
+	t.Parallel()
+	cmd := newCloneAliasCmd()
+	require.Equal(t, "clone", cmd.Name())
+	// Carries the control-plane flags the repo group otherwise supplies to its
+	// children as persistent flags, so `entire clone` honors --json /
+	// --insecure-http-auth too.
+	require.NotNil(t, cmd.PersistentFlags().Lookup("json"))
+	require.NotNil(t, cmd.PersistentFlags().Lookup("insecure-http-auth"))
+	require.NotNil(t, cmd.Flags().Lookup("cluster"))
+}
+
 func newCloneTestCmd() *cobra.Command {
 	cmd := newRepoCloneCmd()
 	cmd.SetOut(&nopWriter{})
