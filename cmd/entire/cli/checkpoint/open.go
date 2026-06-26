@@ -37,16 +37,16 @@ type Stores struct {
 // Open resolves the checkpoint storage topology and constructs the backing
 // store(s). It keeps ref resolution, backend selection, and blob-fetcher wiring
 // in one place. The primary is built through the backend registry; with no
-// checkpoints config it resolves to the git backend with no mirrors, so default
-// behavior is unchanged. When mirrors are configured, the persistent store is a
-// fan-out wrapper (reads from primary, best-effort writes to each mirror).
+// checkpoints config it resolves to the git-branch backend with no mirrors, so
+// default behavior is unchanged. When mirrors are configured, the persistent
+// store is a fan-out wrapper (reads from primary, best-effort writes to mirrors).
 //
 // Backend selection is read via settings.LoadCheckpointsConfig, which resolves
 // like settings.Load: from the context's worktree root if set, else relative to
 // the current working directory — not from repo. Callers opening a repository
 // that is not the cwd should wrap ctx with that worktree root (as dispatch does).
 // Resolution is fail-soft: a missing or unreadable settings file yields the
-// default git backend with no mirrors, preserving default behavior.
+// default git-branch backend with no mirrors, preserving default behavior.
 func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores, error) {
 	refs := resolveOpenRefs(ctx, opts)
 	env := OpenEnv{Repo: repo, BlobFetcher: opts.BlobFetcher, Refs: refs}
@@ -56,11 +56,12 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 		return nil, fmt.Errorf("resolve checkpoints config: %w", err)
 	}
 
-	primary, err := buildPrimary(ctx, env, cfg)
+	primaryType := resolvePrimaryType(cfg)
+	primary, err := buildPrimary(ctx, env, primaryType, primaryConfig(cfg))
 	if err != nil {
 		return nil, err
 	}
-	mirrors, err := buildMirrors(ctx, env, cfg)
+	mirrors, err := buildMirrors(ctx, env, cfg, primaryType)
 	if err != nil {
 		return nil, err
 	}
@@ -72,33 +73,60 @@ func Open(ctx context.Context, repo *git.Repository, opts OpenOptions) (*Stores,
 	}, nil
 }
 
-// buildPrimary constructs the primary persistent store. The primary must be the
-// git backend: attach, resume, push, doctor, cleanup, and OPF all assume a git
-// refs.Primary, so a non-git primary is rejected rather than silently
-// half-supported.
-func buildPrimary(ctx context.Context, env OpenEnv, cfg *settings.CheckpointsConfig) (PersistentStore, error) {
-	typ, raw := BackendTypeGit, json.RawMessage(nil)
+// resolvePrimaryType returns the configured primary backend type, defaulting to
+// the git-branch backend when none is configured.
+func resolvePrimaryType(cfg *settings.CheckpointsConfig) string {
 	if cfg != nil && cfg.Primary.Type != "" {
-		typ, raw = cfg.Primary.Type, cfg.Primary.Config
+		return cfg.Primary.Type
 	}
-	if typ != BackendTypeGit {
-		return nil, fmt.Errorf("checkpoints.primary.type %q is not supported: only %q may be the primary backend", typ, BackendTypeGit)
+	return BackendTypeGitBranch
+}
+
+// primaryConfig returns the primary backend's config block, if any.
+func primaryConfig(cfg *settings.CheckpointsConfig) json.RawMessage {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Primary.Config
+}
+
+// buildPrimary constructs the primary persistent store. The primary must be a
+// git-backed backend: attach, resume, push, doctor, cleanup, and OPF all drive
+// the primary's record through the repo and its refs, so a non-git-backed
+// primary is rejected rather than silently half-supported.
+func buildPrimary(ctx context.Context, env OpenEnv, typ string, raw json.RawMessage) (PersistentStore, error) {
+	b, err := lookupBackend(typ)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoints.primary: %w", err)
+	}
+	if !b.gitBacked {
+		return nil, fmt.Errorf("checkpoints.primary.type %q cannot be the primary: only git-backed backends (e.g. %q) may be the primary", typ, BackendTypeGitBranch)
 	}
 	return build(ctx, env, typ, raw)
 }
 
-// buildMirrors constructs the mirror writers. A git-typed mirror is rejected: it
-// would share the primary ref topology and double-write the same ref, so it is
-// never a meaningful independent mirror.
-func buildMirrors(ctx context.Context, env OpenEnv, cfg *settings.CheckpointsConfig) ([]Writer, error) {
+// buildMirrors constructs the mirror writers. Each backend type may appear at
+// most once across the topology (primary + mirrors), so a mirror cannot reuse
+// the primary's type or another mirror's. This is the conservative form of "no
+// two backends may write the same target": today two backends of the same type
+// share the same refs/storage, so a duplicate type is a guaranteed collision
+// (e.g. a git-branch mirror under a git-branch primary would double-write the v1
+// branch). A future per-mirror config (same backend type pointed at a distinct
+// repo/refs) could relax this; for now it is one of each type.
+func buildMirrors(ctx context.Context, env OpenEnv, cfg *settings.CheckpointsConfig, primaryType string) ([]Writer, error) {
 	if cfg == nil || len(cfg.Mirrors) == 0 {
 		return nil, nil
 	}
+	seen := map[string]bool{primaryType: true}
 	mirrors := make([]Writer, 0, len(cfg.Mirrors))
 	for i, m := range cfg.Mirrors {
-		if m.Type == BackendTypeGit {
-			return nil, fmt.Errorf("checkpoints.mirrors[%d]: a %q mirror would duplicate the primary ref and is not supported", i, BackendTypeGit)
+		if _, err := lookupBackend(m.Type); err != nil {
+			return nil, fmt.Errorf("checkpoints.mirrors[%d]: %w", i, err)
 		}
+		if seen[m.Type] {
+			return nil, fmt.Errorf("checkpoints.mirrors[%d]: backend type %q is already used by the primary or another mirror; each backend type may appear at most once", i, m.Type)
+		}
+		seen[m.Type] = true
 		store, err := build(ctx, env, m.Type, m.Config)
 		if err != nil {
 			return nil, fmt.Errorf("checkpoints.mirrors[%d]: %w", i, err)

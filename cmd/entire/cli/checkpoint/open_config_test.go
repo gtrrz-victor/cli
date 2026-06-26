@@ -47,32 +47,56 @@ func TestOpen_DefaultIsGitPrimaryNoMirrors(t *testing.T) {
 	assert.True(t, isGit, "default persistent store should be the raw git store, not a fan-out wrapper")
 }
 
-func TestOpen_RejectsNonGitPrimary(t *testing.T) {
+func TestOpen_RejectsNonGitBackedPrimary(t *testing.T) {
+	registerFakeMirrorBackend(t) // a registered, non-git-backed backend
 	dir, repo, _ := newTestRepo(t)
 	t.Chdir(dir)
-	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "fs"}}}`)
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "`+fakeMirrorBackendType+`"}}}`)
 
 	_, err := Open(context.Background(), repo, OpenOptions{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "is not supported")
-	assert.Contains(t, err.Error(), "primary")
+	assert.Contains(t, err.Error(), "cannot be the primary")
+	assert.Contains(t, err.Error(), "git-backed")
 }
 
-func TestOpen_RejectsGitMirror(t *testing.T) {
+func TestOpen_RejectsUnknownPrimary(t *testing.T) {
 	dir, repo, _ := newTestRepo(t)
 	t.Chdir(dir)
-	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git"}, "mirrors": [{"type": "git"}]}}`)
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "nope"}}}`)
 
 	_, err := Open(context.Background(), repo, OpenOptions{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "duplicate the primary ref")
+	assert.Contains(t, err.Error(), "unknown checkpoint backend type")
+}
+
+func TestOpen_RejectsMirrorOfPrimaryType(t *testing.T) {
+	dir, repo, _ := newTestRepo(t)
+	t.Chdir(dir)
+	// A git-branch mirror under a git-branch primary would double-write v1.
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git-branch"}, "mirrors": [{"type": "git-branch"}]}}`)
+
+	_, err := Open(context.Background(), repo, OpenOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at most once")
+}
+
+func TestOpen_RejectsDuplicateMirrorType(t *testing.T) {
+	registerFakeMirrorBackend(t)
+	dir, repo, _ := newTestRepo(t)
+	t.Chdir(dir)
+	// Two mirrors of the same type are rejected (one of each type).
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git-branch"}, "mirrors": [{"type": "`+fakeMirrorBackendType+`"}, {"type": "`+fakeMirrorBackendType+`"}]}}`)
+
+	_, err := Open(context.Background(), repo, OpenOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at most once")
 }
 
 func TestOpen_BuildsConfiguredMirror(t *testing.T) {
 	registerFakeMirrorBackend(t)
 	dir, repo, _ := newTestRepo(t)
 	t.Chdir(dir)
-	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git"}, "mirrors": [{"type": "`+fakeMirrorBackendType+`"}]}}`)
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git-branch"}, "mirrors": [{"type": "`+fakeMirrorBackendType+`"}]}}`)
 
 	stores, err := Open(context.Background(), repo, OpenOptions{})
 	require.NoError(t, err)
@@ -89,7 +113,7 @@ func TestOpen_InvalidCheckpointsBlockErrors(t *testing.T) {
 	dir, repo, _ := newTestRepo(t)
 	t.Chdir(dir)
 	// Present checkpoints block, but a mirror with no type is invalid.
-	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git"}, "mirrors": [{"config": {}}]}}`)
+	writeRawSettings(t, dir, `{"enabled": true, "checkpoints": {"primary": {"type": "git-branch"}, "mirrors": [{"config": {}}]}}`)
 
 	_, err := Open(context.Background(), repo, OpenOptions{})
 	require.Error(t, err)

@@ -111,7 +111,7 @@ func writeMirrorSettings(t *testing.T, repoDir, mirrorDir string) {
 	// json-encode the path so separators / spaces are escaped correctly.
 	encodedPath, err := json.Marshal(mirrorDir)
 	require.NoError(t, err)
-	body := `{"enabled": true, "checkpoints": {"primary": {"type": "git"}, "mirrors": [{"type": "fs", "config": {"path": ` +
+	body := `{"enabled": true, "checkpoints": {"primary": {"type": "git-branch"}, "mirrors": [{"type": "fs", "config": {"path": ` +
 		string(encodedPath) + `}}]}}`
 	require.NoError(t, os.MkdirAll(filepath.Join(repoDir, ".entire"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(repoDir, ".entire", "settings.json"), []byte(body), 0o644))
