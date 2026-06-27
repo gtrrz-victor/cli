@@ -19,19 +19,91 @@ type CheckpointID string
 // EmptyCheckpointID represents an unset or invalid checkpoint ID.
 const EmptyCheckpointID CheckpointID = ""
 
-// Pattern is the regex pattern for a valid checkpoint ID: exactly 12 lowercase hex characters.
-// Exported for use in other packages (e.g., trailers) to avoid pattern duplication.
+// Pattern is the regex pattern for a legacy checkpoint ID: exactly 12 lowercase
+// hex characters. Exported for use in other packages (e.g., trailers) to avoid
+// pattern duplication. It is also reused by investigate/provenance for *run IDs*,
+// which are always 12-hex — do NOT widen this to include ULIDs; use
+// CheckpointPattern for matching a checkpoint ID that may be either format.
 const Pattern = `[0-9a-f]{12}`
+
+// ULIDPattern is the regex pattern for a ULID checkpoint ID: exactly 26 Crockford
+// base32 characters (digits plus uppercase A-Z excluding I, L, O, U). Future
+// checkpoint IDs are expected to be ULIDs so they sort lexicographically by
+// creation time.
+const ULIDPattern = `[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}`
+
+// CheckpointPattern matches a checkpoint ID in free text in either format
+// (legacy 12-hex or ULID). Use this — not Pattern — when scanning text such as
+// the Entire-Checkpoint commit trailer for a checkpoint ID.
+const CheckpointPattern = `(?:` + Pattern + `|` + ULIDPattern + `)`
 
 // ShortIDLength is the standard length for truncating IDs for display purposes.
 // Used for tool use IDs, session IDs, and commit hashes in logs and messages.
 const ShortIDLength = 12
 
-// checkpointIDRegex validates the format: exactly 12 lowercase hex characters.
+// checkpointIDRegex validates the legacy format: exactly 12 lowercase hex characters.
 var checkpointIDRegex = regexp.MustCompile(`^` + Pattern + `$`)
 
+// ulidRegex validates the ULID format: exactly 26 Crockford base32 characters.
+var ulidRegex = regexp.MustCompile(`^` + ULIDPattern + `$`)
+
+// Kind classifies a checkpoint ID by its storage format. The two valid kinds
+// shard differently when stored as a git ref (see ShardFor).
+type Kind int
+
+const (
+	// KindUnknown is a string matching neither the legacy hex nor the ULID format.
+	KindUnknown Kind = iota
+	// KindLegacy is a 12-character lowercase hex ID (the format Generate emits).
+	KindLegacy
+	// KindULID is a 26-character Crockford base32 ULID.
+	KindULID
+)
+
+// KindOf classifies a checkpoint ID string. It does not error: an unrecognized
+// string is KindUnknown, which callers handle conservatively.
+func KindOf(s string) Kind {
+	switch {
+	case checkpointIDRegex.MatchString(s):
+		return KindLegacy
+	case ulidRegex.MatchString(s):
+		return KindULID
+	default:
+		return KindUnknown
+	}
+}
+
+// Kind classifies this checkpoint ID.
+func (id CheckpointID) Kind() Kind {
+	return KindOf(string(id))
+}
+
+// ShardFor returns the two-character shard for storing this ID under a
+// per-checkpoint git ref (refs/entire/checkpoints/<shard>/<id>), chosen so
+// checkpoints spread evenly across buckets:
+//
+//   - Legacy hex IDs shard on the FIRST two characters, preserving the existing
+//     entire/checkpoints/v1 tree layout (see Path).
+//   - ULIDs shard on the LAST two characters: a ULID's leading characters encode
+//     its timestamp and barely vary between nearby checkpoints, while the trailing
+//     characters are random, so the suffix spreads evenly while the ID itself
+//     stays lexicographically sortable.
+//
+// For an ID shorter than two characters the whole ID is returned; an unrecognized
+// ID falls back to the first-two (prefix) layout.
+func (id CheckpointID) ShardFor() string {
+	s := string(id)
+	if len(s) < 2 {
+		return s
+	}
+	if id.Kind() == KindULID {
+		return s[len(s)-2:]
+	}
+	return s[:2]
+}
+
 // NewCheckpointID creates a CheckpointID from a string, validating its format.
-// Returns an error if the string is not a valid 12-character hex ID.
+// Returns an error unless the string is a valid checkpoint ID (12-char hex or ULID).
 func NewCheckpointID(s string) (CheckpointID, error) {
 	if err := Validate(s); err != nil {
 		return EmptyCheckpointID, err
@@ -50,6 +122,10 @@ func MustCheckpointID(s string) CheckpointID {
 }
 
 // Generate creates a new random 12-character hex checkpoint ID.
+//
+// Generation stays 12-hex regardless of storage backend. Emitting ULIDs is a
+// separate, store-coupled change (new checkpoints get a ULID only under the
+// git-refs store); this package only recognizes/validates both formats.
 func Generate() (CheckpointID, error) {
 	bytes := make([]byte, 6) // 6 bytes = 12 hex chars
 	if _, err := rand.Read(bytes); err != nil {
@@ -58,11 +134,12 @@ func Generate() (CheckpointID, error) {
 	return CheckpointID(hex.EncodeToString(bytes)), nil
 }
 
-// Validate checks if a string is a valid checkpoint ID format.
+// Validate checks if a string is a valid checkpoint ID format: either a legacy
+// 12-character lowercase hex ID or a 26-character Crockford base32 ULID.
 // Returns an error if invalid, nil if valid.
 func Validate(s string) error {
-	if !checkpointIDRegex.MatchString(s) {
-		return fmt.Errorf("invalid checkpoint ID %q: must be 12 lowercase hex characters", s)
+	if KindOf(s) == KindUnknown {
+		return fmt.Errorf("invalid checkpoint ID %q: must be 12 lowercase hex characters or a 26-character ULID", s)
 	}
 	return nil
 }
@@ -97,8 +174,8 @@ func (id CheckpointID) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements json.Unmarshaler with validation.
-// Returns an error if the JSON string is not a valid 12-character hex ID.
-// Empty strings are allowed and result in EmptyCheckpointID.
+// Returns an error unless the JSON string is a valid checkpoint ID (12-char hex
+// or ULID). Empty strings are allowed and result in EmptyCheckpointID.
 func (id *CheckpointID) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
