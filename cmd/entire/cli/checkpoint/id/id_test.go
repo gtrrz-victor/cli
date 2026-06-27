@@ -116,6 +116,7 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestKindOf(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -137,6 +138,7 @@ func TestKindOf(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := KindOf(tt.input); got != tt.want {
 				t.Errorf("KindOf(%q) = %v, want %v", tt.input, got, tt.want)
 			}
@@ -148,6 +150,7 @@ func TestKindOf(t *testing.T) {
 }
 
 func TestCheckpointID_ShardFor(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -169,6 +172,7 @@ func TestCheckpointID_ShardFor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := CheckpointID(tt.input).ShardFor(); got != tt.want {
 				t.Errorf("CheckpointID(%q).ShardFor() = %q, want %q", tt.input, got, tt.want)
 			}
@@ -177,6 +181,7 @@ func TestCheckpointID_ShardFor(t *testing.T) {
 }
 
 func TestValidateAcceptsBothFormats(t *testing.T) {
+	t.Parallel()
 	if err := Validate("a1b2c3d4e5f6"); err != nil {
 		t.Errorf("Validate(legacy hex) = %v, want nil", err)
 	}
@@ -189,7 +194,9 @@ func TestValidateAcceptsBothFormats(t *testing.T) {
 }
 
 func TestUnmarshalJSON_ULIDRoundTrip(t *testing.T) {
+	t.Parallel()
 	t.Run("ULID round-trips", func(t *testing.T) {
+		t.Parallel()
 		var id CheckpointID
 		if err := json.Unmarshal([]byte(`"`+sampleULID+`"`), &id); err != nil {
 			t.Fatalf("unmarshal ULID: %v", err)
@@ -207,6 +214,7 @@ func TestUnmarshalJSON_ULIDRoundTrip(t *testing.T) {
 	})
 
 	t.Run("empty string is EmptyCheckpointID", func(t *testing.T) {
+		t.Parallel()
 		var id CheckpointID
 		if err := json.Unmarshal([]byte(`""`), &id); err != nil {
 			t.Fatalf("unmarshal empty: %v", err)
@@ -217,6 +225,7 @@ func TestUnmarshalJSON_ULIDRoundTrip(t *testing.T) {
 	})
 
 	t.Run("invalid string still rejected", func(t *testing.T) {
+		t.Parallel()
 		var id CheckpointID
 		if err := json.Unmarshal([]byte(`"not-a-valid-id"`), &id); err == nil {
 			t.Error("expected error unmarshalling invalid checkpoint ID, got nil")
