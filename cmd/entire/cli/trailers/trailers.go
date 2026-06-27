@@ -36,7 +36,8 @@ const (
 	SourceRefTrailerKey = "Entire-Source-Ref"
 
 	// CheckpointTrailerKey links commits to their checkpoint metadata on entire/checkpoints/v1.
-	// Format: 12 hex characters e.g. "a3b2c4d5e6f7"
+	// Format: a checkpoint ID — either a legacy 12-hex ID (e.g. "a3b2c4d5e6f7")
+	// or a 26-char ULID (see checkpoint/id.CheckpointPattern).
 	// This trailer survives git amend and rebase operations.
 	CheckpointTrailerKey = "Entire-Checkpoint"
 

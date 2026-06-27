@@ -10,8 +10,9 @@ import (
 	"regexp"
 )
 
-// CheckpointID is a 12-character hex identifier for checkpoints.
-// It's used to link code commits to metadata on the entire/checkpoints/v1 branch.
+// CheckpointID identifies a checkpoint. It comes in two formats: a legacy
+// 12-character lowercase hex ID and a 26-character Crockford base32 ULID (see
+// Kind / CheckpointPattern). It links code commits to their checkpoint metadata.
 //
 //nolint:recvcheck // UnmarshalJSON requires pointer receiver, others use value receiver - standard pattern
 type CheckpointID string
