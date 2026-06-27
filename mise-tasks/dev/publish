@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-#MISE description="Install binaries into ~/go/bin"
+#MISE description="Install binaries into ~/go/bin (or a target folder)"
+#USAGE arg "[target]" help="Target folder to install binaries into; defaults to GOBIN or ~/go/bin"
 
 set -eu
 
-export GOBIN=${GOPATH:-$HOME/go}/bin
-echo "NOTE: we're overriding \$GOBIN: $GOBIN" 1>&2
+target=${usage_target:-${1:-}}
+if [ -n "$target" ]; then
+  mkdir -p "$target"
+  # go install requires an absolute GOBIN path
+  GOBIN=$(cd "$target" && pwd)
+fi
+export GOBIN=${GOBIN:-${GOPATH:-$HOME/go}/bin}
+echo "Installing into: $GOBIN" 1>&2
 
 commands=(
   entire
