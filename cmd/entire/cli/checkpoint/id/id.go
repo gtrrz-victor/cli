@@ -29,19 +29,20 @@ const EmptyCheckpointID CheckpointID = ""
 // CheckpointPattern for matching a checkpoint ID that may be either format.
 const Pattern = `[0-9a-f]{12}`
 
-// ULIDPattern is the regex SHAPE of a ULID checkpoint ID: 26 Crockford base32
-// characters (digits plus uppercase A-Z excluding I, L, O, U). It exists to
-// extract a candidate checkpoint ID from free text (see CheckpointPattern); it
-// is intentionally looser than the authoritative validation in KindOf/Validate,
-// which decode the value via oklog/ulid (rejecting e.g. a timestamp overflow the
-// char class alone would accept). Future checkpoint IDs are expected to be ULIDs
-// so they sort lexicographically by creation time.
-const ULIDPattern = `[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}`
+// ulidPattern is the regex SHAPE of a ULID checkpoint ID: 26 Crockford base32
+// characters (digits plus uppercase A-Z excluding I, L, O, U). It exists only to
+// compose CheckpointPattern for extracting a candidate ID from free text; it is
+// deliberately NOT exported and NOT the validator. Authoritative validation
+// decodes the value via oklog/ulid (see KindOf/isULID), which additionally
+// rejects e.g. a timestamp overflow the char class alone would accept.
+const ulidPattern = `[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}`
 
 // CheckpointPattern matches a checkpoint ID in free text in either format
 // (legacy 12-hex or ULID). Use this — not Pattern — when scanning text such as
-// the Entire-Checkpoint commit trailer for a checkpoint ID.
-const CheckpointPattern = `(?:` + Pattern + `|` + ULIDPattern + `)`
+// the Entire-Checkpoint commit trailer for a candidate checkpoint ID, then
+// validate the captured token via NewCheckpointID/Validate (CheckpointPattern is
+// a loose shape, not authoritative validation).
+const CheckpointPattern = `(?:` + Pattern + `|` + ulidPattern + `)`
 
 // ShortIDLength is the standard length for truncating IDs for display purposes.
 // Used for tool use IDs, session IDs, and commit hashes in logs and messages.
