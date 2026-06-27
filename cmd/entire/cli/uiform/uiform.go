@@ -19,9 +19,11 @@ func IsAccessibleMode() bool {
 	return os.Getenv("ACCESSIBLE") != ""
 }
 
-// Theme returns Entire's standard huh theme.
+// Theme returns Entire's standard huh theme: base16 (ANSI 0–15) colors so
+// form prompts respect the user's terminal palette and stay consistent with
+// the rest of the CLI's styling.
 func Theme() huh.Theme {
-	return huh.ThemeFunc(huh.ThemeDracula)
+	return huh.ThemeFunc(huh.ThemeBase16)
 }
 
 // New creates a huh form with the standard theme, switching to accessible

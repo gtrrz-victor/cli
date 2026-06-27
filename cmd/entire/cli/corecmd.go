@@ -14,6 +14,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
+	"github.com/entireio/cli/cmd/entire/cli/palette"
 	"github.com/entireio/cli/internal/coreapi"
 )
 
@@ -238,9 +239,9 @@ func newTableStyles(w io.Writer) tableStyles {
 	}
 	return tableStyles{
 		enabled: true,
-		header:  lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true),
-		primary: lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
-		cell:    lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+		header:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true),
+		primary: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Primary)),
+		cell:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 	}
 }
 

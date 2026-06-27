@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/entireio/cli/cmd/entire/cli/palette"
 	"golang.org/x/term"
 )
 
@@ -63,16 +64,16 @@ func newActivityStyles(w io.Writer) activityStyles {
 	if useColor {
 		s.bold = lipgloss.NewStyle().Bold(true)
 		s.dim = lipgloss.NewStyle().Faint(true)
-		s.label = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true)
+		s.label = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true)
 		s.value = lipgloss.NewStyle().Bold(true)
-		s.unit = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-		s.desc = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-		s.repoNm = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-		s.commitH = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		s.unit = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
+		s.desc = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
+		s.repoNm = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Primary))
+		s.commitH = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 		s.commitM = lipgloss.NewStyle().Bold(true)
-		s.add = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-		s.del = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-		s.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		s.add = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Success))
+		s.del = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Error))
+		s.muted = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 	}
 
 	return s
@@ -95,24 +96,24 @@ func (s activityStyles) renderAgent(agentID, text string) string {
 
 type agentDisplay struct {
 	Label string
-	Color string // ANSI 256 color code
+	Color string // base16 ANSI slot (see palette)
 	Char  rune   // block character for bar charts
 }
 
-// Agent colors match the dark-mode CSS variables from entire.io (Tailwind 400-level).
-// Lipgloss resolves hex to the best representation for the terminal's color profile.
+// Agent colors are distinct base16 slots so bar charts stay legible across
+// agents. Claude takes the primary accent; the rest fan out across the palette.
 var agentDisplayMap = map[string]agentDisplay{
-	"claude":   {Label: "Claude Code", Color: "#fb923c", Char: '▓'}, // orange-400
-	"gemini":   {Label: "Gemini", Color: "#60a5fa", Char: '▓'},      // blue-400
-	"amp":      {Label: "Amp", Color: "#f87171", Char: '▓'},         // red-400
-	"codex":    {Label: "Codex", Color: "#818cf8", Char: '▓'},       // indigo-400
-	"opencode": {Label: "OpenCode", Color: "#22d3ee", Char: '▓'},    // cyan-400
-	"copilot":  {Label: "Copilot", Color: "#a78bfa", Char: '▓'},     // violet-400
-	"pi":       {Label: "Pi", Color: "#fbbf24", Char: '▓'},          // amber-400
-	"cursor":   {Label: "Cursor", Color: "#38bdf8", Char: '▓'},      // sky-400
-	"droid":    {Label: "Droid", Color: "#f472b6", Char: '▓'},       // pink-400
-	"kiro":     {Label: "Kiro", Color: "#c084fc", Char: '▓'},        // purple-400
-	"unknown":  {Label: "Unknown", Color: "245", Char: '░'},
+	"claude":   {Label: "Claude Code", Color: palette.Accent, Char: '▓'},    // magenta
+	"gemini":   {Label: "Gemini", Color: palette.Blue, Char: '▓'},           // blue
+	"amp":      {Label: "Amp", Color: palette.Red, Char: '▓'},               // red
+	"codex":    {Label: "Codex", Color: palette.BrightBlue, Char: '▓'},      // bright blue
+	"opencode": {Label: "OpenCode", Color: palette.Cyan, Char: '▓'},         // cyan
+	"copilot":  {Label: "Copilot", Color: palette.BrightMagenta, Char: '▓'}, // bright magenta
+	"pi":       {Label: "Pi", Color: palette.Yellow, Char: '▓'},             // yellow
+	"cursor":   {Label: "Cursor", Color: palette.BrightCyan, Char: '▓'},     // bright cyan
+	"droid":    {Label: "Droid", Color: palette.BrightRed, Char: '▓'},       // bright red
+	"kiro":     {Label: "Kiro", Color: palette.BrightYellow, Char: '▓'},     // bright yellow
+	"unknown":  {Label: "Unknown", Color: palette.Muted, Char: '░'},
 }
 
 var agentOrder = []string{
