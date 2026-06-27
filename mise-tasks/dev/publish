@@ -5,12 +5,11 @@
 set -eu
 
 target=${usage_target:-${1:-}}
-if [ -n "$target" ]; then
-  mkdir -p "$target"
-  # go install requires an absolute GOBIN path
-  GOBIN=$(cd "$target" && pwd)
-fi
-export GOBIN=${GOBIN:-${GOPATH:-$HOME/go}/bin}
+GOBIN=${target:-${GOBIN:-${GOPATH:-$HOME/go}/bin}}
+mkdir -p "$GOBIN"
+# go install requires an absolute GOBIN path
+GOBIN=$(cd "$GOBIN" && pwd)
+export GOBIN
 echo "Installing into: $GOBIN" 1>&2
 
 commands=(
