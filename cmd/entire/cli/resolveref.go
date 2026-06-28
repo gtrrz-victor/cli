@@ -20,6 +20,13 @@ import (
 // under the response's singular `org`/`project` field, or 404) — the CLI never
 // lists everything and filters client-side.
 
+// providerGitHub is the identity-provider slug for GitHub-backed accounts, the
+// provider half of a qualified grantee handle like "github:alice". GitHub is the
+// only provider with backing accounts today; other slugs resolve once they exist
+// server-side. (Distinct from setup.go's checkpointProviderGitHub, which names
+// the checkpoint hosting provider — same string, unrelated concern.)
+const providerGitHub = "github"
+
 // looksLikeULID reports whether s has the shape of a ULID: 26 characters drawn
 // from Crockford base32 (digits plus uppercase letters, excluding I, L, O, U).
 // The check is shape-only and case-insensitive on the alphabet; it never hits
@@ -93,6 +100,39 @@ func resolveAccountRef(ctx context.Context, c *coreapi.Client, ref string) (stri
 		return "", fmt.Errorf("handle %q resolved to no account", ref)
 	}
 	return id.AccountId, nil
+}
+
+// resolveGranteeProvider turns a grantee reference into the (provider,
+// providerUserId) pair the grant/membership "by provider" routes key on. The
+// reference is a provider-qualified handle (e.g. "github:alice"); it is
+// resolved through the control plane to the provider's stable numeric user id.
+// The friendly handle alone is not what the grant routes accept — passing it as
+// --provider-user-id was the COR-699 footgun ("provider identity not found") —
+// so the CLI always resolves it first. A bare account ULID is rejected here:
+// the by-provider routes can't be addressed by ULID, and there is no reverse
+// account→provider-id lookup; callers that accept a ULID grantee (project/repo
+// remove) handle it via the typed-id route before reaching this helper.
+func resolveGranteeProvider(ctx context.Context, c *coreapi.Client, ref string) (provider, providerUserID string, err error) {
+	p, handle, err := parseQualifiedHandle(ref)
+	if err != nil {
+		return "", "", err
+	}
+	id, err := c.ResolveHandle(ctx, coreapi.ResolveHandleParams{Provider: p, Handle: handle})
+	if err != nil {
+		if isCoreNotFound(err) {
+			return "", "", fmt.Errorf("no %s identity for handle %q", p, handle)
+		}
+		return "", "", err
+	}
+	if id.ProviderUserId == "" {
+		return "", "", fmt.Errorf("handle %q resolved to no provider user id", ref)
+	}
+	// Prefer the server-normalized provider over the raw prefix, falling back to
+	// the input when the response omits it.
+	if id.Provider != "" {
+		p = id.Provider
+	}
+	return p, id.ProviderUserId, nil
 }
 
 // parseQualifiedHandle splits a provider-qualified handle like "github:alice"

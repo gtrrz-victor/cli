@@ -308,6 +308,55 @@ func TestResolveAccountRef(t *testing.T) {
 	})
 }
 
+func TestResolveGranteeProvider(t *testing.T) {
+	t.Parallel()
+
+	t.Run("handle resolves to the provider user id in one call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			if err := writeJSON(w, &coreapi.ResolvedIdentity{AccountId: ulidResolvedAcct, Provider: providerGitHub, Handle: "alice", ProviderUserId: "12345"}); err != nil {
+				t.Errorf("encode identity: %v", err)
+			}
+		})
+		provider, puid, err := resolveGranteeProvider(context.Background(), c, "github:alice")
+		if err != nil {
+			t.Fatalf("resolveGranteeProvider: %v", err)
+		}
+		if provider != providerGitHub || puid != "12345" {
+			t.Errorf("resolveGranteeProvider = (%q, %q), want (github, 12345)", provider, puid)
+		}
+		if n := calls.Load(); n != 1 {
+			t.Errorf("handle ref made %d HTTP calls, want 1", n)
+		}
+	})
+
+	t.Run("non-qualified handle fails before any network call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call for an invalid handle")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		if _, _, err := resolveGranteeProvider(context.Background(), c, "alice"); err == nil {
+			t.Error("resolveGranteeProvider expected error for non-qualified handle")
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("invalid handle made %d HTTP calls, want 0", n)
+		}
+	})
+
+	t.Run("empty provider user id is an error", func(t *testing.T) {
+		t.Parallel()
+		c, _ := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			if err := writeJSON(w, &coreapi.ResolvedIdentity{AccountId: ulidResolvedAcct, Provider: providerGitHub, Handle: "alice", ProviderUserId: ""}); err != nil {
+				t.Errorf("encode identity: %v", err)
+			}
+		})
+		if _, _, err := resolveGranteeProvider(context.Background(), c, "github:alice"); err == nil {
+			t.Error("resolveGranteeProvider expected error for empty provider user id")
+		}
+	})
+}
+
 func TestLooksLikeULID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
