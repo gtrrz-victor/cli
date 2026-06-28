@@ -347,6 +347,24 @@ func TestResolveGranteeProvider(t *testing.T) {
 		}
 	})
 
+	t.Run("account ULID is rejected before any network call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call for a ULID grantee")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		_, _, err := resolveGranteeProvider(context.Background(), c, wiringGranteeULID)
+		if err == nil {
+			t.Fatal("resolveGranteeProvider expected error for a ULID grantee")
+		}
+		if !strings.Contains(err.Error(), "provider-qualified handle") {
+			t.Errorf("error %q should point at the provider-qualified handle form", err)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("ULID grantee made %d HTTP calls, want 0", n)
+		}
+	})
+
 	t.Run("empty provider user id is an error", func(t *testing.T) {
 		t.Parallel()
 		c, _ := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {

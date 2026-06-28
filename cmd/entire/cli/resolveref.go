@@ -113,6 +113,13 @@ func resolveAccountRef(ctx context.Context, c *coreapi.Client, ref string) (stri
 // account→provider-id lookup; callers that accept a ULID grantee (project/repo
 // remove) handle it via the typed-id route before reaching this helper.
 func resolveGranteeProvider(ctx context.Context, c *coreapi.Client, ref string) (provider, providerUserID string, err error) {
+	// A ULID is a tempting paste from `grant … list` (which prints the grantee
+	// ID), but the by-provider routes can't be addressed by ULID. Reject it with
+	// a message that points at the form this command actually wants, rather than
+	// letting parseQualifiedHandle dangle a "(or a ULID)" hint that doesn't apply.
+	if looksLikeULID(ref) {
+		return "", "", fmt.Errorf("grantee %q is an account ULID; this command needs a provider-qualified handle like \"github:alice\"", ref)
+	}
 	p, handle, err := parseQualifiedHandle(ref)
 	if err != nil {
 		return "", "", err
