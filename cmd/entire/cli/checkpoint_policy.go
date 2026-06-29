@@ -35,7 +35,10 @@ version instead. Set checkpoint_version to "" to inherit the CLI default.
 
 checkpoint_min_version is an upgrade nudge. Clients that cannot read that
 version warn users to upgrade, but policy alone does not block checkpoint writes
-or app usage. Set checkpoint_min_version to "" to inherit the CLI default.`,
+or app usage. Set checkpoint_min_version to "" to inherit the CLI default.
+
+Unsetting a field still uses the normal downgrade guard. If inheriting the
+default would lower the field's effective version, pass --force to allow it.`,
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -43,8 +46,8 @@ or app usage. Set checkpoint_min_version to "" to inherit the CLI default.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.version, checkpointVersionFlag, "", `Set the checkpoint version used for new writes. Use "" to unset`)
-	cmd.Flags().StringVar(&opts.minVersion, checkpointMinVersionFlag, "", `Set the checkpoint version used for upgrade warnings. Use "" to unset`)
+	cmd.Flags().StringVar(&opts.version, checkpointVersionFlag, "", `Set the checkpoint version used for new writes. Use "" to unset; --force may be required`)
+	cmd.Flags().StringVar(&opts.minVersion, checkpointMinVersionFlag, "", `Set the checkpoint version used for upgrade warnings. Use "" to unset; --force may be required`)
 	cmd.Flags().BoolVar(&opts.force, "force", false, "Allow checkpoint policy version downgrades")
 	return cmd
 }

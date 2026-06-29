@@ -311,6 +311,11 @@ writes or app usage. If no policy is configured, a policy omits
 `entire checkpoint policy --checkpoint-min-version ""`, the CLI uses its default
 minimum checkpoint version for warning decisions.
 
+Unsetting a field is still evaluated against the normal downgrade guard. If the
+field's current effective version is newer than the default inherited after
+unsetting, `entire checkpoint policy` rejects the change unless `--force` is
+passed.
+
 `entire checkpoint policy` validates requested policy values against the
 current CLI, so it rejects setting unsupported checkpoint versions.
 

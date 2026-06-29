@@ -45,6 +45,7 @@ func TestCheckpointPolicyCmd_HelpDocumentsAdvisoryBehavior(t *testing.T) {
 	require.Contains(t, help, "Set the checkpoint version used for new writes")
 	require.Contains(t, help, "Set the checkpoint version used for upgrade warnings")
 	require.Contains(t, help, `Use "" to unset`)
+	require.Contains(t, help, "Unsetting a field still uses the normal downgrade guard")
 	require.NotContains(t, help, "unset-checkpoint-version")
 }
 
