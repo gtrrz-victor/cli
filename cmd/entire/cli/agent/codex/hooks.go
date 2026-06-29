@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
@@ -23,6 +27,12 @@ var entireHookPrefixes = []string{
 	agent.LocalDevHookScript + " ",
 	`go run "$(git rev-parse --show-toplevel)"/cmd/entire/main.go `,
 }
+
+var (
+	codexHookCommandOS                 = runtime.GOOS
+	codexProductionHookWrapperWorks    = defaultCodexProductionHookWrapperWorks
+	codexHookWrapperCompatibilityProbe = `sh -c 'exit 0'`
+)
 
 // InstallHooks installs Codex hooks in .codex/hooks.json.
 func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool) (int, error) {
@@ -85,34 +95,35 @@ func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool
 		cmdPrefix = "entire hooks codex "
 	}
 	sessionStartCmd := cmdPrefix + "session-start"
+	useWindowsProductionHooks := shouldUseWindowsProductionCodexHooks(ctx, localDev)
 	if !localDev {
-		sessionStartCmd = agent.WrapProductionJSONWarningHookCommand(sessionStartCmd, agent.WarningFormatSingleLine)
+		sessionStartCmd = wrapCodexSessionStartHookCommand(sessionStartCmd, useWindowsProductionHooks)
 	}
 	userPromptSubmitCmd := cmdPrefix + "user-prompt-submit"
 	stopCmd := cmdPrefix + "stop"
 	postToolUseCmd := cmdPrefix + "post-tool-use"
 	if !localDev {
-		userPromptSubmitCmd = agent.WrapProductionSilentHookCommand(userPromptSubmitCmd)
-		stopCmd = agent.WrapProductionSilentHookCommand(stopCmd)
-		postToolUseCmd = agent.WrapProductionSilentHookCommand(postToolUseCmd)
+		userPromptSubmitCmd = wrapCodexSilentHookCommand(userPromptSubmitCmd, useWindowsProductionHooks)
+		stopCmd = wrapCodexSilentHookCommand(stopCmd, useWindowsProductionHooks)
+		postToolUseCmd = wrapCodexSilentHookCommand(postToolUseCmd, useWindowsProductionHooks)
 	}
 
 	count := 0
 
-	if !hookCommandExists(sessionStart, sessionStartCmd) {
-		sessionStart = addHook(sessionStart, sessionStartCmd)
+	if updated, changed := syncHookCommand(sessionStart, sessionStartCmd); changed {
+		sessionStart = updated
 		count++
 	}
-	if !hookCommandExists(userPromptSubmit, userPromptSubmitCmd) {
-		userPromptSubmit = addHook(userPromptSubmit, userPromptSubmitCmd)
+	if updated, changed := syncHookCommand(userPromptSubmit, userPromptSubmitCmd); changed {
+		userPromptSubmit = updated
 		count++
 	}
-	if !hookCommandExists(stop, stopCmd) {
-		stop = addHook(stop, stopCmd)
+	if updated, changed := syncHookCommand(stop, stopCmd); changed {
+		stop = updated
 		count++
 	}
-	if !hookCommandExists(postToolUse, postToolUseCmd) {
-		postToolUse = addHook(postToolUse, postToolUseCmd)
+	if updated, changed := syncHookCommand(postToolUse, postToolUseCmd); changed {
+		postToolUse = updated
 		count++
 	}
 
@@ -164,6 +175,37 @@ func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool
 	}
 
 	return count, nil
+}
+
+func shouldUseWindowsProductionCodexHooks(ctx context.Context, localDev bool) bool {
+	if localDev || codexHookCommandOS != "windows" {
+		return false
+	}
+	return !codexProductionHookWrapperWorks(ctx, codexHookWrapperCompatibilityProbe)
+}
+
+func wrapCodexSessionStartHookCommand(command string, useWindows bool) string {
+	if useWindows {
+		return agent.WrapWindowsProductionJSONWarningHookCommand(command, agent.WarningFormatSingleLine)
+	}
+	return agent.WrapProductionJSONWarningHookCommand(command, agent.WarningFormatSingleLine)
+}
+
+func wrapCodexSilentHookCommand(command string, useWindows bool) string {
+	if useWindows {
+		return agent.WrapWindowsProductionSilentHookCommand(command)
+	}
+	return agent.WrapProductionSilentHookCommand(command)
+}
+
+func defaultCodexProductionHookWrapperWorks(ctx context.Context, command string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(probeCtx, "cmd.exe", "/d", "/s", "/c", command)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 // UninstallHooks removes Entire hooks from Codex hooks.json.
@@ -294,6 +336,16 @@ func hookCommandExists(groups []MatcherGroup, command string) bool {
 		}
 	}
 	return false
+}
+
+func syncHookCommand(groups []MatcherGroup, command string) ([]MatcherGroup, bool) {
+	if hookCommandExists(groups, command) {
+		return groups, false
+	}
+	if hasEntireHook(groups) {
+		groups = removeEntireHooks(groups)
+	}
+	return addHook(groups, command), true
 }
 
 func addHook(groups []MatcherGroup, command string) []MatcherGroup {

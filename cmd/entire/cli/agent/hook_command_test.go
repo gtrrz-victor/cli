@@ -46,6 +46,50 @@ func TestWrapProductionPlainTextWarningHookCommand(t *testing.T) {
 	}
 }
 
+func TestWrapWindowsProductionJSONWarningHookCommand(t *testing.T) {
+	t.Parallel()
+
+	command := WrapWindowsProductionJSONWarningHookCommand("entire hooks codex session-start", WarningFormatSingleLine)
+
+	if command == "entire hooks codex session-start" {
+		t.Fatal("expected wrapped command, got raw command")
+	}
+	if strings.Contains(command, "sh -c") {
+		t.Fatalf("windows wrapper should not use sh, got %q", command)
+	}
+	if !strings.Contains(command, "where.exe entire") {
+		t.Fatalf("windows wrapper missing PATH guard, got %q", command)
+	}
+	if !strings.Contains(command, "^\"systemMessage^\"") {
+		t.Fatalf("windows wrapper missing escaped systemMessage JSON, got %q", command)
+	}
+	if !strings.Contains(command, "entire hooks codex session-start") {
+		t.Fatalf("windows wrapper missing hook target, got %q", command)
+	}
+}
+
+func TestWrapWindowsProductionSilentHookCommand(t *testing.T) {
+	t.Parallel()
+
+	command := WrapWindowsProductionSilentHookCommand("entire hooks codex stop")
+
+	if command == "entire hooks codex stop" {
+		t.Fatal("expected wrapped command, got raw command")
+	}
+	if strings.Contains(command, "sh -c") {
+		t.Fatalf("windows wrapper should not use sh, got %q", command)
+	}
+	if !strings.Contains(command, "where.exe entire") {
+		t.Fatalf("windows wrapper missing PATH guard, got %q", command)
+	}
+	if strings.Contains(command, "systemMessage") {
+		t.Fatalf("silent windows wrapper should not print a warning, got %q", command)
+	}
+	if !strings.Contains(command, "entire hooks codex stop") {
+		t.Fatalf("windows wrapper missing hook target, got %q", command)
+	}
+}
+
 func TestMissingEntireWarning(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +136,18 @@ func TestIsManagedHookCommand_WrappedPrefix(t *testing.T) {
 		prefixes,
 	) {
 		t.Fatal("expected wrapped plain text warning command to match")
+	}
+	if !IsManagedHookCommand(
+		WrapWindowsProductionSilentHookCommand("entire hooks codex stop"),
+		prefixes,
+	) {
+		t.Fatal("expected windows wrapped silent command to match")
+	}
+	if !IsManagedHookCommand(
+		WrapWindowsProductionJSONWarningHookCommand("entire hooks codex session-start", WarningFormatSingleLine),
+		prefixes,
+	) {
+		t.Fatal("expected windows wrapped json warning command to match")
 	}
 }
 

@@ -62,6 +62,46 @@ func WrapProductionJSONWarningHookCommand(command string, format WarningFormat) 
 	)
 }
 
+// WrapWindowsProductionSilentHookCommand exits successfully without output when
+// the Entire CLI is missing from PATH. It avoids sh so Codex hooks still work
+// from native Windows shells.
+func WrapWindowsProductionSilentHookCommand(command string) string {
+	return fmt.Sprintf(
+		`cmd.exe /d /s /c "where.exe entire >nul 2>nul || exit /b 0 & %s"`,
+		command,
+	)
+}
+
+// WrapWindowsProductionJSONWarningHookCommand emits a JSON hook response with a
+// systemMessage field on stdout when the Entire CLI is missing from PATH. It
+// avoids sh so Codex hooks still work from native Windows shells.
+func WrapWindowsProductionJSONWarningHookCommand(command string, format WarningFormat) string {
+	payload, err := jsonutil.MarshalWithNoHTMLEscape(struct {
+		SystemMessage string `json:"systemMessage,omitempty"`
+	}{
+		SystemMessage: MissingEntireWarning(format),
+	})
+	if err != nil {
+		return WrapWindowsProductionPlainTextWarningHookCommand(command, format)
+	}
+
+	return fmt.Sprintf(
+		`cmd.exe /d /s /c "where.exe entire >nul 2>nul || (echo %s & exit /b 0) & %s"`,
+		escapeWindowsCMD(string(payload)),
+		command,
+	)
+}
+
+// WrapWindowsProductionPlainTextWarningHookCommand emits the warning as plain
+// text to stdout when the Entire CLI is missing from PATH.
+func WrapWindowsProductionPlainTextWarningHookCommand(command string, format WarningFormat) string {
+	return fmt.Sprintf(
+		`cmd.exe /d /s /c "where.exe entire >nul 2>nul || (echo %s & exit /b 0) & %s"`,
+		escapeWindowsCMD(MissingEntireWarning(format)),
+		command,
+	)
+}
+
 // WrapProductionPlainTextWarningHookCommand emits the warning as plain
 // text to stdout when the Entire CLI is missing from PATH.
 func WrapProductionPlainTextWarningHookCommand(command string, format WarningFormat) string {
@@ -73,6 +113,7 @@ func WrapProductionPlainTextWarningHookCommand(command string, format WarningFor
 }
 
 const productionHookWrapperPrefix = `sh -c 'if ! command -v entire >/dev/null 2>&1; then `
+const windowsProductionHookWrapperPrefix = `cmd.exe /d /s /c "where.exe entire >nul 2>nul || `
 
 // IsManagedHookCommand reports whether command is either a direct Entire hook
 // command or one of Entire's production wrapper forms that exec that command.
@@ -80,16 +121,23 @@ func IsManagedHookCommand(command string, prefixes []string) bool {
 	if hasManagedHookPrefix(command, prefixes) {
 		return true
 	}
-	if !strings.HasPrefix(command, productionHookWrapperPrefix) {
-		return false
-	}
+	if strings.HasPrefix(command, productionHookWrapperPrefix) {
+		_, wrappedCommand, ok := strings.Cut(command, "; fi; exec ")
+		if !ok {
+			return false
+		}
 
-	_, wrappedCommand, ok := strings.Cut(command, "; fi; exec ")
-	if !ok {
-		return false
+		return hasManagedHookPrefix(wrappedCommand, prefixes)
 	}
-
-	return hasManagedHookPrefix(wrappedCommand, prefixes)
+	if strings.HasPrefix(command, windowsProductionHookWrapperPrefix) {
+		idx := strings.LastIndex(command, " & ")
+		if idx < 0 {
+			return false
+		}
+		wrappedCommand := strings.TrimSuffix(command[idx+3:], `"`)
+		return hasManagedHookPrefix(wrappedCommand, prefixes)
+	}
+	return false
 }
 
 func hasManagedHookPrefix(command string, prefixes []string) bool {
@@ -99,4 +147,16 @@ func hasManagedHookPrefix(command string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+func escapeWindowsCMD(s string) string {
+	replacer := strings.NewReplacer(
+		`^`, `^^`,
+		`&`, `^&`,
+		`|`, `^|`,
+		`<`, `^<`,
+		`>`, `^>`,
+		`"`, `^"`,
+	)
+	return replacer.Replace(s)
 }
