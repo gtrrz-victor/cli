@@ -73,8 +73,37 @@ type trailResumeSessionContext struct {
 	SessionID    string    `json:"session_id"`
 	Agent        string    `json:"agent,omitempty"`
 	LastPrompt   string    `json:"last_prompt,omitempty"`
-	LastActive   time.Time `json:"last_active,omitempty"`
+	LastActive   time.Time `json:"-"`
 	CheckpointID string    `json:"checkpoint_id"`
+}
+
+func (s trailResumeSessionContext) MarshalJSON() ([]byte, error) {
+	type trailResumeSessionContextJSON struct {
+		SessionID    string     `json:"session_id"`
+		Agent        string     `json:"agent,omitempty"`
+		LastPrompt   string     `json:"last_prompt,omitempty"`
+		LastActive   *time.Time `json:"last_active,omitempty"`
+		CheckpointID string     `json:"checkpoint_id"`
+	}
+
+	var lastActive *time.Time
+	if !s.LastActive.IsZero() {
+		active := s.LastActive
+		lastActive = &active
+	}
+
+	payload := trailResumeSessionContextJSON{
+		SessionID:    s.SessionID,
+		Agent:        s.Agent,
+		LastPrompt:   s.LastPrompt,
+		LastActive:   lastActive,
+		CheckpointID: s.CheckpointID,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal trail resume session context: %w", err)
+	}
+	return data, nil
 }
 
 type trailResumeDefaultContext struct {

@@ -530,6 +530,35 @@ func TestEncodeTrailResumeContextJSON(t *testing.T) {
 	}
 }
 
+func TestEncodeTrailResumeContextJSONOmitsUnsetLastActive(t *testing.T) {
+	t.Parallel()
+
+	ctx := trailResumeContext{
+		Trail: trailResumeTrailContext{ID: "trl_1", Number: 575, Branch: "feature/trail-resume"},
+		Sessions: []trailResumeSessionContext{{
+			SessionID:    "session-1",
+			CheckpointID: "aaaaaaaaaaaa",
+		}},
+	}
+
+	var out bytes.Buffer
+	if err := encodeTrailResumeContextJSON(&out, ctx); err != nil {
+		t.Fatalf("encodeTrailResumeContextJSON: %v", err)
+	}
+	var decoded struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("unmarshal output: %v\n%s", err, out.String())
+	}
+	if len(decoded.Sessions) != 1 {
+		t.Fatalf("decoded sessions len = %d, want 1", len(decoded.Sessions))
+	}
+	if _, ok := decoded.Sessions[0]["last_active"]; ok {
+		t.Fatalf("last_active should be omitted when unset:\n%s", out.String())
+	}
+}
+
 func TestEncodeTrailResumeContextJSONOmitsFindingsSummaryWhenUnavailable(t *testing.T) {
 	t.Parallel()
 

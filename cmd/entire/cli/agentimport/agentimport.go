@@ -68,18 +68,6 @@ var importers = []Importer{
 	claudeImporter{},
 }
 
-// Get returns the importer registered under name.
-//
-//nolint:ireturn // Importer is the intended polymorphic seam returned to callers.
-func Get(name string) (Importer, bool) {
-	for _, imp := range importers {
-		if imp.Name() == name {
-			return imp, true
-		}
-	}
-	return nil, false
-}
-
 // All returns every supported importer, sorted by name.
 func All() []Importer {
 	out := append([]Importer(nil), importers...)
