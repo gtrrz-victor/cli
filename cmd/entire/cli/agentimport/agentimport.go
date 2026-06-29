@@ -81,6 +81,16 @@ func All() []Importer {
 	return out
 }
 
+// Get returns the importer registered for name.
+func Get(name string) (Importer, bool) {
+	for _, imp := range importers {
+		if imp.Name() == name {
+			return imp, true
+		}
+	}
+	return nil, false
+}
+
 // Options configures an import run.
 type Options struct {
 	RepoRoot      string
