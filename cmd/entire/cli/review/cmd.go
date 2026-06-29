@@ -1287,7 +1287,7 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 		sinks = append(sinks, tui)
 		if in.synthesisProvider != nil {
 			postRunOut := &bytes.Buffer{}
-			sinks = append(sinks, DumpSink{W: postRunOut, RenderWriter: in.out})
+			sinks = append(sinks, DumpSink{W: postRunOut})
 			sinks = append(sinks, SynthesisSink{
 				Provider:     in.synthesisProvider,
 				Writer:       postRunOut,
@@ -1543,7 +1543,7 @@ func composeSingleAgentSinks(in singleAgentSinkInputs) []reviewtypes.Sink {
 	postRunOut := &bytes.Buffer{}
 	return []reviewtypes.Sink{
 		tui,
-		DumpSink{W: postRunOut, RenderWriter: in.out},
+		DumpSink{W: postRunOut},
 		tuiPostRunCompleteSink{tui: tui, buf: postRunOut, out: in.out},
 	}
 }

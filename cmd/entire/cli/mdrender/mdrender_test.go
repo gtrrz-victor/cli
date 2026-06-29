@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/mdrender"
 )
@@ -109,6 +110,45 @@ func TestRenderForWriter_NoColorEnvForcesRaw(t *testing.T) {
 
 // TestRender_EmptyInputDoesNotPanic verifies the renderer handles edge cases
 // (empty string, whitespace-only) without erroring.
+// TestRender_OversizedInputReturnsRawQuickly pins the guard against glamour's
+// super-linear blowup: inputs larger than MaxRenderBytes must skip styling and
+// return the raw markdown unchanged (and near-instantly) instead of wedging the
+// caller for minutes. Regression for the review run that hung forever on
+// "Finalizing output..." while DumpSink rendered a multi-MB agent narrative.
+func TestRender_OversizedInputReturnsRawQuickly(t *testing.T) {
+	t.Parallel()
+
+	// 8MB of markdown took >4 minutes through glamour in benchmarking; the
+	// guard must make this effectively free.
+	big := strings.Repeat("# Heading\n\nparagraph text here\n\n", (8*1024*1024)/30)
+	if len(big) <= mdrender.MaxRenderBytes {
+		t.Fatalf("setup: test input %d should exceed MaxRenderBytes %d", len(big), mdrender.MaxRenderBytes)
+	}
+
+	done := make(chan struct{})
+	var out string
+	var err error
+	go func() {
+		out, err = mdrender.Render(big, 80, true)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Render did not return within 5s for oversized input — size guard missing")
+	}
+
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if out != big {
+		t.Errorf("oversized input should be returned raw and unchanged (len in=%d out=%d)", len(big), len(out))
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Error("oversized input should not be glamour-styled")
+	}
+}
+
 func TestRender_EmptyInputDoesNotPanic(t *testing.T) {
 	t.Parallel()
 

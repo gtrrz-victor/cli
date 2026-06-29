@@ -93,7 +93,10 @@ type reviewTUIModel struct {
 	termHeight int
 
 	finished bool
-	summary  reviewtypes.RunSummary
+	// finishedAt records when runFinishedMsg arrived, so the finalize footer can
+	// show how long post-run work has run and a genuine hang stays visible.
+	finishedAt time.Time
+	summary    reviewtypes.RunSummary
 
 	finalPhaseName    string
 	finalPhaseRunning bool
@@ -163,6 +166,7 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runFinishedMsg:
 		m.finished = true
+		m.finishedAt = time.Now()
 		m.summary = msg.summary
 		// Sync each row's status from the orchestrator's summary. The
 		// in-stream events (Finished / RunError) update status as they
@@ -173,17 +177,29 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// emitted) or Failed (process exit non-zero, no Finished emitted)
 		// would still render as "running" in the final frame.
 		//
-		// Preserve any already-set status from the event stream — if the
-		// stream said Failed (RunError), the summary may say Succeeded
-		// (process exit 0); RunError stickiness wins. Only overwrite when
-		// the row is still in AgentStatusUnknown.
+		// The summary is authoritative for terminal classification:
+		//   - Unknown row: adopt the summary status outright.
+		//   - Summary Failed: override an optimistic stream Succeeded. An agent
+		//     can emit Finished{Success:true} just before its process exits
+		//     non-zero; classifyStatus sees the exit code, the event stream
+		//     does not. Without this, the row renders "✓ done" while the
+		//     counts line (built from the summary) reports it failed — the two
+		//     halves of the dashboard disagreeing in the final frame.
+		//   - Summary Cancelled: same downgrade, but stream Failed still wins
+		//     (a real RunError is more specific than a blanket ctx cancel).
 		now := time.Now()
 		for i, run := range msg.summary.AgentRuns {
 			if i >= len(m.rows) {
 				break
 			}
-			if m.rows[i].status == reviewtypes.AgentStatusUnknown {
+			switch {
+			case m.rows[i].status == reviewtypes.AgentStatusUnknown:
 				m.rows[i].status = run.Status
+			case run.Status == reviewtypes.AgentStatusFailed:
+				m.rows[i].status = reviewtypes.AgentStatusFailed
+			case run.Status == reviewtypes.AgentStatusCancelled &&
+				m.rows[i].status != reviewtypes.AgentStatusFailed:
+				m.rows[i].status = reviewtypes.AgentStatusCancelled
 			}
 			if run.Tokens.In > 0 || run.Tokens.Out > 0 {
 				m.rows[i].tokens = run.Tokens
@@ -214,17 +230,16 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tickMsg:
-		if m.finished && !m.finalPhaseRunning {
-			return m, nil
-		}
+		// Keep ticking while finalizing (finished but not yet exited) so the
+		// footer spinner and elapsed timer animate. A frozen "Finalizing
+		// output..." line is indistinguishable from a hang; a moving spinner
+		// plus a climbing timer makes liveness (or a genuine stall) visible.
+		// PostRunComplete quits the program, so this loop is always bounded.
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		return m, tea.Batch(spinCmd, tickCmd())
 
 	case spinner.TickMsg:
-		if m.finished && !m.finalPhaseRunning {
-			return m, nil
-		}
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		return m, spinCmd
@@ -530,16 +545,27 @@ func (m reviewTUIModel) dashboardView() string {
 	switch {
 	case m.finished && m.finalPhaseRunning:
 		m.writeDashboardLine(&b, m.countsLine())
-		m.writeDashboardLine(&b, "Final judge is consolidating...")
+		m.writeDashboardLine(&b, m.spinner.View()+" Final judge is consolidating..."+m.finalizeElapsedSuffix())
 	case m.finished:
 		m.writeDashboardLine(&b, m.countsLine())
-		m.writeDashboardLine(&b, "Finalizing output...")
+		m.writeDashboardLine(&b, m.spinner.View()+" Finalizing output..."+m.finalizeElapsedSuffix())
 	case m.cancelling:
 		m.writeDashboardLine(&b, "Cancelling agents... · Ctrl+C again: force quit")
 	default:
 		m.writeDashboardLine(&b, "Ctrl+O: drill in · Ctrl+C: cancel")
 	}
 	return b.String()
+}
+
+// finalizeElapsedSuffix returns a " (Xs)" suffix showing how long post-run
+// finalization has been running, or "" before runFinishedMsg has landed. The
+// climbing timer reassures the user during normal (brief) finalization and
+// surfaces a genuine stall instead of a footer that looks frozen.
+func (m reviewTUIModel) finalizeElapsedSuffix() string {
+	if m.finishedAt.IsZero() {
+		return ""
+	}
+	return " (" + formatDuration(time.Since(m.finishedAt)) + ")"
 }
 
 func (m reviewTUIModel) writeDashboardLine(b *strings.Builder, line string) {
