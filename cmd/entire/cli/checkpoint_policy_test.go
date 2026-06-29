@@ -56,7 +56,7 @@ func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 		wantErr string
 	}{
 		{name: "checkpoint version", args: []string{"--checkpoint-version", "branch-v2342"}, wantErr: `checkpoint_version "branch-v2342" is not supported by this Entire CLI`},
-		{name: "minimum version", args: []string{"--checkpoint-min-version", "refs-v1"}, wantErr: `checkpoint_min_version "refs-v1" is not supported by this Entire CLI`},
+		{name: "minimum version", args: []string{"--checkpoint-min-version", "refs-v2"}, wantErr: `checkpoint_min_version "refs-v2" is not supported by this Entire CLI`},
 	}
 
 	for _, tt := range tests {
@@ -87,8 +87,8 @@ func TestCheckpointPolicyCmd_PrintsUnsupportedConfiguredVersion(t *testing.T) {
 func TestCheckpointPolicyCmd_RejectsDowngradeWithoutForce(t *testing.T) {
 	dir, bareDir := setupCheckpointPolicyRepo(t)
 	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: "refs-v1",
+		CheckpointVersion:    "refs-v2",
+		CheckpointMinVersion: "refs-v2",
 	})
 	pushCheckpointPolicyRefForCommandTest(t, dir, bareDir)
 

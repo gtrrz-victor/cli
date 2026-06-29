@@ -641,7 +641,7 @@ func TestResolveLatestCheckpointReturnsUnsupportedWhenAnyCheckpointIsUnsupported
 	newID := id.MustCheckpointID("ccc333ddd444")
 	reader := &resumeCheckpointInfoReaderStub{
 		summaries: map[id.CheckpointID]*checkpoint.CheckpointSummary{
-			unsupportedID: {CheckpointVersion: "refs-v1"},
+			unsupportedID: {CheckpointVersion: "refs-v2"},
 			newID:         {Sessions: []checkpoint.SessionFilePaths{{Metadata: "new"}}},
 		},
 		metadata: map[id.CheckpointID][]checkpoint.Metadata{
@@ -670,7 +670,7 @@ func TestResolveLatestCheckpointReturnsUnsupportedWhenNoReadableCheckpointExists
 	unsupportedID := id.MustCheckpointID("aaa111bbb222")
 	reader := &resumeCheckpointInfoReaderStub{
 		summaries: map[id.CheckpointID]*checkpoint.CheckpointSummary{
-			unsupportedID: {CheckpointVersion: "refs-v1"},
+			unsupportedID: {CheckpointVersion: "refs-v2"},
 		},
 	}
 

@@ -97,7 +97,7 @@ func rewriteExportCheckpointVersionToRefsV1(t *testing.T, repo *git.Repository, 
 	require.NoError(t, err)
 	var summary checkpoint.CheckpointSummary
 	require.NoError(t, json.Unmarshal([]byte(content), &summary))
-	summary.CheckpointVersion = "refs-v1"
+	summary.CheckpointVersion = "refs-v2"
 	metadataJSON, err := json.Marshal(summary)
 	require.NoError(t, err)
 	metadataHash, err := checkpoint.CreateBlobFromContent(repo, metadataJSON)
@@ -160,7 +160,7 @@ func TestRunExplainExportJSONRejectsUnsupportedCheckpointVersion(t *testing.T) {
 		json:         true,
 		sessionIndex: -1,
 	})
-	require.ErrorContains(t, err, `checkpoint aaaabbbbcccc uses unsupported checkpoint_version "refs-v1"`)
+	require.ErrorContains(t, err, `checkpoint aaaabbbbcccc uses unsupported checkpoint_version "refs-v2"`)
 	require.Empty(t, stdout.String())
 }
 
@@ -312,7 +312,7 @@ func TestRunExplainExportTranscriptRejectsUnsupportedCheckpointVersion(t *testin
 
 			var stdout, stderr bytes.Buffer
 			err := runExplainExport(context.Background(), &stdout, &stderr, tt.opts)
-			require.ErrorContains(t, err, `checkpoint abcd11112222 uses unsupported checkpoint_version "refs-v1"`)
+			require.ErrorContains(t, err, `checkpoint abcd11112222 uses unsupported checkpoint_version "refs-v2"`)
 			require.Empty(t, stdout.String())
 		})
 	}
