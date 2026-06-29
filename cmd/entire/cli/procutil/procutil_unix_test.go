@@ -42,7 +42,9 @@ func TestTerminateOnCancel_UnblocksGrandchildHoldingPipe(t *testing.T) {
 	// Drain to EOF in the background, mirroring how the reviewer reads Events.
 	drained := make(chan struct{})
 	go func() {
-		_, _ = r.ReadString('\n') // blocks on the open pipe until cancel closes it
+		// Blocks on the open pipe until cancel closes it; the error on close is
+		// expected and the unblock itself is the assertion.
+		_, _ = r.ReadString('\n') //nolint:errcheck // unblock is the assertion
 		close(drained)
 	}()
 
@@ -54,5 +56,5 @@ func TestTerminateOnCancel_UnblocksGrandchildHoldingPipe(t *testing.T) {
 		t.Fatal("stdout drain did not unblock after cancel — Ctrl+C would hang")
 	}
 
-	_ = cmd.Wait()
+	_ = cmd.Wait() //nolint:errcheck // process was killed; exit error expected
 }
