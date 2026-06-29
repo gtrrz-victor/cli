@@ -332,17 +332,13 @@ func TestWritePostReviewManifest_WarnsWhenNoMatchingSessions(t *testing.T) {
 	}
 }
 
-// TestWritePostReviewManifest_SurvivesCancelledRunContext pins the fix for
-// findings being silently discarded when the user Ctrl+C's out of a slow
-// final-report step: the workers already finished (summary not cancelled), so
-// persistence must run on a detached context and not fail with
-// "context canceled" just because the run context was cancelled afterward.
+// Findings from finished workers must persist even if the run context is
+// cancelled during finalize (summary not cancelled).
 func TestWritePostReviewManifest_SurvivesCancelledRunContext(t *testing.T) {
 	repoRoot := t.TempDir()
 	testutil.InitRepo(t, repoRoot)
 	t.Chdir(repoRoot)
 
-	// Simulate the run context cancelled during finalization.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -357,9 +353,6 @@ func TestWritePostReviewManifest_SurvivesCancelledRunContext(t *testing.T) {
 	writePostReviewManifest(ctx, &out, repoRoot, "abc123", summary, "")
 
 	got := out.String()
-	// The git/disk work must have run despite the cancelled input context: we
-	// reach the normal "no matching sessions" path, not a context-canceled
-	// failure.
 	if strings.Contains(got, "context canceled") {
 		t.Fatalf("persistence used the cancelled run context; findings would be lost:\n%s", got)
 	}

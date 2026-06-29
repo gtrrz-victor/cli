@@ -301,11 +301,7 @@ func TestTUIModel_DashboardUsesAltScreen(t *testing.T) {
 	}
 }
 
-// TestTUIModel_FinishedKeepsTicking pins that the dashboard keeps animating
-// after the run finishes. The finished frame is the finalize window (post-run
-// sinks still running before PostRunComplete quits the program); a frozen
-// "Finalizing output..." line is indistinguishable from a hang, so the spinner
-// and elapsed timer must keep ticking to signal liveness.
+// The dashboard must keep ticking through finalize so the footer animates.
 func TestTUIModel_FinishedKeepsTicking(t *testing.T) {
 	t.Parallel()
 	m := newTestModel([]string{"agent-a"}, func() {})
@@ -429,24 +425,18 @@ func TestTUIModel_RunFinishedMsg_MarksFinished(t *testing.T) {
 	}
 }
 
-// TestTUIModel_RunFinishedMsg_SummaryFailedOverridesStreamSucceeded pins the
-// fix for a dashboard that disagreed with itself: an agent that emitted
-// Finished{Success:true} but whose process later exited non-zero was rendered
-// "✓ done" in its row while the counts line (built from the summary) reported it
-// failed. The summary is authoritative for terminal classification, so the row
-// must downgrade to failed to match.
+// A summary Failed must override an optimistic stream Succeeded so the row and
+// the counts line agree.
 func TestTUIModel_RunFinishedMsg_SummaryFailedOverridesStreamSucceeded(t *testing.T) {
 	t.Parallel()
 	m := newTestModel([]string{"agent-a"}, func() {})
 
-	// Stream optimistically marks the row Succeeded.
 	updated, _ := m.Update(agentEventMsg{agent: "agent-a", ev: reviewtypes.Finished{Success: true}})
 	m = mustModel(t, updated)
 	if m.rows[0].status != reviewtypes.AgentStatusSucceeded {
 		t.Fatalf("setup: want stream Succeeded, got %v", m.rows[0].status)
 	}
 
-	// Orchestrator summary saw the non-zero process exit: Failed.
 	summary := reviewtypes.RunSummary{AgentRuns: []reviewtypes.AgentRun{
 		{Name: "agent-a", Status: reviewtypes.AgentStatusFailed},
 	}}
@@ -461,9 +451,7 @@ func TestTUIModel_RunFinishedMsg_SummaryFailedOverridesStreamSucceeded(t *testin
 	}
 }
 
-// TestTUIModel_RunFinishedMsg_StreamFailedStickyOverCancel pins that a real
-// RunError (Failed) is not blanket-downgraded to Cancelled when the run context
-// was cancelled — the specific failure is more useful than the generic cancel.
+// Stream Failed (a real RunError) must not be downgraded to a blanket Cancelled.
 func TestTUIModel_RunFinishedMsg_StreamFailedStickyOverCancel(t *testing.T) {
 	t.Parallel()
 	m := newTestModel([]string{"agent-a"}, func() {})

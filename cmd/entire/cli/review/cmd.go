@@ -1444,13 +1444,8 @@ func writePostReviewManifest(
 		return
 	}
 
-	// The findings were produced by worker sessions that already finished. If
-	// the user Ctrl+C's out of a slow final-report/synthesis step, the run
-	// context is cancelled AFTER summary.Cancelled was computed (so the guard
-	// above doesn't fire), and the git/disk work below would fail with
-	// "context canceled" — silently discarding findings the user waited
-	// minutes for. Detach from the run context and give persistence its own
-	// short deadline so completed findings survive a cancel during finalize.
+	// Detach from the run context: a Ctrl+C during a slow finalize cancels ctx
+	// after the workers finished, and must not discard their findings.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 

@@ -28,14 +28,8 @@ import (
 // is available. Matches the cap used by status_style.getTerminalWidth.
 const DefaultTerminalWidth = 80
 
-// MaxRenderBytes caps the markdown size handed to glamour. Glamour's render
-// cost is strongly super-linear: ~1s at 500KB, ~6s at 2MB, ~49s at 4MB, and
-// minutes-to-effectively-never beyond that. A long-running agent can emit
-// multi-MB narratives, and review's post-run DumpSink renders each one on the
-// orchestrator's finalize goroutine — so an unbounded render wedges the whole
-// run on a frozen "Finalizing output..." with no way forward. Above this cap
-// we skip styling and return the raw markdown unchanged: still fully readable,
-// just unstyled, and bounded. 256KB renders in well under a second.
+// MaxRenderBytes caps glamour input: its render cost is super-linear (~6s at
+// 2MB, minutes beyond), so above this we return raw markdown unchanged.
 const MaxRenderBytes = 256 * 1024
 
 // Render produces a glamour-styled string from markdown using the entire
@@ -47,9 +41,6 @@ const MaxRenderBytes = 256 * 1024
 // than a runtime condition. Renderer panics are recovered and returned as
 // errors so callers can fall back to raw markdown instead of crashing.
 func Render(markdown string, width int, darkBackground bool) (rendered string, err error) {
-	// Guard against glamour's super-linear blowup on very large inputs: above
-	// MaxRenderBytes, return the raw markdown unchanged rather than hang the
-	// caller for minutes. See MaxRenderBytes for the cost curve.
 	if len(markdown) > MaxRenderBytes {
 		return markdown, nil
 	}

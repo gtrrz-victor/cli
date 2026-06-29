@@ -93,8 +93,7 @@ type reviewTUIModel struct {
 	termHeight int
 
 	finished bool
-	// finishedAt records when runFinishedMsg arrived, so the finalize footer can
-	// show how long post-run work has run and a genuine hang stays visible.
+	// finishedAt drives the finalize footer's elapsed timer.
 	finishedAt time.Time
 	summary    reviewtypes.RunSummary
 
@@ -177,16 +176,9 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// emitted) or Failed (process exit non-zero, no Finished emitted)
 		// would still render as "running" in the final frame.
 		//
-		// The summary is authoritative for terminal classification:
-		//   - Unknown row: adopt the summary status outright.
-		//   - Summary Failed: override an optimistic stream Succeeded. An agent
-		//     can emit Finished{Success:true} just before its process exits
-		//     non-zero; classifyStatus sees the exit code, the event stream
-		//     does not. Without this, the row renders "✓ done" while the
-		//     counts line (built from the summary) reports it failed — the two
-		//     halves of the dashboard disagreeing in the final frame.
-		//   - Summary Cancelled: same downgrade, but stream Failed still wins
-		//     (a real RunError is more specific than a blanket ctx cancel).
+		// The summary is authoritative: let it downgrade an optimistic stream
+		// Succeeded to Failed/Cancelled so rows match the counts line. Stream
+		// Failed (a real RunError) still wins over a blanket Cancelled.
 		now := time.Now()
 		for i, run := range msg.summary.AgentRuns {
 			if i >= len(m.rows) {
@@ -230,11 +222,8 @@ func (m reviewTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tickMsg:
-		// Keep ticking while finalizing (finished but not yet exited) so the
-		// footer spinner and elapsed timer animate. A frozen "Finalizing
-		// output..." line is indistinguishable from a hang; a moving spinner
-		// plus a climbing timer makes liveness (or a genuine stall) visible.
-		// PostRunComplete quits the program, so this loop is always bounded.
+		// Keep ticking through finalize so the footer spinner/timer animate
+		// instead of looking frozen; PostRunComplete bounds the loop.
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		return m, tea.Batch(spinCmd, tickCmd())
@@ -557,10 +546,7 @@ func (m reviewTUIModel) dashboardView() string {
 	return b.String()
 }
 
-// finalizeElapsedSuffix returns a " (Xs)" suffix showing how long post-run
-// finalization has been running, or "" before runFinishedMsg has landed. The
-// climbing timer reassures the user during normal (brief) finalization and
-// surfaces a genuine stall instead of a footer that looks frozen.
+// finalizeElapsedSuffix returns a " (Xs)" elapsed suffix once finalize begins.
 func (m reviewTUIModel) finalizeElapsedSuffix() string {
 	if m.finishedAt.IsZero() {
 		return ""

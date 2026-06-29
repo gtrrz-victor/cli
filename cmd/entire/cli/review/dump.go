@@ -5,14 +5,10 @@
 // AgentEvent is a no-op; events are read from RunSummary.AgentRuns[].Buffer
 // in RunFinished.
 //
-// Output format: each agent's block is composed as markdown (`# claude-code
-// review`, with failure context in blockquotes/bold) and written as-is. Worker
-// narratives are raw material, not a deliverable — the human reads the final
-// synthesized report (which IS styled) and can drill into a worker's buffer
-// interactively. So DumpSink deliberately does NOT glamour-render: styling
-// every worker's narrative is wasted work that, on multi-MB output, made
-// glamour's super-linear cost wedge the whole finalize phase. Plain markdown is
-// fully readable, grep-able in pipelines, and bounded.
+// Each agent's block is plain markdown written as-is — NOT glamour-rendered.
+// Worker narratives are raw material (the final report is styled, and drill-in
+// shows the buffer); styling multi-MB output here wedged the finalize phase on
+// glamour's super-linear cost.
 package review
 
 import (
@@ -44,9 +40,7 @@ func (s DumpSink) RunFinished(summary reviewtypes.RunSummary) {
 	s.dumpCounts(summary)
 }
 
-// dumpAgent composes one agent's section as plain markdown and writes it
-// directly to W (no glamour styling — see the package comment). The counts line
-// at the end of the run is likewise a terse single-line status summary.
+// dumpAgent writes one agent's section as plain markdown directly to W.
 //
 // Markdown structure per agent:
 //
