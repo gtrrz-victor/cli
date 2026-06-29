@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/validation"
 )
 
 // ForegroundCommandSpec describes a command Entire can launch in the caller's
@@ -23,27 +24,27 @@ func ResumeCommandSpecFor(name types.AgentName, sessionID string) (ForegroundCom
 	sessionID = strings.TrimSpace(sessionID)
 	switch name {
 	case AgentNameClaudeCode:
-		if sessionID == "" {
+		if !isLaunchableResumeSessionID(sessionID) {
 			return ForegroundCommandSpec{}, false
 		}
 		return ForegroundCommandSpec{Binary: "claude", Args: []string{"-r", sessionID}}, true
 	case AgentNameCodex:
-		if sessionID == "" {
+		if !isLaunchableResumeSessionID(sessionID) {
 			return ForegroundCommandSpec{}, false
 		}
 		return ForegroundCommandSpec{Binary: "codex", Args: []string{"resume", sessionID}}, true
 	case AgentNameCopilotCLI:
-		if sessionID == "" {
+		if !isLaunchableResumeSessionID(sessionID) {
 			return ForegroundCommandSpec{}, false
 		}
 		return ForegroundCommandSpec{Binary: "copilot", Args: []string{"--resume", sessionID}}, true
 	case AgentNameFactoryAIDroid:
-		if sessionID == "" {
+		if !isLaunchableResumeSessionID(sessionID) {
 			return ForegroundCommandSpec{}, false
 		}
 		return ForegroundCommandSpec{Binary: "droid", Args: []string{"--session-id", sessionID}}, true
 	case AgentNameGemini:
-		if sessionID == "" {
+		if !isLaunchableResumeSessionID(sessionID) {
 			return ForegroundCommandSpec{}, false
 		}
 		return ForegroundCommandSpec{Binary: "gemini", Args: []string{"--resume", sessionID}}, true
@@ -51,15 +52,25 @@ func ResumeCommandSpecFor(name types.AgentName, sessionID string) (ForegroundCom
 		if sessionID == "" {
 			return ForegroundCommandSpec{Binary: "opencode"}, true
 		}
+		if !isLaunchableResumeSessionID(sessionID) {
+			return ForegroundCommandSpec{}, false
+		}
 		return ForegroundCommandSpec{Binary: "opencode", Args: []string{"-s", sessionID}}, true
 	case AgentNamePi:
 		if sessionID == "" {
 			return ForegroundCommandSpec{Binary: "pi", Args: []string{"--continue"}}, true
 		}
+		if !isLaunchableResumeSessionID(sessionID) {
+			return ForegroundCommandSpec{}, false
+		}
 		return ForegroundCommandSpec{Binary: "pi", Args: []string{"--session", sessionID}}, true
 	default:
 		return ForegroundCommandSpec{}, false
 	}
+}
+
+func isLaunchableResumeSessionID(sessionID string) bool {
+	return sessionID != "" && validation.ValidateSessionID(sessionID) == nil
 }
 
 // NewResumeForegroundCommand builds a foreground command for resuming a session,

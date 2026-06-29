@@ -67,6 +67,12 @@ func TestResumeCommandSpecFor(t *testing.T) {
 			wantOK:    true,
 		},
 		{
+			name:      "leading dash session id is not launchable",
+			agentName: AgentNameClaudeCode,
+			sessionID: "--dangerously-skip-permissions",
+			wantOK:    false,
+		},
+		{
 			name:      "cursor is print only",
 			agentName: AgentNameCursor,
 			sessionID: "session-123",
