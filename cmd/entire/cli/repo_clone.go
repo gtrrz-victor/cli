@@ -31,13 +31,21 @@ const mirrorCloneProviderGitHub = "github"
 
 // entireCloneURLScheme is the scheme of a full mirror clone URL, which
 // git-remote-entire resolves directly. Such a URL already names the cluster, so
-// `entire clone` passes it through to `git clone` untouched.
+// `repo clone` passes it through to `git clone` untouched.
 const entireCloneURLScheme = "entire://"
 
 // isEntireCloneURL reports whether ref is a full entire:// clone URL (vs. the
 // `/gh/<owner>/<repo>` shorthand that needs a mirror lookup).
 func isEntireCloneURL(ref string) bool {
 	return strings.HasPrefix(strings.TrimSpace(ref), entireCloneURLScheme)
+}
+
+// mirrorCloneURL synthesizes the entire:// clone URL for a GitHub mirror from
+// its cluster host and owner/repo — the form `git clone` accepts, which the
+// mirror list API doesn't return. Shared by the mirror table view (mirrorRow)
+// and `repo clone` so the wire format lives in one place.
+func mirrorCloneURL(host, owner, repo string) string {
+	return fmt.Sprintf("%s%s/gh/%s/%s", entireCloneURLScheme, host, owner, repo)
 }
 
 // parseMirrorCloneRef turns a clone ref like `/gh/entirehq/entire-api` into the
@@ -143,7 +151,7 @@ func newRepoCloneCmd() *cobra.Command {
 			if err := validateClusterHost(chosen.ClusterHost); err != nil {
 				return fmt.Errorf("mirror has an invalid cluster host %q: %w", chosen.ClusterHost, err)
 			}
-			cloneURL := fmt.Sprintf("entire://%s/gh/%s/%s", chosen.ClusterHost, owner, repo)
+			cloneURL := mirrorCloneURL(chosen.ClusterHost, owner, repo)
 			return runGitClone(cmd.Context(), cmd, cloneURL, targetDir)
 		},
 	}
