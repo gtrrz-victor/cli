@@ -1,0 +1,454 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/entireio/cli/cmd/entire/cli/api"
+	"github.com/entireio/cli/cmd/entire/cli/gitremote"
+	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/spf13/cobra"
+)
+
+type expertsAPIClient interface {
+	Post(ctx context.Context, path string, body any) (*http.Response, error)
+}
+
+var newExpertsAPIClient = func(ctx context.Context, insecureHTTP bool) (expertsAPIClient, error) {
+	return NewAuthenticatedAPIClient(ctx, insecureHTTP)
+}
+
+func setExpertsClientFactoryForTest(
+	t interface{ Helper() },
+	fn func(context.Context, bool) (expertsAPIClient, error),
+) func() {
+	t.Helper()
+	prev := newExpertsAPIClient
+	newExpertsAPIClient = fn
+	return func() { newExpertsAPIClient = prev }
+}
+
+type expertsFlags struct {
+	repo         string
+	branch       string
+	limit        int
+	json         bool
+	staged       bool
+	insecureHTTP bool
+}
+
+type expertsRequest struct {
+	Scopes        []string `json:"scopes,omitempty"`
+	Query         *string  `json:"query,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	EvidenceLimit int      `json:"evidence_limit,omitempty"`
+}
+
+type expertsResponse struct {
+	RepoFullName string           `json:"repo_full_name"`
+	Scopes       []string         `json:"scopes"`
+	Query        *string          `json:"query"`
+	Branch       string           `json:"branch"`
+	Source       string           `json:"source"`
+	Profiles     []expertsProfile `json:"profiles"`
+}
+
+type expertsFacetCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+type expertsProfile struct {
+	AgentID                   string                `json:"agent_id"`
+	AgentLabel                string                `json:"agent_label"`
+	RawAgents                 []string              `json:"raw_agents"`
+	Models                    []string              `json:"models"`
+	Labels                    []expertsFacetCount   `json:"labels"`
+	Skills                    []expertsFacetCount   `json:"skills"`
+	ToolMix                   []expertsFacetCount   `json:"tool_mix"`
+	MCPServers                []expertsFacetCount   `json:"mcp_servers"`
+	TranscriptTokens          int                   `json:"transcript_tokens"`
+	FilesChanged              int                   `json:"files_changed"`
+	LastActivityAt            string                `json:"last_activity_at"`
+	SessionCount              int                   `json:"session_count"`
+	CheckpointCount           int                   `json:"checkpoint_count"`
+	StepCount                 int                   `json:"step_count"`
+	AttributionAgentLines     *int                  `json:"attribution_agent_lines"`
+	AttributionTotalCommitted *int                  `json:"attribution_total_committed"`
+	MatchedFiles              []string              `json:"matched_files"`
+	ExactFileMatches          int                   `json:"exact_file_matches"`
+	PrefixFileMatches         int                   `json:"prefix_file_matches"`
+	Sessions                  []expertsEvidenceItem `json:"sessions"`
+}
+
+type expertsEvidenceItem struct {
+	SessionID                 string   `json:"session_id"`
+	DisplayName               string   `json:"display_name"`
+	Agent                     *string  `json:"agent"`
+	Model                     *string  `json:"model"`
+	LastActivityAt            string   `json:"last_activity_at"`
+	CheckpointCount           int      `json:"checkpoint_count"`
+	StepCount                 int      `json:"step_count"`
+	AttributionAgentLines     *int     `json:"attribution_agent_lines,omitempty"`
+	AttributionTotalCommitted *int     `json:"attribution_total_committed,omitempty"`
+	MatchedFiles              []string `json:"matched_files"`
+	ExactFileMatches          int      `json:"exact_file_matches"`
+	PrefixFileMatches         int      `json:"prefix_file_matches"`
+	CheckpointIDs             []string `json:"checkpoint_ids"`
+}
+
+func newExpertsCmd() *cobra.Command {
+	f := &expertsFlags{limit: 8}
+	cmd := &cobra.Command{
+		Use:    "experts [scope-or-query]",
+		Short:  "Rank agent provenance for code scopes",
+		Hidden: true,
+		Args:   cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExperts(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args, f)
+		},
+	}
+	cmd.Flags().StringVar(&f.repo, "repo", "", "Repository as owner/repo")
+	cmd.Flags().StringVar(&f.branch, "branch", "", "Branch to inspect")
+	cmd.Flags().IntVar(&f.limit, "limit", 8, "Maximum profiles to return")
+	cmd.Flags().BoolVar(&f.json, "json", false, "Print JSON")
+	cmd.Flags().BoolVar(&f.staged, "staged", false, "Use staged file paths as scopes")
+	cmd.Flags().BoolVar(&f.insecureHTTP, "insecure-http-auth", false, "Allow plain-HTTP auth (local dev only)")
+	if err := cmd.Flags().MarkHidden("insecure-http-auth"); err != nil {
+		panic(fmt.Sprintf("hide experts insecure auth flag: %v", err))
+	}
+	return cmd
+}
+
+func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *expertsFlags) error {
+	if f.staged && strings.TrimSpace(f.repo) != "" {
+		return errors.New("--staged cannot be used with --repo")
+	}
+	if f.limit <= 0 {
+		f.limit = 8
+	}
+	if f.limit > 20 {
+		f.limit = 20
+	}
+
+	repoFullName, err := resolveExpertsRepo(ctx, f.repo)
+	if err != nil {
+		return err
+	}
+
+	req := expertsRequest{Limit: f.limit, EvidenceLimit: 3}
+	if strings.TrimSpace(f.branch) != "" {
+		req.Branch = strings.TrimSpace(f.branch)
+	}
+
+	if f.staged {
+		scopes, err := stagedExpertScopes(ctx)
+		if err != nil {
+			return err
+		}
+		if len(scopes) == 0 {
+			fmt.Fprintln(errOut, "No staged files found.")
+			return NewSilentError(errors.New("no staged files"))
+		}
+		req.Scopes = scopes
+	} else {
+		input := strings.TrimSpace(strings.Join(args, " "))
+		if input == "" {
+			return errors.New("scope or query required unless --staged is set")
+		}
+		scope, isLocalScope, validateLocalRepo, err := localExpertScope(ctx, input)
+		if err != nil {
+			return err
+		}
+		if isLocalScope {
+			if strings.TrimSpace(f.repo) != "" && validateLocalRepo {
+				currentRepo, err := resolveExpertsRepo(ctx, "")
+				if err == nil && currentRepo != repoFullName {
+					return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
+				}
+			}
+			req.Scopes = []string{scope}
+		} else {
+			query := input
+			req.Query = &query
+		}
+	}
+
+	client, err := newExpertsAPIClient(ctx, f.insecureHTTP)
+	if err != nil {
+		return fmt.Errorf("create experts API client: %w", err)
+	}
+
+	resp, err := client.Post(ctx, expertsAPIPath(repoFullName), req)
+	if err != nil {
+		return fmt.Errorf("post experts request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := api.CheckResponse(resp); err != nil {
+		var httpErr *api.HTTPError
+		if errors.As(err, &httpErr) &&
+			httpErr.StatusCode == http.StatusServiceUnavailable &&
+			req.Query != nil &&
+			strings.Contains(strings.ToLower(httpErr.Message), "code search") {
+			fmt.Fprintln(errOut, "Code search is not configured for natural-language experts queries.")
+			return NewSilentError(err)
+		}
+		return fmt.Errorf("fetch experts: %w", err)
+	}
+
+	var decoded expertsResponse
+	if err := api.DecodeJSON(resp, &decoded); err != nil {
+		return fmt.Errorf("decode experts response: %w", err)
+	}
+
+	if f.json {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(decoded); err != nil {
+			return fmt.Errorf("write experts JSON: %w", err)
+		}
+		return nil
+	}
+
+	renderExperts(out, decoded)
+	return nil
+}
+
+func resolveExpertsRepo(ctx context.Context, override string) (string, error) {
+	if strings.TrimSpace(override) != "" {
+		return parseExpertsRepo(override)
+	}
+	_, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	if err != nil {
+		return "", fmt.Errorf("resolve repo from origin: %w", err)
+	}
+	if owner == "" || repo == "" {
+		return "", errors.New("could not resolve owner/repo from origin")
+	}
+	return owner + "/" + repo, nil
+}
+
+func parseExpertsRepo(value string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(value), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 3 && parts[0] == "gh" {
+		parts = parts[1:]
+	}
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("invalid --repo %q (use owner/repo)", value)
+	}
+	return parts[0] + "/" + strings.TrimSuffix(parts[1], ".git"), nil
+}
+
+func expertsAPIPath(repoFullName string) string {
+	owner, repo, _ := strings.Cut(repoFullName, "/")
+	return "/api/v1/cache/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/experts"
+}
+
+func localExpertScope(ctx context.Context, input string) (string, bool, bool, error) {
+	root, err := paths.WorktreeRoot(ctx)
+	if err != nil {
+		if looksLikeExpertPath(input) {
+			return normalizeExpertScope(input), true, false, nil
+		}
+		return "", false, false, nil
+	}
+
+	candidates := make([]string, 0, 2)
+	if filepath.IsAbs(input) {
+		candidates = append(candidates, input)
+	} else {
+		cwdAbs, err := filepath.Abs(input)
+		if err != nil {
+			return "", false, false, fmt.Errorf("resolve cwd-relative path: %w", err)
+		}
+		candidates = append(candidates, cwdAbs, filepath.Join(root, input))
+	}
+	candidates = uniqueStrings(candidates)
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, false, fmt.Errorf("stat local scope: %w", err)
+		}
+		scope, err := localPathScope(root, candidate, input)
+		if err != nil {
+			return "", false, false, err
+		}
+		if info.IsDir() && !strings.HasSuffix(scope, "/") {
+			scope += "/"
+		}
+		return scope, true, true, nil
+	}
+
+	if looksLikeExpertPath(input) {
+		if filepath.IsAbs(input) {
+			scope, err := localPathScope(root, input, input)
+			if err != nil {
+				return "", false, false, err
+			}
+			return scope, true, true, nil
+		}
+		return normalizeExpertScope(input), true, false, nil
+	}
+	return "", false, false, nil
+}
+
+func localPathScope(root, candidate, original string) (string, error) {
+	rel, err := filepath.Rel(canonicalPathForRel(root), canonicalPathForRel(candidate))
+	if err != nil {
+		return "", fmt.Errorf("relativize local scope: %w", err)
+	}
+	if rel == "." {
+		return "./", nil
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", fmt.Errorf("path %q is outside the git worktree", original)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func canonicalPathForRel(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+
+	var missing []string
+	current := path
+	for {
+		parent := filepath.Dir(current)
+		base := filepath.Base(current)
+		if parent == current {
+			return path
+		}
+		missing = append([]string{base}, missing...)
+		resolvedParent, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			return filepath.Join(append([]string{resolvedParent}, missing...)...)
+		}
+		current = parent
+	}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func looksLikeExpertPath(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
+		return false
+	}
+	return strings.ContainsAny(trimmed, `/\`) ||
+		strings.HasPrefix(trimmed, ".") ||
+		strings.HasSuffix(trimmed, "/") ||
+		filepath.Ext(trimmed) != ""
+}
+
+func normalizeExpertScope(input string) string {
+	scope := strings.TrimSpace(filepath.ToSlash(input))
+	scope = strings.TrimPrefix(scope, "./")
+	scope = strings.TrimLeft(scope, "/")
+	return scope
+}
+
+func stagedExpertScopes(ctx context.Context) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--name-only", "--diff-filter=ACMRD")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read staged files: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	scopes := make([]string, 0, len(lines))
+	seen := make(map[string]bool, len(lines))
+	for _, line := range lines {
+		scope := strings.TrimSpace(filepath.ToSlash(line))
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		scopes = append(scopes, scope)
+	}
+	return scopes, nil
+}
+
+func renderExperts(w io.Writer, resp expertsResponse) {
+	scopeLabel := strings.Join(resp.Scopes, ", ")
+	if resp.Query != nil && strings.TrimSpace(*resp.Query) != "" {
+		scopeLabel = *resp.Query
+	}
+	if scopeLabel == "" {
+		scopeLabel = resp.RepoFullName
+	}
+	if len(resp.Profiles) == 0 {
+		fmt.Fprintf(w, "No expert evidence found for %s.\n", scopeLabel)
+		return
+	}
+
+	fmt.Fprintf(w, "Agent provenance for %s", resp.RepoFullName)
+	if resp.Branch != "" {
+		fmt.Fprintf(w, " (%s)", resp.Branch)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w)
+
+	for i, profile := range resp.Profiles {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%s\n", profile.AgentLabel)
+		fmt.Fprintf(w, "  evidence: %d sessions, %d matching checkpoints, %d steps", profile.SessionCount, profile.CheckpointCount, profile.StepCount)
+		if profile.AttributionAgentLines != nil {
+			fmt.Fprintf(w, ", %d agent-attributed lines", *profile.AttributionAgentLines)
+		}
+		fmt.Fprintln(w)
+		writeFacetLine(w, "  skills", profile.Skills)
+		writeFacetLine(w, "  tools", profile.ToolMix)
+		writeFacetLine(w, "  mcp", profile.MCPServers)
+		if len(profile.MatchedFiles) > 0 {
+			fmt.Fprintf(w, "  files: %s\n", strings.Join(profile.MatchedFiles, ", "))
+		}
+		for _, session := range profile.Sessions {
+			fmt.Fprintf(w, "  - %s", session.DisplayName)
+			if session.CheckpointCount > 0 || session.StepCount > 0 {
+				fmt.Fprintf(w, " — %d checkpoints, %d steps", session.CheckpointCount, session.StepCount)
+			}
+			fmt.Fprintln(w)
+		}
+	}
+}
+
+func writeFacetLine(w io.Writer, label string, facets []expertsFacetCount) {
+	if len(facets) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(facets))
+	for _, facet := range facets {
+		parts = append(parts, fmt.Sprintf("%s (%d)", facet.Name, facet.Count))
+	}
+	fmt.Fprintf(w, "%s: %s\n", label, strings.Join(parts, ", "))
+}

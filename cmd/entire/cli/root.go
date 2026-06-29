@@ -114,6 +114,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newRecapCmd())
 
 	// Hidden top-level shortcuts. Functional but print a deprecation hint.
+	cmd.AddCommand(newExpertsCmd()) // hidden labs command for agent/workflow provenance
 	cmd.AddCommand(hideAsAlias(newResumeCmd(), "entire session resume"))
 	cmd.AddCommand(hideAsAlias(newAttachCmd(), "entire session attach"))
 	cmd.AddCommand(hideAsAlias(newExplainCmd(), "entire checkpoint explain"))
