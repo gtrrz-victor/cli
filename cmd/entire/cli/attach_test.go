@@ -21,7 +21,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
 	"github.com/entireio/cli/cmd/entire/cli/session"
@@ -1492,17 +1491,6 @@ func TestAttachCmd_ReviewAutoDetectsAgent(t *testing.T) {
 	}
 	if state.AgentType != agent.AgentTypeGemini {
 		t.Errorf("AgentType = %q, want %q (auto-detect should have found Gemini)", state.AgentType, agent.AgentTypeGemini)
-	}
-}
-
-func writeUnsupportedCheckpointPolicyForCLITest(t *testing.T, repo *git.Repository) {
-	t.Helper()
-	_, err := checkpointpolicy.WriteLocal(t.Context(), repo, plumbing.ZeroHash, checkpointpolicy.Policy{
-		CheckpointVersion:    "refs-v1",
-		CheckpointMinVersion: "branch-v1",
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 
