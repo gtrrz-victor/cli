@@ -87,6 +87,7 @@ Entire currently ships two release channels:
 
 How to use each channel:
 
+- Homebrew (one-time setup): `brew tap entireio/tap && brew trust entireio/tap`
 - Homebrew stable: `brew install --cask entire`
 - Homebrew nightly: `brew install --cask entire@nightly`
 - `install.sh` stable: `curl -fsSL https://entire.io/install.sh | bash`
