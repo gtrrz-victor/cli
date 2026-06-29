@@ -45,7 +45,7 @@ func TestAgentHelpCommands_IncludesAnnotatedHiddenOnly(t *testing.T) {
 	})
 	root.AddCommand(&cobra.Command{Use: "reset", Short: "old", Deprecated: "use clean"})
 
-	got := commandNames(agentHelpCommands(root))
+	got := commandNames(agentHelpCommands(root, true))
 
 	if !contains(got, "status") {
 		t.Errorf("expected visible command 'status' to be advertised, got %v", got)
@@ -61,6 +61,39 @@ func TestAgentHelpCommands_IncludesAnnotatedHiddenOnly(t *testing.T) {
 	}
 	if contains(got, "reset") {
 		t.Errorf("deprecated command 'reset' must not be advertised, got %v", got)
+	}
+}
+
+// Per the trails rollout: agent-help must not surface trail-gated commands when
+// trails aren't enabled for the repo, but non-trail commands always show.
+func TestAgentHelpCommands_GatesTrailOnTrailsEnabled(t *testing.T) {
+	t.Parallel()
+	root := NewRootCmd()
+
+	enabled := commandNames(agentHelpCommands(root, true))
+	if !contains(enabled, "trail") {
+		t.Errorf("trail should be advertised when trails are enabled, got %v", enabled)
+	}
+
+	disabled := commandNames(agentHelpCommands(root, false))
+	if contains(disabled, "trail") {
+		t.Errorf("trail must NOT be advertised when trails are disabled, got %v", disabled)
+	}
+	if !contains(disabled, "checkpoint") {
+		t.Errorf("non-trail commands should always be advertised, got %v", disabled)
+	}
+}
+
+// Drilling into a trail-gated command is blocked when trails are disabled.
+func TestRunAgentHelp_TrailDrillGatedOnTrailsEnabled(t *testing.T) {
+	t.Parallel()
+	root := NewRootCmd()
+
+	if _, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", false, true); err != nil {
+		t.Errorf("trail drill should resolve when trails enabled: %v", err)
+	}
+	if _, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", false, false); err == nil {
+		t.Errorf("trail drill should be unavailable when trails disabled")
 	}
 }
 
@@ -83,7 +116,7 @@ func TestRenderAgentHelpCommand_ShowsFlagsAndSubcommands(t *testing.T) {
 	cmd.AddCommand(&cobra.Command{Use: "show", Short: "Show a trail"})
 	cmd.AddCommand(&cobra.Command{Use: "list", Short: "List trails"})
 
-	out := renderAgentHelpCommand(cmd, "gh/acme/app")
+	out := renderAgentHelpCommand(cmd, "gh/acme/app", true)
 
 	for _, want := range []string{
 		"trail",
@@ -110,7 +143,7 @@ func TestRenderAgentHelpTop_ListsCommandsRepoAndRule(t *testing.T) {
 	t.Parallel()
 
 	root := NewRootCmd()
-	out := renderAgentHelpTop(root, "gh/acme/app")
+	out := renderAgentHelpTop(root, "gh/acme/app", true)
 
 	for _, want := range []string{
 		"trail",             // hidden but revealed via annotation
@@ -133,7 +166,7 @@ func TestRunAgentHelp_Dispatch(t *testing.T) {
 
 	root := NewRootCmd()
 
-	top, err := runAgentHelp(root, nil, "gh/acme/app", false)
+	top, err := runAgentHelp(root, nil, "gh/acme/app", false, true)
 	if err != nil {
 		t.Fatalf("top: unexpected error: %v", err)
 	}
@@ -141,7 +174,7 @@ func TestRunAgentHelp_Dispatch(t *testing.T) {
 		t.Fatalf("top output unexpected:\n%s", top)
 	}
 
-	drill, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", false)
+	drill, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", false, true)
 	if err != nil {
 		t.Fatalf("drill: unexpected error: %v", err)
 	}
@@ -149,7 +182,7 @@ func TestRunAgentHelp_Dispatch(t *testing.T) {
 		t.Fatalf("drill output unexpected:\n%s", drill)
 	}
 
-	jsonOut, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", true)
+	jsonOut, err := runAgentHelp(root, []string{"trail"}, "gh/acme/app", true, true)
 	if err != nil {
 		t.Fatalf("json: unexpected error: %v", err)
 	}
@@ -179,16 +212,18 @@ func TestRunAgentHelp_Dispatch(t *testing.T) {
 		t.Errorf("json flags missing --repo: %s", jsonOut)
 	}
 
-	if _, err := runAgentHelp(root, []string{"definitely-not-a-command"}, "", false); err == nil {
+	if _, err := runAgentHelp(root, []string{"definitely-not-a-command"}, "", false, true); err == nil {
 		t.Errorf("expected error for unknown command path")
 	}
 }
 
 // End-to-end through cobra Execute: the --json flag is parsed, the RunE closure
-// runs, repo resolution degrades gracefully (temp dir has no origin), and output
-// is written to OutOrStdout.
+// runs, repo + trails-enablement resolve from the (empty) temp dir, and output is
+// written to OutOrStdout. The temp dir has no origin, so trails resolve to
+// disabled and the trail surface is gated out — exercising the gate via the real
+// command path.
 func TestAgentHelpCmd_Execute(t *testing.T) {
-	t.Chdir(t.TempDir()) // no origin here -> repo line degrades gracefully; deterministic
+	t.Chdir(t.TempDir()) // no origin here -> repo line degrades, trails resolve disabled; deterministic
 
 	root := NewRootCmd()
 
@@ -200,19 +235,22 @@ func TestAgentHelpCmd_Execute(t *testing.T) {
 	if err := top.Execute(); err != nil {
 		t.Fatalf("agent-help execute: %v", err)
 	}
-	for _, want := range []string{"When to use entire", "trail", "checkpoint"} {
+	for _, want := range []string{"When to use entire", "checkpoint", "status"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("agent-help output missing %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "Manage trails for your branches") || strings.Contains(out.String(), "agent-help trail") {
+		t.Errorf("trail must be fully gated out (incl. the drill example) when trails are disabled:\n%s", out.String())
 	}
 
 	drill := newAgentHelpCmd(root)
 	var jbuf bytes.Buffer
 	drill.SetOut(&jbuf)
 	drill.SetErr(io.Discard)
-	drill.SetArgs([]string{"trail", "--json"})
+	drill.SetArgs([]string{"status", "--json"})
 	if err := drill.Execute(); err != nil {
-		t.Fatalf("agent-help trail --json execute: %v", err)
+		t.Fatalf("agent-help status --json execute: %v", err)
 	}
 	var parsed struct {
 		Command string `json:"command"`
@@ -220,7 +258,7 @@ func TestAgentHelpCmd_Execute(t *testing.T) {
 	if err := json.Unmarshal(jbuf.Bytes(), &parsed); err != nil {
 		t.Fatalf("output not valid JSON: %v\n%s", err, jbuf.String())
 	}
-	if parsed.Command != "entire trail" {
-		t.Errorf("json command = %q, want %q", parsed.Command, "entire trail")
+	if parsed.Command != "entire status" {
+		t.Errorf("json command = %q, want %q", parsed.Command, "entire status")
 	}
 }

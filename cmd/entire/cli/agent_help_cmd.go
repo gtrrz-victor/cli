@@ -17,6 +17,16 @@ import (
 // by setting Annotations[agentHelpAnnotation] = "true".
 const agentHelpAnnotation = "entire_agent_help"
 
+// agentHelpRequiresTrailsAnnotation marks a command whose surface should only be
+// advertised to agents when trails are enabled for the repo. While the trails
+// product may not be available to a user yet, agent-help must not point agents at
+// commands they can't use — so trail-gated commands are hidden until the same
+// "is trails enabled" signal the first-turn injection already gates on says yes.
+const agentHelpRequiresTrailsAnnotation = "entire_agent_help_requires_trails"
+
+// agentHelpAnnotationEnabled is the truthy value for the agent-help annotations.
+const agentHelpAnnotationEnabled = "true"
+
 // agentHelpOverview is the only hand-maintained prose in agent-help: a terse,
 // high-level "what entire is for" plus the standing repo-inference rule. It names
 // no flags or subcommands — those are rendered live from the installed command
@@ -42,7 +52,8 @@ high-level map of when to use entire and which subcommand; pass a command path
 		DisableFlagParsing: false,
 		RunE: func(c *cobra.Command, args []string) error {
 			repoLine := agentHelpRepoLine(c.Context())
-			out, err := runAgentHelp(rootCmd, args, repoLine, asJSON)
+			trailsEnabled := trailsEnabledForRepo(c.Context())
+			out, err := runAgentHelp(rootCmd, args, repoLine, asJSON, trailsEnabled)
 			if err != nil {
 				return err
 			}
@@ -66,23 +77,26 @@ func agentHelpRepoLine(ctx context.Context) string {
 }
 
 // runAgentHelp resolves args to a command node and renders it. It is pure (no
-// git / IO): the caller passes the already-resolved repoLine.
-func runAgentHelp(rootCmd *cobra.Command, args []string, repoLine string, asJSON bool) (string, error) {
+// git / IO): the caller passes the already-resolved repoLine and trailsEnabled.
+func runAgentHelp(rootCmd *cobra.Command, args []string, repoLine string, asJSON, trailsEnabled bool) (string, error) {
 	target := rootCmd
 	for _, name := range args {
 		child := agentHelpFindChild(target, name)
 		if child == nil {
 			return "", fmt.Errorf("unknown command %q; run `entire agent-help` for the list of commands", name)
 		}
+		if !trailsEnabled && child.Annotations[agentHelpRequiresTrailsAnnotation] == agentHelpAnnotationEnabled {
+			return "", fmt.Errorf("`%s` is unavailable: trails are not enabled for this repo", child.Name())
+		}
 		target = child
 	}
 	if asJSON {
-		return renderAgentHelpJSON(rootCmd, target, repoLine)
+		return renderAgentHelpJSON(rootCmd, target, repoLine, trailsEnabled)
 	}
 	if target == rootCmd {
-		return renderAgentHelpTop(rootCmd, repoLine), nil
+		return renderAgentHelpTop(rootCmd, repoLine, trailsEnabled), nil
 	}
-	return renderAgentHelpCommand(target, repoLine), nil
+	return renderAgentHelpCommand(target, repoLine, trailsEnabled), nil
 }
 
 // agentHelpFindChild finds a direct child of parent by name or alias, including
@@ -124,7 +138,7 @@ type agentHelpJSON struct {
 }
 
 // renderAgentHelpJSON renders the structured form of a command node.
-func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string) (string, error) {
+func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string, trailsEnabled bool) (string, error) {
 	doc := agentHelpJSON{
 		Command: target.CommandPath(),
 		Short:   target.Short,
@@ -149,7 +163,7 @@ func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string) (strin
 		collect(target.LocalFlags())
 		collect(target.InheritedFlags())
 	}
-	for _, sub := range agentHelpCommands(target) {
+	for _, sub := range agentHelpCommands(target, trailsEnabled) {
 		doc.Subcommands = append(doc.Subcommands, agentHelpSubcommandJSON{Name: sub.Name(), Short: sub.Short})
 	}
 	b, err := json.MarshalIndent(doc, "", "  ")
@@ -162,13 +176,16 @@ func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string) (strin
 // agentHelpCommands returns the child commands to advertise to agents: every
 // visible command plus any hidden command that opts in via agentHelpAnnotation.
 // The help command itself is never advertised.
-func agentHelpCommands(parent *cobra.Command) []*cobra.Command {
+func agentHelpCommands(parent *cobra.Command, trailsEnabled bool) []*cobra.Command {
 	var out []*cobra.Command
 	for _, sub := range parent.Commands() {
 		if sub.Name() == "help" || sub.Deprecated != "" {
 			continue
 		}
-		if sub.Hidden && sub.Annotations[agentHelpAnnotation] != "true" {
+		if sub.Hidden && sub.Annotations[agentHelpAnnotation] != agentHelpAnnotationEnabled {
+			continue
+		}
+		if !trailsEnabled && sub.Annotations[agentHelpRequiresTrailsAnnotation] == agentHelpAnnotationEnabled {
 			continue
 		}
 		out = append(out, sub)
@@ -189,7 +206,7 @@ func agentHelpRepoBlock(repoLine string) string {
 // renderAgentHelpCommand renders one resolved command node for an agent: its
 // path + Short, its Long description, the auto-detected repo line, its live flag
 // usages (hidden flags are skipped by cobra), and its advertised subcommands.
-func renderAgentHelpCommand(cmd *cobra.Command, repoLine string) string {
+func renderAgentHelpCommand(cmd *cobra.Command, repoLine string, trailsEnabled bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — %s\n", cmd.CommandPath(), cmd.Short)
 	if long := strings.TrimSpace(cmd.Long); long != "" && long != strings.TrimSpace(cmd.Short) {
@@ -212,7 +229,7 @@ func renderAgentHelpCommand(cmd *cobra.Command, repoLine string) string {
 		b.WriteString("\n")
 	}
 
-	if subs := agentHelpCommands(cmd); len(subs) > 0 {
+	if subs := agentHelpCommands(cmd, trailsEnabled); len(subs) > 0 {
 		names := make([]string, 0, len(subs))
 		for _, sub := range subs {
 			names = append(names, sub.Name())
@@ -226,17 +243,22 @@ func renderAgentHelpCommand(cmd *cobra.Command, repoLine string) string {
 // renderAgentHelpTop renders the top-level agent-facing overview: the curated
 // intro + rule, the auto-detected repo line, and a live map of the advertised
 // commands (their Short help), ending with the drill-down pointer.
-func renderAgentHelpTop(rootCmd *cobra.Command, repoLine string) string {
+func renderAgentHelpTop(rootCmd *cobra.Command, repoLine string, trailsEnabled bool) string {
 	var b strings.Builder
 	b.WriteString(agentHelpOverview)
 	b.WriteString("\n\n")
 	b.WriteString(agentHelpRepoBlock(repoLine))
 	b.WriteString("\nWhen to use entire:\n")
-	for _, sub := range agentHelpCommands(rootCmd) {
+	for _, sub := range agentHelpCommands(rootCmd, trailsEnabled) {
 		fmt.Fprintf(&b, "  %-12s %s\n", sub.Name(), sub.Short)
 	}
-	b.WriteString("\nDrill in for exact, currently-installed flags:  entire agent-help <command>")
-	b.WriteString("  (e.g. entire agent-help trail)\n")
+	// Use an example command that is actually advertised here (trail is gated on
+	// trails being enabled), so we never point at a command the agent can't use.
+	example := "checkpoint"
+	if trailsEnabled {
+		example = "trail"
+	}
+	fmt.Fprintf(&b, "\nDrill in for exact, currently-installed flags:  entire agent-help <command>  (e.g. entire agent-help %s)\n", example)
 	b.WriteString("Add --json for structured output.\n")
 	return b.String()
 }

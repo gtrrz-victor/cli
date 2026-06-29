@@ -127,7 +127,7 @@ func agentHelpSkillTemplate(agentName types.AgentName) (string, []byte, bool) {
 const claudeAgentHelpSkillTemplate = `
 ---
 name: entire
-description: How to use the Entire CLI (trails, checkpoints, search, sessions). Use whenever a task involves entire, trails, checkpoints, or the ` + "`entire`" + ` command.
+description: How to use the Entire CLI (checkpoints, search, sessions, and more). Use whenever a task involves entire, checkpoints, or the ` + "`entire`" + ` command.
 ---
 
 <!-- ` + entireManagedAgentHelpSkillMarker + ` -->
@@ -145,7 +145,7 @@ Never ask the user for the repo name.
 const geminiAgentHelpSkillTemplate = `
 ---
 name: entire
-description: How to use the Entire CLI (trails, checkpoints, search, sessions). Use whenever a task involves entire, trails, checkpoints, or the ` + "`entire`" + ` command.
+description: How to use the Entire CLI (checkpoints, search, sessions, and more). Use whenever a task involves entire, checkpoints, or the ` + "`entire`" + ` command.
 kind: local
 tools:
   - run_shell_command
@@ -166,7 +166,7 @@ Never ask the user for the repo name.
 const codexAgentHelpSkillTemplate = `
 # ` + entireManagedAgentHelpSkillMarker + `
 name = "entire"
-description = "How to use the Entire CLI (trails, checkpoints, search, sessions). Use whenever a task involves entire, trails, checkpoints, or the ` + "`entire`" + ` command."
+description = "How to use the Entire CLI (checkpoints, search, sessions, and more). Use whenever a task involves entire, checkpoints, or the ` + "`entire`" + ` command."
 developer_instructions = """
 Entire's CLI is the source of truth for its own usage. Do not guess flags or subcommands.
 
