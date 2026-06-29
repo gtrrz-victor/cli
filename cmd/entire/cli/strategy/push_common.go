@@ -22,6 +22,43 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
+// partitionLocalRefs splits refs into those that exist locally (pushable) and
+// those that don't (stale queue entries — e.g. a checkpoint ref deleted by
+// cleanup). Stale refs can never push, so callers drop them from the queue
+// rather than retrying them forever.
+func partitionLocalRefs(repo *git.Repository, refs []plumbing.ReferenceName) (existing, stale []plumbing.ReferenceName) {
+	for _, ref := range refs {
+		if _, err := repo.Reference(ref, false); err != nil {
+			stale = append(stale, ref)
+			continue
+		}
+		existing = append(existing, ref)
+	}
+	return existing, stale
+}
+
+// batchForcePushRefs pushes all of refs to target in a single git push. Each
+// uses a force refspec (+ref:ref), matching how non-branch checkpoint refs are
+// already pushed: per-checkpoint refs have independent histories with no
+// remote-tracking shadow, so there is no fast-forward to preserve and no
+// fetch+rebase recovery to attempt. Batching keeps a backfill of many refs to
+// one network round-trip. It is all-or-nothing: on error the caller leaves every
+// ref queued for the next pre-push (partial-failure reconciliation is out of
+// scope for now).
+func batchForcePushRefs(ctx context.Context, target string, refs []plumbing.ReferenceName) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	refSpecs := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		refSpecs = append(refSpecs, "+"+ref.String()+":"+ref.String())
+	}
+	if _, err := remote.PushWithOptions(ctx, remote.PushOptions{Remote: target, RefSpecs: refSpecs}); err != nil {
+		return fmt.Errorf("batch push %d checkpoint refs: %w", len(refs), err)
+	}
+	return nil
+}
+
 // pushRefIfNeeded pushes a ref to the given target if it has unpushed changes.
 // The target can be a remote name (e.g., "origin") or a URL for direct push.
 // For branch refs, the "has unpushed" optimization consults the remote-tracking
