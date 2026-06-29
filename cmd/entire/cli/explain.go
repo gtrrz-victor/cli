@@ -2407,8 +2407,8 @@ func runExplainBranchWithFilter(ctx context.Context, w, errW io.Writer, noPager 
 	// This grouped view renders them all and only notes when a budget was hit;
 	// the JSON path hard-caps the flat array at limit (its array contract). So
 	// e.g. 60 live + 60 imported shows 120 rows with no note here, but 100
-	// entries with a note under --json. The `--limit only meaningful with
-	// --json` flag help reflects that the cap is a JSON-path concept.
+	// entries with a note under --json. The `--limit` help text ("Only meaningful with --json")
+	// reflects that the cap is a JSON-path concept.
 	points, truncated, err := getBranchCheckpoints(ctx, repo, branchCheckpointsLimit)
 	if err != nil {
 		// If context was cancelled (e.g. user hit Ctrl+C), exit silently
