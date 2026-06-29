@@ -195,10 +195,6 @@ func addPiReviewTokens(total reviewtypes.Tokens, usage *piReviewUsage) reviewtyp
 	return total
 }
 
-func piReviewTokens(usage *piReviewUsage) reviewtypes.Tokens {
-	return addPiReviewTokens(reviewtypes.Tokens{}, usage)
-}
-
 func piReviewJSONArg(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
