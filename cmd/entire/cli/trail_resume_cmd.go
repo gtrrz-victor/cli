@@ -330,7 +330,7 @@ func resumeTrailLatest(ctx context.Context, cmd *cobra.Command, branch string, f
 	if err != nil {
 		return err
 	}
-	return continueTrailRestoredSessions(ctx, cmd, sessions, preferredSessionID)
+	return continueTrailRestoredSessions(ctx, cmd, sessions, preferredSessionID, force)
 }
 
 func resumeTrailCheckpoint(ctx context.Context, cmd *cobra.Command, branch string, checkpointID id.CheckpointID, preferredSessionID string, force bool) error {
@@ -348,17 +348,21 @@ func resumeTrailCheckpoint(ctx context.Context, cmd *cobra.Command, branch strin
 	if err != nil {
 		return err
 	}
-	return continueTrailRestoredSessions(ctx, cmd, sessions, preferredSessionID)
+	return continueTrailRestoredSessions(ctx, cmd, sessions, preferredSessionID, force)
 }
 
 func trailResumeSkipBranchPrompts(force bool) bool {
 	return force || !interactive.CanPromptInteractively()
 }
 
-func continueTrailRestoredSessions(ctx context.Context, cmd *cobra.Command, sessions []strategy.RestoredSession, preferredSessionID string) error {
+func trailResumeCanPromptRestoredSessions(force bool) bool {
+	return !force && interactive.CanPromptInteractively()
+}
+
+func continueTrailRestoredSessions(ctx context.Context, cmd *cobra.Command, sessions []strategy.RestoredSession, preferredSessionID string, force bool) error {
 	w := cmd.OutOrStdout()
 	return continueRestoredSessions(ctx, w, sessions, restoredSessionContinueOptions{
-		CanPrompt:          interactive.CanPromptInteractively(),
+		CanPrompt:          trailResumeCanPromptRestoredSessions(force),
 		PreferredSessionID: preferredSessionID,
 		PromptSession:      promptTrailRestoredSession,
 		Launch:             launchTrailRestoredSession,

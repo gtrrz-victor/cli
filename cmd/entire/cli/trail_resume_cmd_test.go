@@ -944,6 +944,17 @@ func TestDisplayTrailRestoredSessionsMarksActualMostRecent(t *testing.T) {
 	}
 }
 
+func TestTrailResumeCanPromptRestoredSessionsHonorsForce(t *testing.T) {
+	t.Setenv("ENTIRE_TEST_TTY", "1")
+
+	if trailResumeCanPromptRestoredSessions(true) {
+		t.Fatal("force should suppress restored-session prompts even in an interactive terminal")
+	}
+	if !trailResumeCanPromptRestoredSessions(false) {
+		t.Fatal("interactive restored-session prompts should remain enabled without force")
+	}
+}
+
 func TestContinueRestoredSessionsTTYDeclinePrintsAgentCommands(t *testing.T) {
 	t.Parallel()
 
