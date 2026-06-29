@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,4 +67,19 @@ func TestImportClaudeCodeDryRunBlocksWhenPolicyWriteUnsupported(t *testing.T) {
 	err = cmd.Execute()
 	require.ErrorContains(t, err, "checkpoint policy cannot be satisfied by this Entire CLI")
 	require.NotContains(t, out.String(), "Would import")
+}
+
+func TestImportClaudeCodeHelpDocumentsCheckpointPolicy(t *testing.T) {
+	t.Parallel()
+
+	cmd := newImportCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"claude-code", "--help"})
+	cmd.SetContext(context.Background())
+
+	require.NoError(t, cmd.Execute())
+	require.Contains(t, out.String(), "Import honors checkpoint policy before scanning transcripts.")
+	require.Contains(t, out.String(), "fails even with --dry-run")
 }

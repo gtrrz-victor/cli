@@ -27,7 +27,7 @@ func TestCheckpointPolicyCmd_PrintsDefaults(t *testing.T) {
 	require.Contains(t, stdout, "source: defaults")
 }
 
-func TestCheckpointPolicyCmd_HelpDocumentsAdvisoryBehavior(t *testing.T) {
+func TestCheckpointPolicyCmd_HelpDocumentsEnforcementBehavior(t *testing.T) {
 	t.Parallel()
 
 	cmd := newCheckpointGroupCmd()
@@ -40,11 +40,11 @@ func TestCheckpointPolicyCmd_HelpDocumentsAdvisoryBehavior(t *testing.T) {
 
 	help := stdout.String()
 	require.Contains(t, help, "checkpoint_version selects the checkpoint metadata format used for new writes")
-	require.Contains(t, help, "warns and writes the default")
+	require.Contains(t, help, `If another client configures a checkpoint_version this CLI cannot write`)
+	require.Contains(t, help, "commands that create checkpoint data fail until the CLI is upgraded")
 	require.Contains(t, help, "checkpoint_min_version is an upgrade nudge")
-	require.Contains(t, help, "Set the checkpoint version used for new writes")
-	require.Contains(t, help, "Set the checkpoint version used for upgrade warnings")
-	require.Contains(t, help, `Use "" to unset`)
+	require.Contains(t, help, `Set checkpoint_version to "" to inherit the CLI default`)
+	require.Contains(t, help, `Set checkpoint_min_version to "" to inherit the CLI default`)
 	require.Contains(t, help, "Unsetting a field still uses the normal downgrade guard")
 	require.NotContains(t, help, "unset-checkpoint-version")
 }
@@ -69,7 +69,7 @@ func TestCheckpointPolicyCmd_RejectsUnsupportedVersion(t *testing.T) {
 	}
 }
 
-func TestCheckpointPolicyCmd_PrintsWriteFallbackForUnsupportedConfiguredVersion(t *testing.T) {
+func TestCheckpointPolicyCmd_PrintsUnsupportedConfiguredVersion(t *testing.T) {
 	dir, bareDir := setupCheckpointPolicyRepo(t)
 	seedCheckpointPolicyForCommand(t, dir, checkpointpolicy.Policy{
 		CheckpointVersion:    "refs-v1",
@@ -79,7 +79,8 @@ func TestCheckpointPolicyCmd_PrintsWriteFallbackForUnsupportedConfiguredVersion(
 
 	stdout, err := executeCheckpointPolicyCmd(t)
 	require.NoError(t, err)
-	require.Contains(t, stdout, "checkpoint_version: refs-v1 (unsupported; writing branch-v1)")
+	require.Contains(t, stdout, "checkpoint_version: refs-v1 (unsupported)")
+	require.NotContains(t, stdout, "writing branch-v1")
 	require.Contains(t, stdout, "checkpoint_min_version: branch-v1")
 }
 

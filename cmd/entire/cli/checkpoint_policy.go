@@ -29,13 +29,15 @@ func newCheckpointPolicyCmd() *cobra.Command {
 		Long: `Inspect and update checkpoint policy.
 
 checkpoint_version selects the checkpoint metadata format used for new writes.
-If no policy is configured, Entire uses the CLI default. If this CLI reads a
-configured checkpoint_version it cannot write, it warns and writes the default
-version instead. Set checkpoint_version to "" to inherit the CLI default.
+If no policy is configured, Entire uses the CLI default.
+If another client configures a checkpoint_version this CLI cannot write,
+commands that create checkpoint data fail until the CLI is upgraded. Other commands warn and
+continue. Set checkpoint_version to "" to inherit the CLI default.
 
-checkpoint_min_version is an upgrade nudge. Clients that cannot read that
-version warn users to upgrade, but policy alone does not block checkpoint writes
-or app usage. Set checkpoint_min_version to "" to inherit the CLI default.
+checkpoint_min_version is an upgrade nudge and checkpoint-data write guard.
+Clients that cannot read that version warn users to upgrade. Commands that
+create checkpoint data fail until the CLI is upgraded. Other commands warn
+and continue. Set checkpoint_min_version to "" to inherit the CLI default.
 
 Unsetting a field still uses the normal downgrade guard. If inheriting the
 default would lower the field's effective version, pass --force to allow it.`,
@@ -46,8 +48,8 @@ default would lower the field's effective version, pass --force to allow it.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.version, checkpointVersionFlag, "", `Set the checkpoint version used for new writes. Use "" to unset; --force may be required`)
-	cmd.Flags().StringVar(&opts.minVersion, checkpointMinVersionFlag, "", `Set the checkpoint version used for upgrade warnings. Use "" to unset; --force may be required`)
+	cmd.Flags().StringVar(&opts.version, checkpointVersionFlag, "", `Set checkpoint_version. Use "" to inherit the CLI default; --force may be required`)
+	cmd.Flags().StringVar(&opts.minVersion, checkpointMinVersionFlag, "", `Set checkpoint_min_version. Use "" to inherit the CLI default; --force may be required`)
 	cmd.Flags().BoolVar(&opts.force, "force", false, "Allow checkpoint policy version downgrades")
 	return cmd
 }
@@ -111,12 +113,15 @@ func formatCheckpointPolicyValue(configured, effective string) string {
 	return configured
 }
 
-func formatCheckpointVersionPolicyValue(configured, writeVersion string) string {
+func formatCheckpointVersionPolicyValue(configured, effective string) string {
 	if configured == "" {
-		return writeVersion + " (default)"
+		return effective + " (default)"
 	}
-	if configured != writeVersion {
-		return fmt.Sprintf("%s (unsupported; writing %s)", configured, writeVersion)
+	if checkpointpolicy.UnsupportedWrite(checkpointpolicy.Policy{
+		CheckpointVersion:    configured,
+		CheckpointMinVersion: checkpointpolicy.DefaultCheckpointVersion(),
+	}) {
+		return configured + " (unsupported)"
 	}
 	return configured
 }

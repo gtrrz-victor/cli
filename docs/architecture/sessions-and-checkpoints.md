@@ -301,15 +301,15 @@ is configured, a policy omits `checkpoint_version`, or the field was set to an
 empty string with `entire checkpoint policy --checkpoint-version ""`, the CLI
 writes its default checkpoint version. The quotes are required so the shell
 passes an empty value instead of omitting the flag value. If another client
-configures a `checkpoint_version` this CLI cannot write, the CLI warns and
-writes the default checkpoint version instead.
+configures a `checkpoint_version` this CLI cannot write, explicit
+checkpoint-data writers fail until the CLI is upgraded.
 
-`checkpoint_min_version` is a soft upgrade nudge. Clients that cannot read that
-version warn users to upgrade, but policy alone does not block checkpoint
-writes or app usage. If no policy is configured, a policy omits
-`checkpoint_min_version`, or the field was set to an empty string with
-`entire checkpoint policy --checkpoint-min-version ""`, the CLI uses its default
-minimum checkpoint version for warning decisions.
+`checkpoint_min_version` is an upgrade nudge and checkpoint-data write guard.
+Clients that cannot read that version warn users to upgrade. Explicit
+checkpoint-data writers fail until the CLI is upgraded. If no policy is
+configured, a policy omits `checkpoint_min_version`, or the field was set to an
+empty string with `entire checkpoint policy --checkpoint-min-version ""`, the
+CLI uses its default minimum checkpoint version for policy decisions.
 
 Unsetting a field is still evaluated against the normal downgrade guard. If the
 field's current effective version is newer than the default inherited after
@@ -324,21 +324,22 @@ fetches the latest remote policy before validating requested changes, updates
 the local policy ref, and pushes only `refs/entire/policies/checkpoint`.
 Policy commits use the same signing settings as checkpoint commits.
 
-Hooks that run while ordinary git operations must keep working offline:
-post-commit and agent lifecycle hooks read only the local policy ref. If the
-local policy requires checkpoint support this CLI does not have, they warn when
-running in an interactive terminal and otherwise keep writing checkpoint data
-with the default checkpoint version.
-The pre-push hook is the regular online sync point: it compares the remote
-policy ref with the local ref and fetches updated policy when needed. If policy
-refresh fails, the policy diverges, or the refreshed policy requires checkpoint
-support this CLI does not have, the hook warns or logs the issue and still lets
-the normal push and checkpoint push continue.
+Agent session-start hooks warn that checkpoint capture is disabled for the
+session and exit successfully. Other agent hooks fail with a checkpoint-disabled
+message so the agent can see that no Entire checkpoints will be generated until
+the CLI is upgraded.
+
+Git hooks never block Git because of checkpoint policy. When the policy cannot
+be satisfied, Git hooks log the violation, warn only in an interactive
+terminal, skip Entire checkpoint work, and exit successfully. Pre-push refreshes
+policy first, then applies the same skip behavior to checkpoint push work.
 
 User-driven commands warn when the local policy indicates the CLI should be
-upgraded. Commands that need to decode checkpoint contents, such as
-`entire checkpoint explain` and `entire session resume`, fail when the target
-checkpoint uses an unsupported `checkpoint_version`.
+upgraded. Explicit checkpoint-data writers such as `entire session attach`,
+`entire checkpoint explain --generate`, and `entire import <agent>` fail when
+the local policy cannot be satisfied. Commands that need to decode checkpoint
+contents, such as `entire checkpoint explain` and `entire session resume`, fail
+when the target checkpoint uses an unsupported `checkpoint_version`.
 
 ### Checkpoint ID Linking
 
