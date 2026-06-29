@@ -17,12 +17,32 @@ import (
 func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (checkpointpolicy.Policy, bool) {
 	state, err := checkpointpolicy.ReadLocal(ctx, repo)
 	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read failed; allowing checkpoint write",
+		logging.Warn(ctx, "checkpoint policy read failed; allowing checkpoint work",
 			slog.String("error", err.Error()),
 		)
 		return checkpointpolicy.Policy{}, false
 	}
 	return state.Policy, true
+}
+
+func checkpointPolicyAllowsGitHook(ctx context.Context) bool {
+	repo, err := OpenRepository(ctx)
+	if err != nil {
+		logging.Warn(ctx, "checkpoint policy read skipped for git hook",
+			slog.String("error", err.Error()))
+		return true
+	}
+	defer repo.Close()
+
+	policy, ok := readLocalCheckpointPolicy(ctx, repo)
+	if !ok {
+		return true
+	}
+	if checkpointpolicy.CanSatisfyPolicy(policy) {
+		return true
+	}
+	warnOrLogCheckpointPolicyUpgrade(ctx, policy)
+	return false
 }
 
 func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) {
@@ -46,17 +66,12 @@ func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) {
 	state, err := checkpointpolicy.Sync(ctx, repo, target)
 	if err != nil {
 		warnOrLogCheckpointPolicySyncFailure(ctx, err)
-		localState, readErr := checkpointpolicy.ReadLocal(ctx, repo)
-		if readErr == nil {
-			warnIfCheckpointPolicyNeedsUpgrade(ctx, localState.Policy)
-		}
 		return
 	}
 	if state.Source == checkpointpolicy.SourceLocalDiverged {
 		warnOrLogCheckpointPolicyDiverged(ctx, state)
 		return
 	}
-	warnIfCheckpointPolicyNeedsUpgrade(ctx, state.Policy)
 }
 
 func warnOrLogCheckpointPolicySyncFailure(ctx context.Context, err error) {
@@ -89,18 +104,17 @@ func warnIfCheckpointPolicyNeedsUpgrade(ctx context.Context, policy checkpointpo
 	if checkpointpolicy.CanSatisfyPolicy(policy) {
 		return
 	}
-	warnOrLogCheckpointPolicyUpgrade(ctx, policy, checkpointpolicy.CheckpointVersion(policy))
+	warnOrLogCheckpointPolicyUpgrade(ctx, policy)
 }
 
-func warnOrLogCheckpointPolicyUpgrade(ctx context.Context, policy checkpointpolicy.Policy, version string) {
+func warnOrLogCheckpointPolicyUpgrade(ctx context.Context, policy checkpointpolicy.Policy) {
 	warning := checkpointpolicy.UnsupportedPolicyMessage(policy, versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version))
 	if interactive.CanPromptInteractively() {
 		fmt.Fprint(stderrWriter, warning)
 		return
 	}
-	logging.Warn(ctx, "checkpoint policy requires newer CLI; using checkpoint version",
+	logging.Warn(ctx, "checkpoint policy requires newer CLI",
 		slog.String("checkpoint_version", policy.CheckpointVersion),
 		slog.String("checkpoint_min_version", policy.CheckpointMinVersion),
-		slog.String("using_checkpoint_version", version),
 	)
 }

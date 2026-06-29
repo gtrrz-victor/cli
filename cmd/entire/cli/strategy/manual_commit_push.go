@@ -45,6 +45,9 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 
 	refs := checkpoint.ResolveRefs(ctx)
 	syncCheckpointPolicyForPrePush(ctx, ps)
+	if !checkpointPolicyAllowsGitHook(ctx) {
+		return nil
+	}
 
 	// OPF pre-push rewrite: if OPF is configured, resolve the user's
 	// decision (env > settings > prompt > non-TTY auto-run), then

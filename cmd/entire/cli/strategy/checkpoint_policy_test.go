@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCondenseSessionUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
+func TestCondenseSessionRejectsUnsupportedPolicy(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -48,15 +48,11 @@ func TestCondenseSessionUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
 		state,
 		nil,
 	)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	summary, err := cpkg.NewGitStore(repo, cpkg.DefaultV1Refs()).Read(context.Background(), testTrailerCheckpointID)
-	require.NoError(t, err)
-	require.Equal(t, checkpointpolicy.DefaultCheckpointVersion(), summary.CheckpointVersion)
+	require.ErrorContains(t, err, "checkpoint policy cannot be satisfied by this Entire CLI")
+	require.Nil(t, result)
 }
 
-func TestCondenseAndMarkFullyCondensedUsesDefaultWhenPolicyWriteUnsupported(t *testing.T) {
+func TestCondenseAndMarkFullyCondensedSkipsUnsupportedPolicy(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -82,10 +78,10 @@ func TestCondenseAndMarkFullyCondensedUsesDefaultWhenPolicyWriteUnsupported(t *t
 	state, err := strategy.loadSessionState(context.Background(), sessionID)
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.True(t, state.FullyCondensed)
+	require.False(t, state.FullyCondensed)
 }
 
-func TestFinalizeAllTurnCheckpointsAllowsUnsupportedPolicy(t *testing.T) {
+func TestFinalizeAllTurnCheckpointsSkipsUnsupportedPolicy(t *testing.T) {
 	workDir := setupGitRepo(t)
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
@@ -123,11 +119,11 @@ func TestFinalizeAllTurnCheckpointsAllowsUnsupportedPolicy(t *testing.T) {
 	}
 
 	errCount := NewManualCommitStrategy().finalizeAllTurnCheckpoints(context.Background(), state)
-	require.Zero(t, errCount)
+	require.Equal(t, 1, errCount)
 	require.Empty(t, state.TurnCheckpointIDs)
 }
 
-func TestPrePushWarnsAndPushesWhenPolicyWriteUnsupported(t *testing.T) {
+func TestPrePushWarnsAndSkipsCheckpointPushWhenPolicyUnsupported(t *testing.T) {
 	workDir := setupRepoWithCheckpointBranch(t)
 	bareDir := filepath.Join(t.TempDir(), "remote.git")
 	_, err := git.PlainInit(bareDir, true)
@@ -158,7 +154,7 @@ func TestPrePushWarnsAndPushesWhenPolicyWriteUnsupported(t *testing.T) {
 	require.Contains(t, stderr.String(), "requires checkpoint support newer than this Entire CLI")
 
 	out := runCheckpointPolicyGit(t, workDir, "ls-remote", bareDir, "refs/heads/"+paths.MetadataBranchName)
-	require.NotEmpty(t, strings.TrimSpace(out))
+	require.Empty(t, strings.TrimSpace(out))
 }
 
 func TestPrePushWarnsAndPushesWhenPolicyDiverged(t *testing.T) {

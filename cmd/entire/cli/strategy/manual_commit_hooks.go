@@ -21,6 +21,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
 	"github.com/entireio/cli/cmd/entire/cli/gitops"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
@@ -2807,7 +2808,11 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	}
 	defer repo.Close()
 	if policy, ok := readLocalCheckpointPolicy(logCtx, repo); ok {
-		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
+		if !checkpointpolicy.CanSatisfyPolicy(policy) {
+			warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
+			state.TurnCheckpointIDs = nil
+			return 1
+		}
 	}
 
 	prompts := readPromptsFromShadowBranch(ctx, repo, state)

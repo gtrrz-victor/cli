@@ -4,17 +4,24 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
+	"github.com/entireio/cli/cmd/entire/cli/gitrepo"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/versioncheck"
+	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/entireio/cli/perf"
 
 	"github.com/spf13/cobra"
@@ -94,7 +101,8 @@ func getHookType(hookName string) string {
 // their parent command's PersistentPreRunE already handles logging.
 func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName string, initLogging bool) error {
 	// Skip silently if not in a git repository - hooks shouldn't prevent the agent from working
-	if _, err := paths.WorktreeRoot(cmd.Context()); err != nil {
+	worktreeRoot, err := paths.WorktreeRoot(cmd.Context())
+	if err != nil {
 		return nil
 	}
 
@@ -164,9 +172,25 @@ func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName st
 			)
 			return nil
 		}
+		skipHook, err := shouldSkipAgentHookForPolicy(ctx, worktreeRoot, cmd.ErrOrStderr(), ag, event.Type)
+		if err != nil {
+			span.RecordError(err)
+			return err
+		}
+		if skipHook {
+			return nil
+		}
 		// Lifecycle event — use the generic dispatcher
 		hookErr = DispatchLifecycleEvent(ctx, ag, event)
 	} else if agentName == agent.AgentNameClaudeCode && hookName == claudecode.HookNamePostTodo {
+		skipHook, err := shouldSkipAgentHookForPolicy(ctx, worktreeRoot, cmd.ErrOrStderr(), ag, 0)
+		if err != nil {
+			span.RecordError(err)
+			return err
+		}
+		if skipHook {
+			return nil
+		}
 		// PostTodo is Claude-specific: creates incremental checkpoints during subagent execution
 		hookErr = handleClaudeCodePostTodo(ctx)
 	}
@@ -174,6 +198,57 @@ func executeAgentHook(cmd *cobra.Command, agentName types.AgentName, hookName st
 
 	span.RecordError(hookErr)
 	return hookErr
+}
+
+func shouldSkipAgentHookForPolicy(ctx context.Context, worktreeRoot string, errW io.Writer, ag agent.Agent, eventType agent.EventType) (skipHook bool, err error) {
+	repo, err := gitrepo.OpenPath(worktreeRoot)
+	if err != nil {
+		logging.Warn(ctx, "checkpoint policy read skipped for agent hook",
+			slog.String("error", err.Error()))
+		return false, nil
+	}
+	defer repo.Close()
+
+	policy := localCheckpointPolicyForNewCheckpoint(ctx, repo)
+	if checkpointpolicy.CanSatisfyPolicy(policy) {
+		return false, nil
+	}
+	if eventType == agent.SessionStart {
+		return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyWarning(policy))
+	}
+	fmt.Fprint(errW, agentCheckpointCaptureDisabledMessage(policy))
+	return false, NewSilentError(errUnsupportedCheckpointPolicy)
+}
+
+func sessionStartPolicyWarning(policy checkpointpolicy.Policy) string {
+	message := "Entire CLI is enabled, but this repository's checkpoint policy requires a newer Entire CLI. No Entire checkpoints will be created for this session until you upgrade."
+	details := strings.TrimSpace(checkpointpolicy.UnsupportedPolicyMessage(policy, versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version)))
+	if details == "" {
+		return message
+	}
+	return message + "\n\n" + details
+}
+
+func agentCheckpointCaptureDisabledMessage(policy checkpointpolicy.Policy) string {
+	var b strings.Builder
+	b.WriteString("[entire] Checkpoint capture is disabled for this repository.\n")
+	b.WriteString("[entire] No Entire checkpoints will be created until the CLI is upgraded.\n")
+	if details := strings.TrimSpace(checkpointpolicy.UnsupportedPolicyMessage(policy, versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version))); details != "" {
+		b.WriteString(details)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func writeUnsupportedPolicySessionStartWarning(errW io.Writer, ag agent.Agent, message string) error {
+	if writer, ok := agent.AsHookResponseWriter(ag); ok {
+		if err := writer.WriteHookResponse(message); err != nil {
+			return fmt.Errorf("failed to write hook response: %w", err)
+		}
+		return nil
+	}
+	fmt.Fprintln(errW, message)
+	return nil
 }
 
 // newAgentHookVerbCmdWithLogging creates a command for a specific hook verb with structured logging.

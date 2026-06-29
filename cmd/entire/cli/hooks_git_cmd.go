@@ -4,12 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent/external"
+	"github.com/entireio/cli/cmd/entire/cli/checkpointpolicy"
+	"github.com/entireio/cli/cmd/entire/cli/gitrepo"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/versioncheck"
+	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/entireio/cli/perf"
 
 	"github.com/spf13/cobra"
@@ -57,6 +63,32 @@ func (g *gitHookContext) logInvoked(extraAttrs ...any) {
 // logCompleted records the error on the perf span.
 func (g *gitHookContext) logCompleted(err error) {
 	g.span.RecordError(err)
+}
+
+func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
+	repo, err := gitrepo.OpenCurrent(g.ctx)
+	if err != nil {
+		logging.Warn(g.ctx, "checkpoint policy read skipped for git hook",
+			slog.String("error", err.Error()))
+		return false
+	}
+	defer repo.Close()
+
+	policy := localCheckpointPolicyForNewCheckpoint(g.ctx, repo)
+	if checkpointpolicy.CanSatisfyPolicy(policy) {
+		return false
+	}
+
+	logging.Warn(g.ctx, "checkpoint policy unsupported; skipping git hook checkpoint work",
+		slog.String("checkpoint_version", policy.CheckpointVersion),
+		slog.String("checkpoint_min_version", policy.CheckpointMinVersion))
+	if interactive.CanPromptInteractively() {
+		fmt.Fprint(os.Stderr, checkpointpolicy.UnsupportedPolicyMessage(
+			policy,
+			versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version),
+		))
+	}
+	return true
 }
 
 // initHookLogging initializes logging for hooks by finding the most recent session.
@@ -152,6 +184,9 @@ func newHooksGitPrepareCommitMsgCmd() *cobra.Command {
 			defer g.span.End()
 			g.logInvoked(slog.String("source", source))
 
+			if g.skipUnsupportedCheckpointPolicy() {
+				return nil
+			}
 			hookErr := g.strategy.PrepareCommitMsg(g.ctx, commitMsgFile, source)
 			g.logCompleted(hookErr)
 
@@ -176,6 +211,9 @@ func newHooksGitCommitMsgCmd() *cobra.Command {
 			defer g.span.End()
 			g.logInvoked()
 
+			if g.skipUnsupportedCheckpointPolicy() {
+				return nil
+			}
 			hookErr := g.strategy.CommitMsg(g.ctx, commitMsgFile)
 			g.logCompleted(hookErr)
 			return hookErr //nolint:wrapcheck // Thin delegation layer - wrapping adds no value
@@ -197,6 +235,9 @@ func newHooksGitPostCommitCmd() *cobra.Command {
 			defer g.span.End()
 			g.logInvoked()
 
+			if g.skipUnsupportedCheckpointPolicy() {
+				return nil
+			}
 			hookErr := g.strategy.PostCommit(g.ctx)
 			g.logCompleted(hookErr)
 
@@ -219,6 +260,9 @@ func newHooksGitPostRewriteCmd() *cobra.Command {
 			defer g.span.End()
 			g.logInvoked(slog.String("rewrite_type", args[0]))
 
+			if g.skipUnsupportedCheckpointPolicy() {
+				return nil
+			}
 			hookErr := g.strategy.PostRewrite(g.ctx, args[0], cmd.InOrStdin())
 			g.logCompleted(hookErr)
 

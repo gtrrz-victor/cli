@@ -17,6 +17,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/go-git/go-git/v6"
 	"github.com/stretchr/testify/require"
 
 	"github.com/spf13/cobra"
@@ -168,6 +169,98 @@ func TestNewAgentHookVerbCmd_LogsInvocation(t *testing.T) {
 	if !foundPerfSpan {
 		t.Error("expected to find perf span log")
 	}
+}
+
+func TestExecuteAgentHookSessionStartSkipsCaptureWhenPolicyUnsupported(t *testing.T) {
+	setupStopTestRepo(t)
+	repoRoot := mustGetwd(t)
+	enableEntire(t, repoRoot)
+
+	repo, err := git.PlainOpen(repoRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeUnsupportedCheckpointPolicyForCLITest(t, repo)
+
+	sessionID := "policy-session-start"
+	payload, err := json.Marshal(map[string]string{
+		"session_id":      sessionID,
+		"transcript_path": filepath.Join(repoRoot, "transcript.jsonl"),
+	})
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{}
+	cmd.SetIn(bytes.NewReader(payload))
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetContext(context.Background())
+
+	require.NoError(t, executeAgentHook(cmd, agent.AgentNameClaudeCode, claudecode.HookNameSessionStart, false))
+
+	hintPath := filepath.Join(repoRoot, ".git", session.SessionStateDirName, sessionID+".agent")
+	_, statErr := os.Stat(hintPath)
+	require.True(t, os.IsNotExist(statErr), "session-start must not claim the session when checkpoint policy is unsupported")
+}
+
+func TestExecuteAgentHookTurnStartFailsWhenPolicyUnsupported(t *testing.T) {
+	setupStopTestRepo(t)
+	repoRoot := mustGetwd(t)
+	enableEntire(t, repoRoot)
+
+	repo, err := git.PlainOpen(repoRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeUnsupportedCheckpointPolicyForCLITest(t, repo)
+
+	transcriptPath := filepath.Join(repoRoot, "transcript.jsonl")
+	require.NoError(t, os.WriteFile(transcriptPath, []byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o600))
+	payload, err := json.Marshal(map[string]string{
+		"session_id":      "policy-turn-start",
+		"transcript_path": transcriptPath,
+		"prompt":          "hello",
+	})
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetIn(bytes.NewReader(payload))
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	err = executeAgentHook(cmd, agent.AgentNameClaudeCode, claudecode.HookNameUserPromptSubmit, false)
+	require.Error(t, err)
+	require.Contains(t, stderr.String(), "Checkpoint capture is disabled for this repository.")
+	require.Contains(t, stderr.String(), "No Entire checkpoints will be created until the CLI is upgraded.")
+}
+
+func TestExecuteAgentHookPostTodoFailsWhenPolicyUnsupported(t *testing.T) {
+	setupStopTestRepo(t)
+	repoRoot := mustGetwd(t)
+	enableEntire(t, repoRoot)
+
+	repo, err := git.PlainOpen(repoRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeUnsupportedCheckpointPolicyForCLITest(t, repo)
+
+	payload, err := json.Marshal(map[string]any{
+		"session_id":      "policy-post-todo",
+		"transcript_path": filepath.Join(repoRoot, "transcript.jsonl"),
+		"tool_name":       "TodoWrite",
+		"tool_use_id":     "tool-1",
+		"tool_input":      map[string]any{"todos": []any{}},
+		"tool_response":   map[string]any{},
+	})
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetIn(bytes.NewReader(payload))
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	err = executeAgentHook(cmd, agent.AgentNameClaudeCode, claudecode.HookNamePostTodo, false)
+	require.Error(t, err)
+	require.Contains(t, stderr.String(), "Checkpoint capture is disabled for this repository.")
+	require.Contains(t, stderr.String(), "No Entire checkpoints will be created until the CLI is upgraded.")
 }
 
 func TestClaudeCodeHooksCmd_HasLoggingHooks(t *testing.T) {
