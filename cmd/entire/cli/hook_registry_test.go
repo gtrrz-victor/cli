@@ -200,6 +200,35 @@ func TestExecuteAgentHookSessionStartSkipsCaptureWhenPolicyUnsupported(t *testin
 	require.True(t, os.IsNotExist(statErr), "session-start must not claim the session when checkpoint policy is unsupported")
 }
 
+func TestExecuteAgentHookSessionStartSkipsCaptureWhenPolicyUnreadable(t *testing.T) {
+	setupStopTestRepo(t)
+	repoRoot := mustGetwd(t)
+	enableEntire(t, repoRoot)
+
+	repo, err := git.PlainOpen(repoRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeMalformedCheckpointPolicyForCLITest(t, repo)
+
+	sessionID := "policy-unreadable-session-start"
+	payload, err := json.Marshal(map[string]string{
+		"session_id":      sessionID,
+		"transcript_path": filepath.Join(repoRoot, "transcript.jsonl"),
+	})
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{}
+	cmd.SetIn(bytes.NewReader(payload))
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetContext(context.Background())
+
+	require.NoError(t, executeAgentHook(cmd, agent.AgentNameClaudeCode, claudecode.HookNameSessionStart, false))
+
+	hintPath := filepath.Join(repoRoot, ".git", session.SessionStateDirName, sessionID+".agent")
+	_, statErr := os.Stat(hintPath)
+	require.True(t, os.IsNotExist(statErr), "session-start must not claim the session when checkpoint policy is unreadable")
+}
+
 func TestExecuteAgentHookTurnStartFailsWhenPolicyUnsupported(t *testing.T) {
 	setupStopTestRepo(t)
 	repoRoot := mustGetwd(t)
@@ -229,6 +258,38 @@ func TestExecuteAgentHookTurnStartFailsWhenPolicyUnsupported(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, stderr.String(), "Checkpoint capture is disabled for this repository.")
 	require.Contains(t, stderr.String(), "No Entire checkpoints will be created until the CLI is upgraded.")
+}
+
+func TestExecuteAgentHookTurnStartFailsWhenPolicyUnreadable(t *testing.T) {
+	setupStopTestRepo(t)
+	repoRoot := mustGetwd(t)
+	enableEntire(t, repoRoot)
+
+	repo, err := git.PlainOpen(repoRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeMalformedCheckpointPolicyForCLITest(t, repo)
+
+	transcriptPath := filepath.Join(repoRoot, "transcript.jsonl")
+	require.NoError(t, os.WriteFile(transcriptPath, []byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o600))
+	payload, err := json.Marshal(map[string]string{
+		"session_id":      "policy-unreadable-turn-start",
+		"transcript_path": transcriptPath,
+		"prompt":          "hello",
+	})
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetIn(bytes.NewReader(payload))
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	err = executeAgentHook(cmd, agent.AgentNameClaudeCode, claudecode.HookNameUserPromptSubmit, false)
+	require.Error(t, err)
+	require.Contains(t, stderr.String(), "Checkpoint capture is disabled for this repository.")
+	require.Contains(t, stderr.String(), "checkpoint policy can be read")
+	require.Contains(t, stderr.String(), "parse policy.json")
 }
 
 func TestExecuteAgentHookPostTodoFailsWhenPolicyUnsupported(t *testing.T) {

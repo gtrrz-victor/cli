@@ -74,7 +74,17 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 	}
 	defer repo.Close()
 
-	policy := localCheckpointPolicyForNewCheckpoint(g.ctx, repo)
+	state, err := checkpointpolicy.ReadLocal(g.ctx, repo)
+	if err != nil {
+		logging.Warn(g.ctx, "checkpoint policy read failed; skipping git hook checkpoint work",
+			slog.String("error", err.Error()))
+		if interactive.CanPromptInteractively() {
+			fmt.Fprintf(os.Stderr, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
+		}
+		return true
+	}
+
+	policy := state.Policy
 	if checkpointpolicy.CanSatisfyPolicy(policy) {
 		return false
 	}

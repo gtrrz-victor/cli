@@ -69,6 +69,35 @@ func TestImportClaudeCodeDryRunBlocksWhenPolicyWriteUnsupported(t *testing.T) {
 	require.NotContains(t, out.String(), "Would import")
 }
 
+func TestImportClaudeCodeDryRunBlocksWhenPolicyUnreadable(t *testing.T) {
+	repoDir := t.TempDir()
+	testutil.InitRepo(t, repoDir)
+	testutil.WriteFile(t, repoDir, "f.txt", "x")
+	testutil.GitAdd(t, repoDir, "f.txt")
+	testutil.GitCommit(t, repoDir, "init")
+	t.Chdir(repoDir)
+
+	repo, err := git.PlainOpen(repoDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repo.Close() })
+	writeMalformedCheckpointPolicyForCLITest(t, repo)
+
+	claudeDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "s.jsonl"),
+		[]byte(`{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}`+"\n"), 0o644))
+
+	cmd := newImportCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"claude-code", "--path", claudeDir, "--dry-run"})
+
+	err = cmd.Execute()
+	require.ErrorContains(t, err, "checkpoint policy could not be read")
+	require.ErrorContains(t, err, "parse policy.json")
+	require.NotContains(t, out.String(), "Would import")
+}
+
 func TestImportClaudeCodeHelpDocumentsCheckpointPolicy(t *testing.T) {
 	t.Parallel()
 

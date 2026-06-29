@@ -209,7 +209,16 @@ func shouldSkipAgentHookForPolicy(ctx context.Context, worktreeRoot string, errW
 	}
 	defer repo.Close()
 
-	policy := localCheckpointPolicyForNewCheckpoint(ctx, repo)
+	policy, err := checkpointPolicyForCheckpointData(ctx, repo)
+	if err != nil {
+		logging.Warn(ctx, "checkpoint policy read failed for agent hook",
+			slog.String("error", err.Error()))
+		if eventType == agent.SessionStart {
+			return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyReadErrorWarning(err))
+		}
+		fmt.Fprint(errW, agentCheckpointCaptureDisabledReadErrorMessage(err))
+		return false, NewSilentError(err)
+	}
 	if checkpointpolicy.CanSatisfyPolicy(policy) {
 		return false, nil
 	}
@@ -229,6 +238,10 @@ func sessionStartPolicyWarning(policy checkpointpolicy.Policy) string {
 	return message + "\n\n" + details
 }
 
+func sessionStartPolicyReadErrorWarning(err error) string {
+	return fmt.Sprintf("Entire CLI is enabled, but this repository's checkpoint policy could not be read. No Entire checkpoints will be created for this session until the policy can be read.\n\n[entire] Details:\n[entire]   %v", err)
+}
+
 func agentCheckpointCaptureDisabledMessage(policy checkpointpolicy.Policy) string {
 	var b strings.Builder
 	b.WriteString("[entire] Checkpoint capture is disabled for this repository.\n")
@@ -237,6 +250,14 @@ func agentCheckpointCaptureDisabledMessage(policy checkpointpolicy.Policy) strin
 		b.WriteString(details)
 		b.WriteByte('\n')
 	}
+	return b.String()
+}
+
+func agentCheckpointCaptureDisabledReadErrorMessage(err error) string {
+	var b strings.Builder
+	b.WriteString("[entire] Checkpoint capture is disabled for this repository.\n")
+	b.WriteString("[entire] No Entire checkpoints will be created until the checkpoint policy can be read.\n")
+	fmt.Fprintf(&b, "[entire] Details:\n[entire]   %v\n", err)
 	return b.String()
 }
 

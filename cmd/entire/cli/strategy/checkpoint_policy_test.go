@@ -18,6 +18,8 @@ import (
 	"github.com/entireio/cli/redact"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +51,38 @@ func TestCondenseSessionRejectsUnsupportedPolicy(t *testing.T) {
 		nil,
 	)
 	require.ErrorContains(t, err, "checkpoint policy cannot be satisfied by this Entire CLI")
+	require.Nil(t, result)
+}
+
+func TestCondenseSessionRejectsUnreadablePolicy(t *testing.T) {
+	workDir := setupGitRepo(t)
+	t.Chdir(workDir)
+	paths.ClearWorktreeRootCache()
+
+	repo, err := git.PlainOpen(workDir)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	strategy := NewManualCommitStrategy()
+	sessionID := "policy-unreadable-condense"
+	setupSessionWithCheckpoint(t, strategy, repo, workDir, sessionID)
+	state, err := strategy.loadSessionState(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+
+	writeMalformedCheckpointPolicy(t, repo)
+
+	result, err := strategy.CondenseSession(
+		context.Background(),
+		repo,
+		testTrailerCheckpointID,
+		state,
+		nil,
+	)
+	require.ErrorContains(t, err, "checkpoint policy could not be read")
+	require.ErrorContains(t, err, "parse policy.json")
 	require.Nil(t, result)
 }
 
@@ -247,6 +281,19 @@ func writeUnsupportedCheckpointPolicy(t *testing.T, repo *git.Repository) {
 		CheckpointMinVersion: "branch-v1",
 	})
 	require.NoError(t, err)
+}
+
+func writeMalformedCheckpointPolicy(t *testing.T, repo *git.Repository) {
+	t.Helper()
+	blobHash, err := cpkg.CreateBlobFromContent(repo, []byte(`{"checkpoint_version":`))
+	require.NoError(t, err)
+	treeHash, err := cpkg.BuildTreeFromEntries(context.Background(), repo, map[string]object.TreeEntry{
+		checkpointpolicy.PolicyFileName: {Name: checkpointpolicy.PolicyFileName, Mode: filemode.Regular, Hash: blobHash},
+	})
+	require.NoError(t, err)
+	commitHash, err := cpkg.CreateCommit(context.Background(), repo, treeHash, plumbing.ZeroHash, "malformed checkpoint policy", "Test", "test@example.com")
+	require.NoError(t, err)
+	require.NoError(t, checkpointpolicy.SetRef(repo, checkpointpolicy.RefName, commitHash))
 }
 
 func runCheckpointPolicyGit(t *testing.T, dir string, args ...string) string {

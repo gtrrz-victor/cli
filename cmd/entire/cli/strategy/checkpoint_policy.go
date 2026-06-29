@@ -14,15 +14,15 @@ import (
 	"github.com/go-git/go-git/v6"
 )
 
-func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (checkpointpolicy.Policy, bool) {
+func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (checkpointpolicy.Policy, error) {
 	state, err := checkpointpolicy.ReadLocal(ctx, repo)
 	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read failed; allowing checkpoint work",
+		logging.Warn(ctx, "checkpoint policy read failed",
 			slog.String("error", err.Error()),
 		)
-		return checkpointpolicy.Policy{}, false
+		return checkpointpolicy.Policy{}, err
 	}
-	return state.Policy, true
+	return state.Policy, nil
 }
 
 func checkpointPolicyAllowsGitHook(ctx context.Context) bool {
@@ -34,9 +34,10 @@ func checkpointPolicyAllowsGitHook(ctx context.Context) bool {
 	}
 	defer repo.Close()
 
-	policy, ok := readLocalCheckpointPolicy(ctx, repo)
-	if !ok {
-		return true
+	policy, err := readLocalCheckpointPolicy(ctx, repo)
+	if err != nil {
+		warnOrLogCheckpointPolicyReadFailure(ctx, err)
+		return false
 	}
 	if checkpointpolicy.CanSatisfyPolicy(policy) {
 		return true
@@ -72,6 +73,16 @@ func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) {
 		warnOrLogCheckpointPolicyDiverged(ctx, state)
 		return
 	}
+}
+
+func warnOrLogCheckpointPolicyReadFailure(ctx context.Context, err error) {
+	if interactive.CanPromptInteractively() {
+		fmt.Fprintf(stderrWriter, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
+		return
+	}
+	logging.Warn(ctx, "checkpoint policy read failed; skipping checkpoint work",
+		slog.String("error", err.Error()),
+	)
 }
 
 func warnOrLogCheckpointPolicySyncFailure(ctx context.Context, err error) {

@@ -148,14 +148,15 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 	}
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	condenseStart := time.Now()
-	checkpointVersion := checkpointpolicy.DefaultCheckpointVersion()
-	if policy, ok := readLocalCheckpointPolicy(logCtx, repo); ok {
-		if !checkpointpolicy.CanSatisfyPolicy(policy) {
-			warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
-			return nil, errors.New("checkpoint policy cannot be satisfied by this Entire CLI")
-		}
-		checkpointVersion = checkpointpolicy.CheckpointVersion(policy)
+	policy, err := readLocalCheckpointPolicy(logCtx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint policy could not be read: %w", err)
 	}
+	if !checkpointpolicy.CanSatisfyPolicy(policy) {
+		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
+		return nil, errors.New("checkpoint policy cannot be satisfied by this Entire CLI")
+	}
+	checkpointVersion := checkpointpolicy.CheckpointVersion(policy)
 
 	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
 	ref, hasShadowBranch := resolveShadowRef(repo, shadowBranchName, o.shadowRef)

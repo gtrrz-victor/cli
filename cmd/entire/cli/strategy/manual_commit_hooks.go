@@ -2807,12 +2807,16 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 	defer repo.Close()
-	if policy, ok := readLocalCheckpointPolicy(logCtx, repo); ok {
-		if !checkpointpolicy.CanSatisfyPolicy(policy) {
-			warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
-			state.TurnCheckpointIDs = nil
-			return 1
-		}
+	policy, err := readLocalCheckpointPolicy(logCtx, repo)
+	if err != nil {
+		warnOrLogCheckpointPolicyReadFailure(logCtx, err)
+		state.TurnCheckpointIDs = nil
+		return 1
+	}
+	if !checkpointpolicy.CanSatisfyPolicy(policy) {
+		warnIfCheckpointPolicyNeedsUpgrade(logCtx, policy)
+		state.TurnCheckpointIDs = nil
+		return 1
 	}
 
 	prompts := readPromptsFromShadowBranch(ctx, repo, state)
