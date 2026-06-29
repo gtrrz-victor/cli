@@ -97,15 +97,24 @@ func (copilotImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
 				return nil, fmt.Errorf("token usage: %w", err)
 			}
 			var evt struct {
-				ID        string `json:"id"`
-				Timestamp string `json:"timestamp"`
+				ID        string          `json:"id"`
+				Timestamp json.RawMessage `json:"timestamp"`
 			}
 			if err := json.Unmarshal(rawLines[start], &evt); err != nil {
 				//nolint:nilerr // skip defensively; the line already parsed in copilotPromptText
 				return nil, nil
 			}
+			// Copilot timestamps may be numeric epoch-millis or an RFC3339
+			// string; decode via the agent's dual-format parser so a numeric
+			// timestamp doesn't fail the turn.
+			createdAt, tsErr := copilotcli.ParseTimestamp(evt.Timestamp)
+			if tsErr != nil {
+				// A malformed timestamp degrades to the zero time rather than
+				// dropping the turn.
+				createdAt = time.Time{}
+			}
 			prompt, _ := copilotPromptText(rawLines[start])
-			return &Turn{UUID: evt.ID, Prompt: prompt, Model: model, CreatedAt: parseTimestamp(evt.Timestamp), Tokens: tokens}, nil
+			return &Turn{UUID: evt.ID, Prompt: prompt, Model: model, CreatedAt: createdAt, Tokens: tokens}, nil
 		})
 }
 

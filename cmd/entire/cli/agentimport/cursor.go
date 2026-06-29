@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,22 +58,31 @@ func cursorSessionFile(dir string, e os.DirEntry) (sessionID, path string) {
 // SplitTurns produces one Turn per user-prompt line, bounded by the next. It
 // reuses the package's shared JSONL helpers; Cursor carries no token usage or
 // model, so those fields are left zero.
-func (cursorImporter) SplitTurns(_ SessionFile, full []byte) ([]Turn, error) {
+//
+// Real Cursor lines carry only role + message — there is no per-turn uuid or
+// timestamp (see cursor/AGENT.md). The append-only line index is the stable
+// turn key (as the Codex importer does), so each prompt yields a distinct
+// checkpoint ID instead of colliding on an empty UUID and dropping every turn
+// after the first. The timestamp falls back to the transcript file's modtime
+// (as the Factory/Gemini importers do).
+func (cursorImporter) SplitTurns(sf SessionFile, full []byte) ([]Turn, error) {
+	var createdAt time.Time
+	if info, statErr := os.Stat(sf.Path); statErr == nil {
+		createdAt = info.ModTime()
+	}
 	return splitLineTurns(splitRawLines(full), isUserPromptLine,
 		func(rawLines [][]byte, start, _ int, _ []byte) (*Turn, error) {
 			var rec struct {
-				UUID      string          `json:"uuid"`
-				Message   json.RawMessage `json:"message"`
-				Timestamp string          `json:"timestamp"`
+				Message json.RawMessage `json:"message"`
 			}
 			if err := json.Unmarshal(rawLines[start], &rec); err != nil {
 				//nolint:nilerr // skip defensively; the line already parsed in isUserPromptLine
 				return nil, nil
 			}
 			return &Turn{
-				UUID:      rec.UUID,
+				UUID:      strconv.Itoa(start),
 				Prompt:    transcript.ExtractUserContent(rec.Message),
-				CreatedAt: parseTimestamp(rec.Timestamp),
+				CreatedAt: createdAt,
 			}, nil
 		})
 }

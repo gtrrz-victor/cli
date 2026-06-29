@@ -98,6 +98,36 @@ func TestCopilotSplitTurns_PromptsTokensModel(t *testing.T) {
 	}
 }
 
+// TestCopilotSplitTurns_NumericTimestamp covers the dual-format timestamp:
+// Copilot may emit a numeric epoch-millis timestamp instead of an RFC3339
+// string. Decoding it as a plain string would fail json.Unmarshal and silently
+// drop the turn, importing zero turns for the session.
+func TestCopilotSplitTurns_NumericTimestamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "events.jsonl")
+	const epochMillis = 1750377601000 // 2025-06-20T00:00:01Z
+	full := []byte(strings.Join([]string{
+		`{"type":"session.start","id":"s0","timestamp":1750377600000,"data":{"context":{"gitRoot":"/work/myrepo"}}}`,
+		`{"type":"user.message","id":"u1","timestamp":1750377601000,"data":{"content":"first"}}`,
+		`{"type":"assistant.message","id":"a1","data":{"content":"ok","outputTokens":5}}`,
+	}, "\n") + "\n")
+	if err := os.WriteFile(p, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	turns, err := copilotImporter{}.SplitTurns(SessionFile{Path: p, SessionID: "sess"}, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("numeric timestamp must not drop the turn; want 1, got %d", len(turns))
+	}
+	if want := time.UnixMilli(epochMillis); !turns[0].CreatedAt.Equal(want) {
+		t.Errorf("CreatedAt = %v, want %v (decoded from epoch-millis)", turns[0].CreatedAt, want)
+	}
+}
+
 func TestCopilotSplitTurns_NonUserEventIsNotATurn(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

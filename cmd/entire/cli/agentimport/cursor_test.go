@@ -90,14 +90,21 @@ func TestCursorDiscover_MissingDirIsEmpty(t *testing.T) {
 
 func TestCursorSplitTurns_TwoPromptsNoTokensNoModel(t *testing.T) {
 	t.Parallel()
-	// Cursor uses "role" (not "type") and records neither model nor token usage.
+	// Real Cursor lines use "role" (not "type"), carry no per-turn uuid or
+	// timestamp, and record neither model nor token usage (see cursor/AGENT.md).
 	full := []byte(strings.Join([]string{
-		`{"role":"user","uuid":"u1","timestamp":"2026-06-20T00:00:00Z","message":{"role":"user","content":"first"}}`,
-		`{"role":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"ok"}]}}`,
-		`{"role":"user","uuid":"u2","timestamp":"2026-06-20T00:01:00Z","message":{"role":"user","content":"second"}}`,
+		`{"role":"user","message":{"role":"user","content":"first"}}`,
+		`{"role":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}`,
+		`{"role":"user","message":{"role":"user","content":"second"}}`,
 	}, "\n") + "\n")
+	// Write the transcript so the importer's modtime CreatedAt fallback has a
+	// real file to stat.
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(p, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	turns, err := cursorImporter{}.SplitTurns(SessionFile{Path: filepath.Join(t.TempDir(), "s.jsonl"), SessionID: "s"}, full)
+	turns, err := cursorImporter{}.SplitTurns(SessionFile{Path: p, SessionID: "s"}, full)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +117,14 @@ func TestCursorSplitTurns_TwoPromptsNoTokensNoModel(t *testing.T) {
 	if turns[0].Prompt != fxFirst || turns[1].Prompt != fxSecond {
 		t.Errorf("prompts = %q,%q", turns[0].Prompt, turns[1].Prompt)
 	}
+	// Each turn must get a distinct (line-index) key; an empty/duplicate UUID
+	// would collide on one checkpoint ID and drop every turn after the first.
+	if turns[0].UUID == "" || turns[1].UUID == "" || turns[0].UUID == turns[1].UUID {
+		t.Errorf("turn UUIDs must be non-empty and distinct, got %q and %q", turns[0].UUID, turns[1].UUID)
+	}
+	if turns[0].CreatedAt.IsZero() {
+		t.Errorf("CreatedAt should fall back to the file modtime, got zero")
+	}
 	if turns[0].Tokens != nil {
 		t.Errorf("cursor records no tokens, want nil, got %+v", turns[0].Tokens)
 	}
@@ -121,9 +136,9 @@ func TestCursorSplitTurns_TwoPromptsNoTokensNoModel(t *testing.T) {
 func TestCursorSplitTurns_ToolResultIsNotATurn(t *testing.T) {
 	t.Parallel()
 	full := []byte(strings.Join([]string{
-		`{"role":"user","uuid":"u1","message":{"role":"user","content":"do it"}}`,
-		`{"role":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}`,
-		`{"role":"user","uuid":"r1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}`,
+		`{"role":"user","message":{"role":"user","content":"do it"}}`,
+		`{"role":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}`,
+		`{"role":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"out"}]}}`,
 	}, "\n") + "\n")
 	turns, err := cursorImporter{}.SplitTurns(SessionFile{Path: filepath.Join(t.TempDir(), "s.jsonl"), SessionID: "s"}, full)
 	if err != nil {
