@@ -122,8 +122,8 @@ func printNoTrailerMessage(w io.Writer, repo *git.Repository, hash plumbing.Hash
 	rows := []explainRow{
 		{Label: "commit", Value: abbreviateCommitHash(repo, hash)},
 		{Label: "reason", Value: "no Entire-Checkpoint trailer"},
-		{Label: "hint", Value: "this commit was not created during an Entire session,"},
-		{Label: "", Value: "or the trailer was removed"},
+		{Label: "hint", Value: "the commit exists but was not created during an Entire session"},
+		{Label: "", Value: "(or its trailer was removed)"},
 	}
 	fmt.Fprint(w, styles.renderFailure("No associated Entire checkpoint", rows))
 }
@@ -470,7 +470,7 @@ func runExplain(ctx context.Context, w, errW io.Writer, sessionID, commitRef, ch
 	}
 
 	// Default or with session filter: show list view (optionally filtered by session)
-	return runExplainBranchWithFilter(ctx, w, noPager, sessionID)
+	return runExplainBranchWithFilter(ctx, w, errW, noPager, sessionID)
 }
 
 // runExplainAuto resolves a positional target as either a checkpoint ID
@@ -673,6 +673,22 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 	// reads, and getAssociatedCommits' git log walk. Stop strictly before
 	// any write to w (stdout) so stderr spinner frames and stdout output
 	// never interleave.
+	// Fast-fail on imported checkpoints before the expensive content load.
+	// --generate is read-only-rejected for imported history, so fetching
+	// transcript blobs first (prefetch + ReadLatestSessionContent inside
+	// loadCheckpointForExplain) is wasted work for a guaranteed rejection.
+	// summary.Imported lives in the checkpoint metadata, so a metadata-only
+	// ReadCheckpoint settles it without reading any session content.
+	if generate {
+		meta, metaErr := checkpoint.ReadCheckpoint(ctx, lookup.store, fullCheckpointID)
+		if metaErr != nil {
+			return fmt.Errorf("failed to read checkpoint: %w", metaErr)
+		}
+		if meta.Imported {
+			return fmt.Errorf("cannot generate a summary for imported checkpoint %s: imported history is read-only", fullCheckpointID)
+		}
+	}
+
 	stopLoad := startSpinner(errW, fmt.Sprintf("Loading checkpoint %s", fullCheckpointID))
 
 	summary, content, err := loadCheckpointForExplain(ctx, lookup, fullCheckpointID)
@@ -680,12 +696,9 @@ func runExplainCheckpointWithLookup(ctx context.Context, w, errW io.Writer, chec
 		stopLoad(false)
 		return err
 	}
-	// Handle summary generation — uses raw transcript.
+	// Handle summary generation — uses raw transcript. Imported history was
+	// already rejected above, before the content load.
 	if generate {
-		if summary != nil && summary.Imported {
-			stopLoad(false)
-			return fmt.Errorf("cannot generate a summary for imported checkpoint %s: imported history is read-only", fullCheckpointID)
-		}
 		stopLoad(false) // generation prints its own progress to w/errW
 		writeStores, openErr := checkpoint.Open(ctx, lookup.repo, checkpoint.OpenOptions{})
 		if openErr != nil {
@@ -1937,8 +1950,8 @@ func escapeInlineCodeText(s string) string {
 
 // runExplainDefault shows all checkpoints on the current branch.
 // This is the default view when no flags are provided.
-func runExplainDefault(ctx context.Context, w io.Writer, noPager bool) error {
-	return runExplainBranchDefault(ctx, w, noPager)
+func runExplainDefault(ctx context.Context, w, errW io.Writer, noPager bool) error {
+	return runExplainBranchDefault(ctx, w, errW, noPager)
 }
 
 // branchCheckpointsLimit is the max checkpoints to show in branch view
@@ -2344,7 +2357,7 @@ func convertTemporaryCheckpoint(repo *git.Repository, tc checkpoint.EphemeralChe
 
 // runExplainBranchWithFilter shows checkpoints on the current branch, optionally filtered by session.
 // This is strategy-agnostic - it queries checkpoints directly.
-func runExplainBranchWithFilter(ctx context.Context, w io.Writer, noPager bool, sessionFilter string) error {
+func runExplainBranchWithFilter(ctx context.Context, w, errW io.Writer, noPager bool, sessionFilter string) error {
 	repo, err := openRepository(ctx)
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
@@ -2368,8 +2381,10 @@ func runExplainBranchWithFilter(ctx context.Context, w io.Writer, noPager bool, 
 		}
 	}
 
-	// Get checkpoints for this branch (strategy-agnostic)
-	points, err := getBranchCheckpoints(ctx, repo, branchCheckpointsLimit)
+	// Get checkpoints for this branch (strategy-agnostic). Probe one extra so
+	// we can tell the user when the prose list silently hides checkpoints
+	// beyond the cap — mirrors the --json path's limit+1 truncation probe.
+	points, err := getBranchCheckpoints(ctx, repo, branchCheckpointsLimit+1)
 	if err != nil {
 		// If context was cancelled (e.g. user hit Ctrl+C), exit silently
 		if ctx.Err() != nil {
@@ -2379,18 +2394,37 @@ func runExplainBranchWithFilter(ctx context.Context, w io.Writer, noPager bool, 
 		logging.Warn(ctx, "failed to get branch checkpoints", "error", err)
 		points = nil
 	}
+	points, truncationNote := capBranchCheckpoints(points)
 
 	// Format output
 	output := formatBranchCheckpoints(w, branchName, points, sessionFilter)
 
 	outputExplainContent(w, output, noPager)
+
+	// Printed to stderr so the note never lands in piped/paged stdout.
+	if truncationNote != "" {
+		fmt.Fprint(errW, truncationNote)
+	}
 	return nil
+}
+
+// capBranchCheckpoints applies the prose list cap (branchCheckpointsLimit) to
+// points fetched with a limit+1 probe. It returns the capped slice plus a
+// truncation note (empty when nothing was hidden). The note is deliberately
+// vague: the probe only proves at least one more checkpoint exists, never how
+// many, so it says "more exist" rather than an exact remaining count.
+func capBranchCheckpoints(points []strategy.RewindPoint) ([]strategy.RewindPoint, string) {
+	if len(points) <= branchCheckpointsLimit {
+		return points, ""
+	}
+	return points[:branchCheckpointsLimit], fmt.Sprintf(
+		"note: showing first %d checkpoints (more exist); rerun with --json --limit <N> for more\n", branchCheckpointsLimit)
 }
 
 // runExplainBranchDefault shows all checkpoints on the current branch grouped by date.
 // This is a convenience wrapper that calls runExplainBranchWithFilter with no filter.
-func runExplainBranchDefault(ctx context.Context, w io.Writer, noPager bool) error {
-	return runExplainBranchWithFilter(ctx, w, noPager, "")
+func runExplainBranchDefault(ctx context.Context, w, errW io.Writer, noPager bool) error {
+	return runExplainBranchWithFilter(ctx, w, errW, noPager, "")
 }
 
 // outputExplainContent outputs content with optional pager support.

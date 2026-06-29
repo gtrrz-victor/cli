@@ -341,8 +341,21 @@ type checkpointSessionTokens struct {
 }
 
 type checkpointSessionSummary struct {
-	Intent  string `json:"intent,omitempty"`
-	Outcome string `json:"outcome,omitempty"`
+	Intent    string                      `json:"intent,omitempty"`
+	Outcome   string                      `json:"outcome,omitempty"`
+	Learnings *checkpointSessionLearnings `json:"learnings,omitempty"`
+	Friction  []string                    `json:"friction,omitempty"`
+	OpenItems []string                    `json:"open_items,omitempty"`
+}
+
+// checkpointSessionLearnings mirrors apicheckpoint.LearningsSummary but marks
+// every field omitempty so empty categories drop out of the export instead of
+// serializing as empty arrays. CodeLearning is reused as-is — its wire tags
+// already omit the zero line/end_line.
+type checkpointSessionLearnings struct {
+	Repo     []string                  `json:"repo,omitempty"`
+	Code     []checkpoint.CodeLearning `json:"code,omitempty"`
+	Workflow []string                  `json:"workflow,omitempty"`
 }
 
 // runExplainCheckpointJSON resolves a single checkpoint and emits a metadata-only
@@ -465,9 +478,27 @@ func sessionMetadataToJSON(idx int, meta *checkpoint.Metadata) checkpointSession
 		}
 	}
 	if meta.Summary != nil {
-		out.Summary = &checkpointSessionSummary{
-			Intent:  meta.Summary.Intent,
-			Outcome: meta.Summary.Outcome,
+		out.Summary = summaryToExportJSON(meta.Summary)
+	}
+	return out
+}
+
+// summaryToExportJSON projects the full persisted summary onto the export
+// struct. Friction/open_items/learnings were previously dropped, hiding data
+// the prose view already renders. Redaction is applied upstream at persist
+// time (RedactSummary), so no additional scrubbing is needed here.
+func summaryToExportJSON(s *checkpoint.Summary) *checkpointSessionSummary {
+	out := &checkpointSessionSummary{
+		Intent:    s.Intent,
+		Outcome:   s.Outcome,
+		Friction:  s.Friction,
+		OpenItems: s.OpenItems,
+	}
+	if hasAnyLearning(s.Learnings) {
+		out.Learnings = &checkpointSessionLearnings{
+			Repo:     s.Learnings.Repo,
+			Code:     s.Learnings.Code,
+			Workflow: s.Learnings.Workflow,
 		}
 	}
 	return out

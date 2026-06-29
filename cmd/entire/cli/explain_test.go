@@ -1489,8 +1489,8 @@ func TestExplainDefault_ShowsBranchView(t *testing.T) {
 		t.Fatalf("failed to create .entire dir: %v", err)
 	}
 
-	var stdout bytes.Buffer
-	err = runExplainDefault(context.Background(), &stdout, true) // noPager=true for test
+	var stdout, stderr bytes.Buffer
+	err = runExplainDefault(context.Background(), &stdout, &stderr, true) // noPager=true for test
 
 	// Should NOT error - should show branch view
 	if err != nil {
@@ -1544,8 +1544,8 @@ func TestExplainDefault_NoCheckpoints_ShowsHelpfulMessage(t *testing.T) {
 		t.Fatalf("failed to create .entire dir: %v", err)
 	}
 
-	var stdout bytes.Buffer
-	err = runExplainDefault(context.Background(), &stdout, true) // noPager=true for test
+	var stdout, stderr bytes.Buffer
+	err = runExplainDefault(context.Background(), &stdout, &stderr, true) // noPager=true for test
 
 	// Should NOT error
 	if err != nil {
@@ -4209,8 +4209,8 @@ func TestRunExplainBranchDefault_DetachedHead(t *testing.T) {
 		t.Fatalf("failed to create .entire dir: %v", err)
 	}
 
-	var stdout bytes.Buffer
-	err = runExplainBranchDefault(context.Background(), &stdout, true)
+	var stdout, stderr bytes.Buffer
+	err = runExplainBranchDefault(context.Background(), &stdout, &stderr, true)
 
 	// Should NOT error
 	if err != nil {
@@ -6516,4 +6516,45 @@ func TestRenderExplainBody_NoColorReturnsRawMarkdown(t *testing.T) {
 	if got != "## Intent\n\nfoo\n" {
 		t.Errorf("expected raw markdown when no color\n got: %q", got)
 	}
+}
+
+// TestCapBranchCheckpoints covers the prose-list truncation probe (Spec 2):
+// under the cap nothing is hidden and no note is emitted; over the cap the
+// slice is trimmed to the limit and a vague "more exist" note is returned.
+func TestCapBranchCheckpoints(t *testing.T) {
+	t.Parallel()
+
+	mk := func(n int) []strategy.RewindPoint {
+		pts := make([]strategy.RewindPoint, n)
+		for i := range pts {
+			pts[i] = strategy.RewindPoint{ID: fmt.Sprintf("cp-%d", i)}
+		}
+		return pts
+	}
+
+	t.Run("under the cap emits no note", func(t *testing.T) {
+		t.Parallel()
+		points, note := capBranchCheckpoints(mk(5))
+		require.Len(t, points, 5)
+		require.Empty(t, note)
+	})
+
+	t.Run("exactly at the cap emits no note", func(t *testing.T) {
+		t.Parallel()
+		points, note := capBranchCheckpoints(mk(branchCheckpointsLimit))
+		require.Len(t, points, branchCheckpointsLimit)
+		require.Empty(t, note)
+	})
+
+	t.Run("over the cap trims and notes truncation", func(t *testing.T) {
+		t.Parallel()
+		// limit+1 probe signals at least one more checkpoint exists.
+		points, note := capBranchCheckpoints(mk(branchCheckpointsLimit + 1))
+		require.Len(t, points, branchCheckpointsLimit)
+		require.Contains(t, note, fmt.Sprintf("showing first %d checkpoints", branchCheckpointsLimit))
+		require.Contains(t, note, "--json --limit")
+		// Honesty: never claim an exact remaining count.
+		require.Contains(t, note, "more exist")
+		require.NotContains(t, note, fmt.Sprintf("%d more", branchCheckpointsLimit+1))
+	})
 }
