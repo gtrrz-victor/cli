@@ -235,10 +235,10 @@ func TestSyncCheckpointPolicyForPrePushUsesPushTarget(t *testing.T) {
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
 
-	require.True(t, syncCheckpointPolicyForPrePush(context.Background(), pushSettings{
+	syncCheckpointPolicyForPrePush(context.Background(), pushSettings{
 		remote:        "origin",
 		checkpointURL: pushTargetDir,
-	}))
+	})
 	state, err := checkpointpolicy.ReadLocal(t.Context(), repo)
 	require.NoError(t, err)
 	require.Equal(t, targetHash, state.Hash)

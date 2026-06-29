@@ -25,13 +25,13 @@ func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (check
 	return state.Policy, true
 }
 
-func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
+func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) {
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint policy pre-push: failed to open repository; allowing checkpoint push",
 			slog.String("error", err.Error()),
 		)
-		return true
+		return
 	}
 	defer repo.Close()
 
@@ -40,7 +40,7 @@ func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
 		logging.Warn(ctx, "checkpoint policy pre-push: failed to resolve worktree root; allowing checkpoint push",
 			slog.String("error", err.Error()),
 		)
-		return true
+		return
 	}
 	target := checkpointpolicy.Target{Remote: ps.pushTarget(), Dir: dir}
 	state, err := checkpointpolicy.Sync(ctx, repo, target)
@@ -50,14 +50,13 @@ func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) bool {
 		if readErr == nil {
 			warnIfCheckpointPolicyNeedsUpgrade(ctx, localState.Policy)
 		}
-		return true
+		return
 	}
 	if state.Source == checkpointpolicy.SourceLocalDiverged {
 		warnOrLogCheckpointPolicyDiverged(ctx, state)
-		return true
+		return
 	}
 	warnIfCheckpointPolicyNeedsUpgrade(ctx, state.Policy)
-	return true
 }
 
 func warnOrLogCheckpointPolicySyncFailure(ctx context.Context, err error) {
