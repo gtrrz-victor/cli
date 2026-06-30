@@ -182,6 +182,9 @@ func fatalMessage(err error, parsedURL *url.URL) string {
 	if errors.As(err, &oe) && oe.Code == "invalid_target" {
 		if m := wrongClusterRe.FindStringSubmatch(oe.Description); m != nil {
 			host := m[1]
+			// Copy the URL the user typed and swap only the host, so any
+			// escaped path (RawPath) or query stays byte-identical to what
+			// they originally ran.
 			correctedURL := *parsedURL
 			correctedURL.Scheme = "entire"
 			correctedURL.Host = host
