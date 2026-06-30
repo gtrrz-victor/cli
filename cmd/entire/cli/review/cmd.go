@@ -134,9 +134,10 @@ Flags:
   --models       list the models each agent advertises (optionally --agent NAME)
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
-  --timeout DUR  max time each reviewer may run before it's cancelled and
-                 marked failed (default 20m; 0 disables). Siblings and the
-                 judge proceed.
+  --timeout DUR  max time each reviewer may run before it's cancelled and marked
+                 failed; also bounds the consolidating judge, whose final report
+                 is skipped on timeout (default 20m; 0 disables both bounds). A
+                 timed-out reviewer's siblings and the judge still proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
                  Default: first existing of origin/HEAD, origin/main,
@@ -207,14 +208,12 @@ To tag an already-finished session as a review, use
 			if findings {
 				return runReviewFindings(ctx, cmd, deps.NewSilentError)
 			}
-			// --timeout 0 disables the per-reviewer bound. The RunConfig zero
-			// value means "use the default", so translate an explicit 0 to a
-			// negative disable sentinel. (The flag defaults to 10m, so the value is
-			// only 0 when the user passed --timeout 0.)
-			timeoutArg := reviewTimeout
-			if timeoutArg == 0 {
-				timeoutArg = -1
-			}
+			// Map the flag to the RunConfig timeout convention: a non-positive
+			// value (the user passed --timeout 0) means "disable", encoded as the
+			// negative sentinel, which disables BOTH the per-reviewer bound and the
+			// judge's deadline. A positive value passes through and bounds both.
+			// (The flag's default is nonzero, so 0 only appears on --timeout 0.)
+			timeoutArg := resolveReviewerTimeoutArg(reviewTimeout)
 			return runReview(ctx, cmd, agentOverride, modelOverride, baseOverride, profileName, perRunPrompt, timeoutArg, deps)
 		},
 	}
@@ -236,7 +235,7 @@ To tag an already-finished session as a review, use
 	cmd.Flags().StringVar(&profileOverride, "profile", "", "review profile to run (default: review_default_profile or general)")
 	cmd.Flags().StringVar(&perRunPrompt, "prompt", "", "one-off instructions appended to this review run")
 	cmd.Flags().StringVar(&baseOverride, "base", "", "git ref to scope the review against (default: origin/HEAD → origin/main → origin/master → main → master)")
-	cmd.Flags().DurationVar(&reviewTimeout, "timeout", defaultReviewerTimeout, "max time each reviewer may run before it is cancelled and marked failed (0 disables)")
+	cmd.Flags().DurationVar(&reviewTimeout, "timeout", defaultReviewerTimeout, "max time each reviewer may run before it is cancelled and marked failed; also bounds the consolidating judge, whose final report is skipped on timeout (0 disables both)")
 	// The listing modes and the action modes each select a distinct command
 	// behavior; combining them silently runs one and drops the rest, so reject
 	// the combination up front with a clear cobra error.
@@ -696,6 +695,18 @@ func reviewAgentNames(deps Deps) []string {
 		}
 	}
 	return names
+}
+
+// resolveReviewerTimeoutArg maps the --timeout flag value to the RunConfig
+// timeout convention used by reviewerTimeout and the judge's providerContext: a
+// non-positive value (the user passed --timeout 0) becomes the negative
+// "disabled" sentinel; a positive value passes through unchanged. The flag's
+// default is nonzero, so 0 only reaches here when the user explicitly set it.
+func resolveReviewerTimeoutArg(flagValue time.Duration) time.Duration {
+	if flagValue <= 0 {
+		return -1
+	}
+	return flagValue
 }
 
 // runReview executes the main review flow.
@@ -1204,6 +1215,7 @@ func runMultiAgentPath(
 		profileName:       profileName,
 		task:              profile.Task,
 		masterName:        masterLabel,
+		judgeTimeout:      timeout,
 		onSynthesisResult: func(result string) {
 			aggregateOutput = result
 		},
@@ -1259,6 +1271,11 @@ type multiAgentSinkInputs struct {
 	profileName       string
 	task              string
 	masterName        string
+	// judgeTimeout bounds the judge's consolidation call, following the same
+	// three-state convention as the reviewer timeout (positive: use it; zero:
+	// default; negative: disabled). Set from the resolved --timeout so one knob
+	// governs both reviewers and the judge.
+	judgeTimeout      time.Duration
 	onSynthesisResult func(result string)
 }
 
@@ -1289,15 +1306,16 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 			postRunOut := &bytes.Buffer{}
 			sinks = append(sinks, DumpSink{W: postRunOut})
 			sinks = append(sinks, SynthesisSink{
-				Provider:     in.synthesisProvider,
-				Writer:       postRunOut,
-				RenderWriter: in.out,
-				PerRunPrompt: in.perRunPrompt,
-				ProfileName:  in.profileName,
-				Task:         in.task,
-				MasterName:   in.masterName,
-				RunContext:   in.runContext,
-				OnResult:     in.onSynthesisResult,
+				Provider:        in.synthesisProvider,
+				Writer:          postRunOut,
+				RenderWriter:    in.out,
+				PerRunPrompt:    in.perRunPrompt,
+				ProfileName:     in.profileName,
+				Task:            in.task,
+				MasterName:      in.masterName,
+				RunContext:      in.runContext,
+				ProviderTimeout: in.judgeTimeout,
+				OnResult:        in.onSynthesisResult,
 				OnStart: func() {
 					tui.FinalPhaseStarted(finalJudgeDisplayName(in.masterName))
 				},
@@ -1316,14 +1334,15 @@ func composeMultiAgentSinks(in multiAgentSinkInputs) []reviewtypes.Sink {
 	sinks = append(sinks, DumpSink{W: in.out})
 	if in.synthesisProvider != nil {
 		sinks = append(sinks, SynthesisSink{
-			Provider:     in.synthesisProvider,
-			Writer:       in.out,
-			PerRunPrompt: in.perRunPrompt,
-			ProfileName:  in.profileName,
-			Task:         in.task,
-			MasterName:   in.masterName,
-			RunContext:   in.runContext,
-			OnResult:     in.onSynthesisResult,
+			Provider:        in.synthesisProvider,
+			Writer:          in.out,
+			PerRunPrompt:    in.perRunPrompt,
+			ProfileName:     in.profileName,
+			Task:            in.task,
+			MasterName:      in.masterName,
+			RunContext:      in.runContext,
+			ProviderTimeout: in.judgeTimeout,
+			OnResult:        in.onSynthesisResult,
 		})
 	}
 	return sinks

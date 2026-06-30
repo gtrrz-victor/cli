@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"io"
+	"time"
 
 	reviewtypes "github.com/entireio/cli/cmd/entire/cli/review/types"
 )
@@ -25,6 +26,7 @@ type SinkComposeInputs struct {
 	SynthesisProvider SynthesisProvider
 	PerRunPrompt      string
 	MasterName        string
+	JudgeTimeout      time.Duration
 }
 
 type SingleAgentSinkComposeInputs struct {
@@ -45,6 +47,7 @@ func ExposedComposeMultiAgentSinks(in SinkComposeInputs) []reviewtypes.Sink {
 		synthesisProvider: in.SynthesisProvider,
 		perRunPrompt:      in.PerRunPrompt,
 		masterName:        in.MasterName,
+		judgeTimeout:      in.JudgeTimeout,
 	})
 }
 

@@ -72,7 +72,7 @@ type SynthesisSink struct {
 	Task            string
 	MasterName      string
 	RunContext      context.Context // optional; nil falls back to context.Background()
-	ProviderTimeout time.Duration   // optional; zero uses defaultSynthesisProviderTimeout
+	ProviderTimeout time.Duration   // positive: use it; zero: defaultSynthesisProviderTimeout; negative: disabled (no deadline)
 	OnResult        func(result string)
 	OnStart         func()
 	OnComplete      func(error)
@@ -81,7 +81,11 @@ type SynthesisSink struct {
 // Compile-time interface check.
 var _ reviewtypes.Sink = SynthesisSink{}
 
-const defaultSynthesisProviderTimeout = 2 * time.Minute
+// defaultSynthesisProviderTimeout bounds the judge's single consolidation call
+// when SynthesisSink.ProviderTimeout is unset. The judge reads every reviewer's
+// report and writes the combined verdict in one text-generation call, which
+// regularly needs more than the original 2m, so the default is 5m.
+const defaultSynthesisProviderTimeout = 5 * time.Minute
 
 // AgentEvent is a no-op; SynthesisSink only acts in RunFinished.
 func (SynthesisSink) AgentEvent(_ string, _ reviewtypes.Event) {}
@@ -157,12 +161,21 @@ func (s SynthesisSink) runContext() context.Context {
 	return context.Background()
 }
 
+// providerContext bounds the judge's consolidation call. ProviderTimeout follows
+// the same three-state convention as the reviewer timeout so a single --timeout
+// value can govern the whole command:
+//   - positive: use it.
+//   - zero (unset): use defaultSynthesisProviderTimeout.
+//   - negative: disabled — no deadline (mirrors `--timeout 0` for reviewers).
 func (s SynthesisSink) providerContext() (context.Context, context.CancelFunc) {
-	timeout := s.ProviderTimeout
-	if timeout <= 0 {
-		timeout = defaultSynthesisProviderTimeout
+	switch {
+	case s.ProviderTimeout < 0:
+		return context.WithCancel(s.runContext())
+	case s.ProviderTimeout > 0:
+		return context.WithTimeout(s.runContext(), s.ProviderTimeout)
+	default:
+		return context.WithTimeout(s.runContext(), defaultSynthesisProviderTimeout)
 	}
-	return context.WithTimeout(s.runContext(), timeout)
 }
 
 // usableAgentCount returns the number of agents that produced usable narrative
