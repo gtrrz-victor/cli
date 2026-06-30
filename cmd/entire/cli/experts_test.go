@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
@@ -166,6 +167,41 @@ func TestExpertsCommandPrintsAgentCenteredEvidence(t *testing.T) {
 	}
 	if strings.Contains(text, "Peyton is an expert") {
 		t.Fatalf("output should not frame humans as the headline:\n%s", text)
+	}
+}
+
+func TestRenderExpertsWithStylesUsesEntirePalette(t *testing.T) {
+	var resp expertsResponse
+	if err := json.Unmarshal([]byte(expertsSuccessBody()), &resp); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+
+	styles := expertsStyles{
+		colorEnabled: true,
+		title:        lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")).Bold(true),
+		agent:        lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")).Bold(true),
+		label:        lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee")),
+		facet:        lipgloss.NewStyle().Foreground(lipgloss.Color("#818cf8")),
+		muted:        lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+		file:         lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee")),
+		bullet:       lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")),
+	}
+
+	var out bytes.Buffer
+	renderExpertsWithStyles(&out, resp, styles)
+	text := out.String()
+
+	for _, want := range []string{
+		styles.title.Render("Agent provenance"),
+		styles.agent.Render("Codex"),
+		styles.label.Render("skills"),
+		styles.facet.Render("go-cli") + styles.muted.Render(" (2)"),
+		styles.file.Render("cmd/entire/cli/experts.go"),
+		styles.bullet.Render("-"),
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("styled output missing %q:\n%s", want, text)
+		}
 	}
 }
 

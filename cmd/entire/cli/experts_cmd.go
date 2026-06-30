@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -105,6 +106,42 @@ type expertsEvidenceItem struct {
 	ExactFileMatches          int      `json:"exact_file_matches"`
 	PrefixFileMatches         int      `json:"prefix_file_matches"`
 	CheckpointIDs             []string `json:"checkpoint_ids"`
+}
+
+type expertsStyles struct {
+	colorEnabled bool
+
+	title  lipgloss.Style
+	agent  lipgloss.Style
+	label  lipgloss.Style
+	facet  lipgloss.Style
+	muted  lipgloss.Style
+	file   lipgloss.Style
+	bullet lipgloss.Style
+}
+
+func newExpertsStyles(w io.Writer) expertsStyles {
+	useColor := shouldUseColor(w)
+	styles := expertsStyles{colorEnabled: useColor}
+	if !useColor {
+		return styles
+	}
+
+	styles.title = lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")).Bold(true)
+	styles.agent = lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")).Bold(true)
+	styles.label = lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee"))
+	styles.facet = lipgloss.NewStyle().Foreground(lipgloss.Color("#818cf8"))
+	styles.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styles.file = lipgloss.NewStyle().Foreground(lipgloss.Color("#22d3ee"))
+	styles.bullet = lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c"))
+	return styles
+}
+
+func (s expertsStyles) render(style lipgloss.Style, text string) string {
+	if !s.colorEnabled {
+		return text
+	}
+	return style.Render(text)
 }
 
 func newExpertsCmd() *cobra.Command {
@@ -397,6 +434,10 @@ func stagedExpertScopes(ctx context.Context) ([]string, error) {
 }
 
 func renderExperts(w io.Writer, resp expertsResponse) {
+	renderExpertsWithStyles(w, resp, newExpertsStyles(w))
+}
+
+func renderExpertsWithStyles(w io.Writer, resp expertsResponse, styles expertsStyles) {
 	scopeLabel := strings.Join(resp.Scopes, ", ")
 	if resp.Query != nil && strings.TrimSpace(*resp.Query) != "" {
 		scopeLabel = *resp.Query
@@ -405,13 +446,13 @@ func renderExperts(w io.Writer, resp expertsResponse) {
 		scopeLabel = resp.RepoFullName
 	}
 	if len(resp.Profiles) == 0 {
-		fmt.Fprintf(w, "No agent provenance found for %s.\n", scopeLabel)
+		fmt.Fprintf(w, "No agent provenance found for %s.\n", styles.render(styles.file, scopeLabel))
 		return
 	}
 
-	fmt.Fprintf(w, "Agent provenance for %s", resp.RepoFullName)
+	fmt.Fprintf(w, "%s for %s", styles.render(styles.title, "Agent provenance"), styles.render(styles.file, resp.RepoFullName))
 	if resp.Branch != "" {
-		fmt.Fprintf(w, " (%s)", resp.Branch)
+		fmt.Fprintf(w, " %s", styles.render(styles.muted, "("+resp.Branch+")"))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w)
@@ -420,22 +461,22 @@ func renderExperts(w io.Writer, resp expertsResponse) {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "%s\n", profile.AgentLabel)
-		fmt.Fprintf(w, "  evidence: %d sessions, %d matching checkpoints, %d steps", profile.SessionCount, profile.CheckpointCount, profile.StepCount)
+		fmt.Fprintf(w, "%s\n", styles.render(styles.agent, profile.AgentLabel))
+		fmt.Fprintf(w, "  %s: %d sessions, %d matching checkpoints, %d steps", styles.render(styles.label, "evidence"), profile.SessionCount, profile.CheckpointCount, profile.StepCount)
 		if profile.AttributionAgentLines != nil {
 			fmt.Fprintf(w, ", %d agent-attributed lines", *profile.AttributionAgentLines)
 		}
 		fmt.Fprintln(w)
-		writeFacetLine(w, "  skills", profile.Skills)
-		writeFacetLine(w, "  tools", profile.ToolMix)
-		writeFacetLine(w, "  mcp", profile.MCPServers)
+		writeFacetLineWithStyles(w, "skills", profile.Skills, styles)
+		writeFacetLineWithStyles(w, "tools", profile.ToolMix, styles)
+		writeFacetLineWithStyles(w, "mcp", profile.MCPServers, styles)
 		if len(profile.MatchedFiles) > 0 {
-			fmt.Fprintf(w, "  files: %s\n", strings.Join(profile.MatchedFiles, ", "))
+			fmt.Fprintf(w, "  %s: %s\n", styles.render(styles.label, "files"), strings.Join(renderExpertFiles(profile.MatchedFiles, styles), ", "))
 		}
 		for _, session := range profile.Sessions {
-			fmt.Fprintf(w, "  - %s", session.DisplayName)
+			fmt.Fprintf(w, "  %s %s", styles.render(styles.bullet, "-"), styles.render(styles.facet, session.DisplayName))
 			if session.CheckpointCount > 0 || session.StepCount > 0 {
-				fmt.Fprintf(w, " - %d checkpoints, %d steps", session.CheckpointCount, session.StepCount)
+				fmt.Fprintf(w, " %s %s", styles.render(styles.muted, "-"), styles.render(styles.muted, fmt.Sprintf("%d checkpoints, %d steps", session.CheckpointCount, session.StepCount)))
 			}
 			fmt.Fprintln(w)
 		}
@@ -443,12 +484,36 @@ func renderExperts(w io.Writer, resp expertsResponse) {
 }
 
 func writeFacetLine(w io.Writer, label string, facets []expertsFacetCount) {
+	writeFacetLineWithStyles(w, label, facets, expertsStyles{})
+}
+
+func writeFacetLineWithStyles(w io.Writer, label string, facets []expertsFacetCount, styles expertsStyles) {
 	if len(facets) == 0 {
 		return
 	}
+	trimmedLabel := strings.TrimSpace(label)
+	indent := label[:len(label)-len(strings.TrimLeft(label, " \t"))]
+	if indent == "" {
+		indent = "  "
+	}
 	parts := make([]string, 0, len(facets))
 	for _, facet := range facets {
+		if styles.colorEnabled {
+			parts = append(parts, styles.render(styles.facet, facet.Name)+styles.render(styles.muted, fmt.Sprintf(" (%d)", facet.Count)))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s (%d)", facet.Name, facet.Count))
 	}
-	fmt.Fprintf(w, "%s: %s\n", label, strings.Join(parts, ", "))
+	fmt.Fprintf(w, "%s%s: %s\n", indent, styles.render(styles.label, trimmedLabel), strings.Join(parts, ", "))
+}
+
+func renderExpertFiles(files []string, styles expertsStyles) []string {
+	if !styles.colorEnabled {
+		return files
+	}
+	rendered := make([]string, 0, len(files))
+	for _, file := range files {
+		rendered = append(rendered, styles.render(styles.file, file))
+	}
+	return rendered
 }
