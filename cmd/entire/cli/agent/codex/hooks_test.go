@@ -410,12 +410,5 @@ func withCodexHookEnvironment(t *testing.T, goos string, wrapperWorks bool) {
 
 func withCodexHookEnvironmentFunc(t *testing.T, goos string, wrapperWorks func(context.Context, string) bool) {
 	t.Helper()
-	oldGOOS := codexHookCommandOS
-	oldProbe := codexProductionHookWrapperWorks
-	codexHookCommandOS = goos
-	codexProductionHookWrapperWorks = wrapperWorks
-	t.Cleanup(func() {
-		codexHookCommandOS = oldGOOS
-		codexProductionHookWrapperWorks = oldProbe
-	})
+	t.Cleanup(agentpkg.SetWindowsHookProbeForTesting(goos, wrapperWorks))
 }

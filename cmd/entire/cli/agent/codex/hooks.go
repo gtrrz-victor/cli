@@ -4,13 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
@@ -27,12 +23,6 @@ var entireHookPrefixes = []string{
 	agent.LocalDevHookScript + " ",
 	`go run "$(git rev-parse --show-toplevel)"/cmd/entire/main.go `,
 }
-
-var (
-	codexHookCommandOS                 = runtime.GOOS
-	codexProductionHookWrapperWorks    = defaultCodexProductionHookWrapperWorks
-	codexHookWrapperCompatibilityProbe = `sh -c 'exit 0'`
-)
 
 // InstallHooks installs Codex hooks in .codex/hooks.json.
 func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool) (int, error) {
@@ -95,17 +85,17 @@ func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool
 		cmdPrefix = "entire hooks codex "
 	}
 	sessionStartCmd := cmdPrefix + "session-start"
-	useWindowsProductionHooks := shouldUseWindowsProductionCodexHooks(ctx, localDev)
+	useWindowsProductionHooks := agent.UseWindowsProductionHooks(ctx, localDev)
 	if !localDev {
-		sessionStartCmd = wrapCodexSessionStartHookCommand(sessionStartCmd, useWindowsProductionHooks)
+		sessionStartCmd = agent.WrapProductionJSONWarningHookCommandForOS(sessionStartCmd, agent.WarningFormatSingleLine, useWindowsProductionHooks)
 	}
 	userPromptSubmitCmd := cmdPrefix + "user-prompt-submit"
 	stopCmd := cmdPrefix + "stop"
 	postToolUseCmd := cmdPrefix + "post-tool-use"
 	if !localDev {
-		userPromptSubmitCmd = wrapCodexSilentHookCommand(userPromptSubmitCmd, useWindowsProductionHooks)
-		stopCmd = wrapCodexSilentHookCommand(stopCmd, useWindowsProductionHooks)
-		postToolUseCmd = wrapCodexSilentHookCommand(postToolUseCmd, useWindowsProductionHooks)
+		userPromptSubmitCmd = agent.WrapProductionSilentHookCommandForOS(userPromptSubmitCmd, useWindowsProductionHooks)
+		stopCmd = agent.WrapProductionSilentHookCommandForOS(stopCmd, useWindowsProductionHooks)
+		postToolUseCmd = agent.WrapProductionSilentHookCommandForOS(postToolUseCmd, useWindowsProductionHooks)
 	}
 
 	count := 0
@@ -175,37 +165,6 @@ func (c *CodexAgent) InstallHooks(ctx context.Context, localDev bool, force bool
 	}
 
 	return count, nil
-}
-
-func shouldUseWindowsProductionCodexHooks(ctx context.Context, localDev bool) bool {
-	if localDev || codexHookCommandOS != "windows" {
-		return false
-	}
-	return !codexProductionHookWrapperWorks(ctx, codexHookWrapperCompatibilityProbe)
-}
-
-func wrapCodexSessionStartHookCommand(command string, useWindows bool) string {
-	if useWindows {
-		return agent.WrapWindowsProductionJSONWarningHookCommand(command, agent.WarningFormatSingleLine)
-	}
-	return agent.WrapProductionJSONWarningHookCommand(command, agent.WarningFormatSingleLine)
-}
-
-func wrapCodexSilentHookCommand(command string, useWindows bool) string {
-	if useWindows {
-		return agent.WrapWindowsProductionSilentHookCommand(command)
-	}
-	return agent.WrapProductionSilentHookCommand(command)
-}
-
-func defaultCodexProductionHookWrapperWorks(ctx context.Context, command string) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(probeCtx, "cmd.exe", "/d", "/s", "/c", command)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run() == nil
 }
 
 // UninstallHooks removes Entire hooks from Codex hooks.json.

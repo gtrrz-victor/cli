@@ -1,9 +1,39 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
+
+func TestUseWindowsProductionHooks(t *testing.T) {
+	// No t.Parallel(): mutates package-level probe/OS via the test seam.
+
+	shWorks := func(context.Context, string) bool { return true }
+	shBroken := func(context.Context, string) bool { return false }
+
+	cases := []struct {
+		name     string
+		goos     string
+		localDev bool
+		probe    func(context.Context, string) bool
+		want     bool
+	}{
+		{"non-windows never uses windows wrappers", "linux", false, shBroken, false},
+		{"localDev never uses windows wrappers", windowsOS, true, shBroken, false},
+		{"windows with working sh keeps sh wrappers", windowsOS, false, shWorks, false},
+		{"windows without working sh uses windows wrappers", windowsOS, false, shBroken, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restore := SetWindowsHookProbeForTesting(tc.goos, tc.probe)
+			defer restore()
+			if got := UseWindowsProductionHooks(context.Background(), tc.localDev); got != tc.want {
+				t.Fatalf("UseWindowsProductionHooks() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestWrapProductionJSONWarningHookCommand(t *testing.T) {
 	t.Parallel()
@@ -103,8 +133,10 @@ func TestWrapWindowsProductionPlainTextWarningHookCommandUsesSingleLineWarning(t
 func TestEscapeWindowsCMD_EscapesCmdBlockMetacharacters(t *testing.T) {
 	t.Parallel()
 
+	// `%` passes through unescaped: it's a cmd /c command line, not a batch
+	// script, so caret-escaping `%` is wrong and a lone `%` is already literal.
 	got := escapeWindowsCMD(`^&|<>"()%`)
-	want := `^^^&^|^<^>^"^(^)^%`
+	want := `^^^&^|^<^>^"^(^)%`
 	if got != want {
 		t.Fatalf("escapeWindowsCMD() = %q, want %q", got, want)
 	}
