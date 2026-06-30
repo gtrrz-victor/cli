@@ -182,7 +182,10 @@ func fatalMessage(err error, parsedURL *url.URL) string {
 	if errors.As(err, &oe) && oe.Code == "invalid_target" {
 		if m := wrongClusterRe.FindStringSubmatch(oe.Description); m != nil {
 			host := m[1]
-			corrected := (&url.URL{Scheme: "entire", Host: host, Path: parsedURL.Path}).String()
+			correctedURL := *parsedURL
+			correctedURL.Scheme = "entire"
+			correctedURL.Host = host
+			corrected := correctedURL.String()
 			return fmt.Sprintf("fatal: this repository is not hosted on %s; it lives on %s.\n"+
 				"Re-run against the correct host, e.g.:\n\n    git clone %s\n",
 				parsedURL.Host, host, corrected)
