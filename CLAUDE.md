@@ -68,6 +68,16 @@ source of truth the first-turn context injection and the `--agent-help-skill`
 skill point agents at, instead of enumerating a surface that goes stale.
 Hidden commands opt into being advertised here by setting
 `Annotations[agentHelpAnnotation] = "true"` (e.g. `trail`).
+No-channel agents (Cursor, Copilot CLI, Factory Droid, MCP hosts — no
+context-injection channel and no agent-help skill template) reach it without an
+active push. All of them can discover it passively: it is visible in `entire
+help`, the `entire status` footer points at it, and `entire status --json`
+exposes it as the `agent_help` field. On top of that, Factory AI Droid (which is
+banner-only) gets the pointer appended to its SessionStart hook banner, and
+MCP-host agents can launch the hidden `entire mcp` stdio server, which exposes
+`agent_help` and `entire_status` as MCP tools using the same live rendering.
+Enabling a no-channel agent with `--agent-help-skill` reports the skill
+unsupported and points the agent at this passive path instead.
 
 Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
 `resume` → `session resume`, `attach` → `session attach`, `explain` →
@@ -80,7 +90,8 @@ Deprecated top-level commands (functional, print a cobra deprecation message):
 deprecation as `checkpoint rewind`).
 
 Hidden infrastructure commands: `hooks`, `trail`,
-`curl-bash-post-install`, `__send_analytics`.
+`curl-bash-post-install`, `__send_analytics`, `mcp` (MCP stdio server for
+MCP-host agents).
 
 The `hideAsAlias(cmd, canonical)` helper in `cmd/entire/cli/aliascmd.go`
 marks a command Hidden and sets cobra's `Deprecated` field so the hint
