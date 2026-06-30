@@ -232,8 +232,13 @@ carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted
 otherwise) so external readers can find it next to `full.jsonl`.
 CLI read paths (rewind/resume/explain) read `full.jsonl` by filename. Compact
 generation is best-effort: failures are logged but never fail the checkpoint
-write, and during finalization a failed regeneration keeps the previous
-`transcript.jsonl`.
+write. It is also **skipped when the compacted output exceeds the 50MB blob cap**
+— unlike `full.jsonl`, `transcript.jsonl` is not chunked, so a very long session
+whose full compaction exceeds the cap will lack a compact transcript on those
+checkpoints. This is a known limitation; `full.jsonl` remains authoritative and
+the compact transcript is regenerable from it. During the OPF finalize rewrite, a
+failed or skipped regeneration **drops** the prior `transcript.jsonl` and clears
+`compact_transcript_start` rather than shipping a stale, less-redacted compact.
 
 **Root-level metadata.json (`CheckpointSummary`):**
 ```json

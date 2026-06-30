@@ -354,6 +354,62 @@ func assertCompactSliceScoped(t *testing.T, compactContent string, marker int, w
 	}
 }
 
+// TestUpdateCommitted_DropsStaleCompactWhenRegenerationProducesNone guards the
+// OPF/finalize rewrite: if the re-redacted transcript no longer yields a compact
+// transcript, the stale transcript.jsonl from the initial write must be removed
+// (not shipped as a less-redacted artifact) and its marker cleared, rather than
+// left pointing at content that no longer matches the re-redacted full.jsonl.
+func TestUpdateCommitted_DropsStaleCompactWhenRegenerationProducesNone(t *testing.T) {
+	t.Parallel()
+	repo, _ := setupTestRepo(t)
+	store := NewGitStore(repo, DefaultV1Refs())
+	cpID := id.MustCheckpointID("a7b8c9d0e1f2")
+
+	// Initial write: compactable transcript → transcript.jsonl + marker present.
+	if err := store.Write(context.Background(), Session{
+		CheckpointID:              cpID,
+		SessionID:                 "session-001",
+		Strategy:                  "manual-commit",
+		Transcript:                redact.AlreadyRedacted(claudeStyleTranscript()),
+		Agent:                     agent.AgentTypeClaudeCode,
+		CheckpointTranscriptStart: 2,
+		AuthorName:                "Test",
+		AuthorEmail:               "test@test.com",
+	}); err != nil {
+		t.Fatalf("WriteCommitted() error = %v", err)
+	}
+	sessionPath := cpID.Path() + "/0/"
+	if _, ok := readBranchFile(t, store, sessionPath+paths.CompactTranscriptFileName); !ok {
+		t.Fatal("precondition: transcript.jsonl missing after initial write")
+	}
+	if _, ok := readSessionMetadata(t, repo, cpID).GetCompactTranscriptStart(); !ok {
+		t.Fatal("precondition: compact_transcript_start not recorded after initial write")
+	}
+
+	// Finalize with a non-compactable transcript: regeneration yields nothing.
+	if err := store.Write(context.Background(), SessionTranscript{
+		CheckpointID: cpID,
+		SessionID:    "session-001",
+		Transcript:   redact.AlreadyRedacted([]byte("not json at all\nstill not json\n")),
+		Agent:        agent.AgentTypeClaudeCode,
+	}); err != nil {
+		t.Fatalf("UpdateCommitted() error = %v", err)
+	}
+
+	// Stale compact transcript dropped from the tree.
+	if _, ok := readBranchFile(t, store, sessionPath+paths.CompactTranscriptFileName); ok {
+		t.Error("stale transcript.jsonl left in tree after regeneration produced none")
+	}
+	// Root summary pointer cleared.
+	if got := readSummaryFromBranch(t, repo, cpID).Sessions[0].CompactTranscript; got != "" {
+		t.Errorf("sessions[0].compact_transcript = %q, want empty", got)
+	}
+	// Session metadata marker cleared.
+	if offset, ok := readSessionMetadata(t, repo, cpID).GetCompactTranscriptStart(); ok {
+		t.Errorf("compact_transcript_start still set (%d) after stale compact dropped", offset)
+	}
+}
+
 func TestUpdateCommitted_RegeneratesCompactTranscript(t *testing.T) {
 	t.Parallel()
 	repo, _ := setupTestRepo(t)

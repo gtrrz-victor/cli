@@ -1817,25 +1817,34 @@ func (s *GitStore) replaceTranscript(ctx context.Context, transcript redact.Reda
 	}
 	compactStart := s.writeCompactTranscript(ctx, agentType, startLine, compactBytes, sessionPath, entries)
 
-	// Keep the session metadata's compact-transcript marker consistent with the
-	// regenerated transcript.jsonl. The OPF re-redaction can write a compact
-	// transcript the initial write lacked, or (in principle) shift line counts,
-	// so re-record the boundary whenever one was produced.
-	if compactStart != nil {
-		if err := s.setCompactTranscriptStart(sessionPath, *compactStart, entries); err != nil {
-			return fmt.Errorf("failed to update compact transcript start: %w", err)
-		}
+	// If regeneration produced no compact transcript (failure, empty, or
+	// oversized), drop any stale transcript.jsonl carried over from the prior
+	// write rather than shipping it. In the OPF rewrite path the stale file is a
+	// less-redacted compact (it predates the 8th-layer re-redaction), and its
+	// CompactTranscriptStart would point at content that no longer matches the
+	// re-redacted full transcript. The caller re-derives the root summary's
+	// compact_transcript pointer from the (now absent) tree entry.
+	if compactStart == nil {
+		delete(entries, sessionPath+paths.CompactTranscriptFileName)
+	}
+
+	// Keep the session metadata's marker consistent with the regenerated
+	// transcript.jsonl: record the new boundary when one was produced, or clear
+	// it (nil) when the compact transcript was dropped above.
+	if err := s.setCompactTranscriptStart(sessionPath, compactStart, entries); err != nil {
+		return fmt.Errorf("failed to update compact transcript start: %w", err)
 	}
 
 	return nil
 }
 
 // setCompactTranscriptStart records CompactTranscriptStart in the session
-// metadata. Used by the OPF rewrite path so the finalized session metadata
-// reflects the regenerated compact transcript.
-func (s *GitStore) setCompactTranscriptStart(sessionPath string, start int, entries map[string]object.TreeEntry) error {
+// metadata, or clears it when start is nil (no compact transcript present).
+// Used by the OPF rewrite path so the finalized session metadata reflects the
+// regenerated compact transcript.
+func (s *GitStore) setCompactTranscriptStart(sessionPath string, start *int, entries map[string]object.TreeEntry) error {
 	return s.updateSessionMetadata(sessionPath, entries, func(metadata *Metadata) {
-		metadata.CompactTranscriptStart = &start
+		metadata.CompactTranscriptStart = start
 	})
 }
 
