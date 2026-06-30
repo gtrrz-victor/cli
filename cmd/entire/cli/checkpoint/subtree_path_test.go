@@ -21,6 +21,8 @@ func TestCheckpointSubtreePath(t *testing.T) {
 		{"clean session dir", "a3/b2c4d5e6f7/0", []string{"full.jsonl"}, "a3/b2c4d5e6f7/0/full.jsonl"},
 		// No segments returns the cleaned base (trailing slash stripped).
 		{"base only trailing slash", "a3/b2c4d5e6f7/", nil, "a3/b2c4d5e6f7"},
+		// Ref root with no segments must stay "" (not path.Join's "." cleaning).
+		{"ref root base only", "", nil, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

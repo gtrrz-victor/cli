@@ -152,6 +152,15 @@ func (s *treeWriter) subtreeObjAt(rootTreeHash plumbing.Hash, path string) (*obj
 // and checkpointSubtreePath("a3/b2.../", "0", "metadata.json") == "a3/b2.../0/metadata.json".
 // Callers therefore need not maintain the trailing-slash invariant by hand.
 func checkpointSubtreePath(base string, segs ...string) string {
+	if len(segs) == 0 {
+		// path.Join with no segments would clean a "" base to "." — an invalid
+		// git tree key. At the ref root the correct key is ""; for a non-empty
+		// base, clean it to keep the trailing-slash-stripping behavior.
+		if base == "" {
+			return ""
+		}
+		return path.Clean(base)
+	}
 	return path.Join(append([]string{base}, segs...)...)
 }
 
