@@ -27,6 +27,7 @@ type SinkComposeInputs struct {
 	PerRunPrompt      string
 	MasterName        string
 	JudgeTimeout      time.Duration
+	OnSynthesisError  func(error)
 }
 
 type SingleAgentSinkComposeInputs struct {
@@ -48,6 +49,7 @@ func ExposedComposeMultiAgentSinks(in SinkComposeInputs) []reviewtypes.Sink {
 		perRunPrompt:      in.PerRunPrompt,
 		masterName:        in.MasterName,
 		judgeTimeout:      in.JudgeTimeout,
+		onSynthesisError:  in.OnSynthesisError,
 	})
 }
 

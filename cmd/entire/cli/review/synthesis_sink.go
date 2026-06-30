@@ -28,8 +28,9 @@ import (
 // roundtrip; production wiring uses AgentSynthesisProvider.
 type SynthesisProvider interface {
 	// Synthesize takes the composed synthesis prompt and returns the
-	// verdict text. Errors are surfaced to the caller; SynthesisSink
-	// degrades gracefully on error rather than failing the run.
+	// verdict text. On error the sink prints "final report unavailable" and
+	// signals OnError; the command then surfaces an attempted-but-failed
+	// synthesis as a non-zero exit (see runMultiAgentPath).
 	Synthesize(ctx context.Context, prompt string) (string, error)
 }
 
@@ -76,6 +77,11 @@ type SynthesisSink struct {
 	OnResult        func(result string)
 	OnStart         func()
 	OnComplete      func(error)
+	// OnError is called when an attempted synthesis fails (provider error or
+	// timeout). It is NOT called when synthesis is skipped (cancelled run or
+	// fewer than two usable reviewers). Lets the caller surface a missing verdict
+	// in the command's exit status instead of exiting 0 with no final report.
+	OnError func(error)
 }
 
 // Compile-time interface check.
@@ -121,6 +127,9 @@ func (s SynthesisSink) RunFinished(summary reviewtypes.RunSummary) {
 	result, provErr := s.Provider.Synthesize(providerCtx, synthesisPrompt)
 	if provErr != nil {
 		fmt.Fprintf(s.Writer, "final report unavailable: %v\n", provErr)
+		if s.OnError != nil {
+			s.OnError(provErr)
+		}
 		if s.OnComplete != nil {
 			s.OnComplete(provErr)
 		}

@@ -394,6 +394,56 @@ func TestSynthesisSink_ProviderErrorDegradeGracefully(t *testing.T) {
 	}
 }
 
+// TestSynthesisSink_OnErrorCalledOnProviderFailure verifies an attempted
+// synthesis that fails invokes OnError with the provider error — the signal the
+// command uses to surface a missing verdict in its exit status.
+func TestSynthesisSink_OnErrorCalledOnProviderFailure(t *testing.T) {
+	t.Parallel()
+	w := &bytes.Buffer{}
+	stub := &stubSynthesisProvider{err: errors.New("judge boom")}
+	sink := buildSink(stub, w, "")
+	calls := 0
+	var gotErr error
+	sink.OnError = func(err error) { calls++; gotErr = err }
+
+	sink.RunFinished(makeTwoAgentSummary())
+
+	if calls != 1 {
+		t.Fatalf("OnError called %d times, want 1", calls)
+	}
+	if gotErr == nil || !strings.Contains(gotErr.Error(), "judge boom") {
+		t.Errorf("OnError error = %v, want it to carry the provider error", gotErr)
+	}
+}
+
+// TestSynthesisSink_OnErrorNotCalledOnSuccess verifies a successful synthesis
+// does not invoke OnError (so the command does not falsely fail).
+func TestSynthesisSink_OnErrorNotCalledOnSuccess(t *testing.T) {
+	t.Parallel()
+	w := &bytes.Buffer{}
+	stub := &stubSynthesisProvider{response: "the verdict"}
+	sink := buildSink(stub, w, "")
+	sink.OnError = func(error) { t.Error("OnError must not be called when synthesis succeeds") }
+
+	sink.RunFinished(makeTwoAgentSummary())
+}
+
+// TestSynthesisSink_OnErrorNotCalledWhenSkipped verifies a skipped synthesis
+// (cancelled run, or fewer than two usable reviewers) does not invoke OnError —
+// a skip is not a judge failure and must not fail the command.
+func TestSynthesisSink_OnErrorNotCalledWhenSkipped(t *testing.T) {
+	t.Parallel()
+	w := &bytes.Buffer{}
+	stub := &stubSynthesisProvider{err: errors.New("would fail if attempted")}
+	sink := buildSink(stub, w, "")
+	sink.OnError = func(error) { t.Error("OnError must not be called when synthesis is skipped") }
+
+	// Cancelled run: skipped before the provider is called.
+	sink.RunFinished(reviewtypes.RunSummary{Cancelled: true})
+	// Fewer than two usable reviewers: also skipped.
+	sink.RunFinished(reviewtypes.RunSummary{})
+}
+
 // TestSynthesisSink_PerRunPromptThreaded verifies that the PerRunPrompt field
 // is threaded through to the composed prompt sent to the provider.
 func TestSynthesisSink_PerRunPromptThreaded(t *testing.T) {

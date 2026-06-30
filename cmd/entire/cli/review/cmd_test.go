@@ -909,9 +909,11 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 }
 
 // TestComposeMultiAgentSinks_JudgeTimeoutWired proves the resolved --timeout
-// value reaches the judge: composeMultiAgentSinks must set the SynthesisSink's
-// ProviderTimeout from judgeTimeout, in both the TTY and non-TTY paths. Without
-// this, the judge would silently keep its own default regardless of --timeout.
+// value AND the synthesis-error callback reach the judge: composeMultiAgentSinks
+// must set the SynthesisSink's ProviderTimeout from judgeTimeout and its OnError
+// from onSynthesisError, in both the TTY and non-TTY paths. Without the former
+// the judge would silently keep its own default regardless of --timeout; without
+// the latter a failed judge could not surface in the command's exit status.
 func TestComposeMultiAgentSinks_JudgeTimeoutWired(t *testing.T) {
 	t.Parallel()
 
@@ -929,6 +931,7 @@ func TestComposeMultiAgentSinks_JudgeTimeoutWired(t *testing.T) {
 				CancelRun:         noopCancel,
 				SynthesisProvider: provider,
 				JudgeTimeout:      want,
+				OnSynthesisError:  func(error) {},
 			})
 			var found bool
 			for _, s := range sinks {
@@ -936,6 +939,9 @@ func TestComposeMultiAgentSinks_JudgeTimeoutWired(t *testing.T) {
 					found = true
 					if ss.ProviderTimeout != want {
 						t.Errorf("SynthesisSink.ProviderTimeout = %v, want %v (judgeTimeout not wired)", ss.ProviderTimeout, want)
+					}
+					if ss.OnError == nil {
+						t.Error("SynthesisSink.OnError is nil (onSynthesisError not wired) — a failed judge could not fail the command")
 					}
 				}
 			}
