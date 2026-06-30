@@ -220,21 +220,25 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		if input == "" {
 			return errors.New("scope or query required unless --staged is set")
 		}
-		scope, isLocalScope, validateLocalRepo, err := localExpertScope(ctx, input)
-		if err != nil {
-			return err
-		}
-		if isLocalScope {
-			if strings.TrimSpace(f.repo) != "" && validateLocalRepo {
-				currentRepo, err := resolveExpertsRepo(ctx, "")
-				if err == nil && currentRepo != repoFullName {
-					return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
-				}
-			}
-			req.Scopes = []string{scope}
+		if strings.TrimSpace(f.repo) != "" && looksLikeExpertPath(input) {
+			req.Scopes = []string{normalizeExpertScope(input)}
 		} else {
-			query := input
-			req.Query = &query
+			scope, isLocalScope, validateLocalRepo, err := localExpertScope(ctx, input)
+			if err != nil {
+				return err
+			}
+			if isLocalScope {
+				if strings.TrimSpace(f.repo) != "" && validateLocalRepo {
+					currentRepo, err := resolveExpertsRepo(ctx, "")
+					if err == nil && currentRepo != repoFullName {
+						return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
+					}
+				}
+				req.Scopes = []string{scope}
+			} else {
+				query := input
+				req.Query = &query
+			}
 		}
 	}
 
@@ -404,18 +408,18 @@ func localExpertScope(ctx context.Context, input string) (string, bool, bool, er
 		if filepath.IsAbs(input) {
 			missingCandidates = append(missingCandidates, input)
 		} else {
-			if cwdAbs, err := filepath.Abs(input); err != nil {
+			cwdAbs, err := filepath.Abs(input)
+			if err != nil {
 				return "", false, false, fmt.Errorf("resolve cwd-relative path: %w", err)
-			} else {
-				missingCandidates = append(missingCandidates, cwdAbs, filepath.Join(root, input))
 			}
+			missingCandidates = append(missingCandidates, cwdAbs, filepath.Join(root, input))
 		}
 		for _, candidate := range uniqueStrings(missingCandidates) {
 			scope, err := localPathScope(root, candidate, input)
 			if err != nil {
 				continue
 			}
-			return scope, true, true, nil
+			return scope, true, false, nil
 		}
 		return normalizeExpertScope(input), true, false, nil
 	}
