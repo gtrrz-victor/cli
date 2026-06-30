@@ -89,7 +89,11 @@ func (s *GitStore) writeSession(ctx context.Context, opts WriteOptions) error {
 	if err != nil {
 		return err
 	}
-	checkpointSubtree, taskMetadataPath, err := s.applySessionWrite(ctx, opts, existing, opts.CheckpointID.Path()+"/", CheckpointVersionBranchV1)
+	checkpointVersion := CheckpointVersionBranchV1
+	if opts.CheckpointVersion != "" {
+		checkpointVersion = opts.CheckpointVersion
+	}
+	checkpointSubtree, taskMetadataPath, err := s.applySessionWrite(ctx, opts, existing, opts.CheckpointID.Path()+"/", checkpointVersion)
 	if err != nil {
 		return err
 	}
