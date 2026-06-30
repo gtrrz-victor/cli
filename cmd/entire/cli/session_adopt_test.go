@@ -249,6 +249,205 @@ func TestSessionAdopt_ExternalStoreRetiresSourceSession(t *testing.T) {
 	}
 }
 
+func TestSessionAdopt_ExternalStoreRollsBackTargetWhenSourceRetireFails(t *testing.T) {
+	if runtime.GOOS == windowsGOOS {
+		t.Skip("uses POSIX directory permissions to force source save failure")
+	}
+
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-retire-rollback"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStateDir := filepath.Join(sourceRepo, ".git", session.SessionStateDirName)
+	sourceStore := session.NewStateStoreWithDir(sourceStateDir)
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		LastPrompt:            "move this session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-10 * time.Minute),
+		Phase:                 session.PhaseIdle,
+		BaseCommit:            testutil.GetHeadHash(t, targetRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, targetRepo),
+		WorktreePath:          targetRepo,
+		LastPrompt:            "preexisting target state",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, sourceCommonDir, err := stateStoreForWorktree(context.Background(), sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, targetCommonDir, err := stateStoreForWorktree(context.Background(), targetRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(sourceStateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreSourceStateDir := func() error {
+		return os.Chmod(sourceStateDir, info.Mode().Perm())
+	}
+	if err := os.Chmod(sourceStateDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := restoreSourceStateDir(); err != nil {
+			t.Logf("restore source state dir permissions: %v", err)
+		}
+	})
+
+	_, _, err = adoptFromExternalSessionStore(
+		context.Background(),
+		sourceStore,
+		sourceRepo,
+		sourceCommonDir,
+		targetStore,
+		targetCommonDir,
+		sessionID,
+		adoptOptions{Force: true},
+	)
+	if err := restoreSourceStateDir(); err != nil {
+		t.Fatalf("restore source state dir permissions: %v", err)
+	}
+	if err == nil {
+		t.Fatal("adoptFromExternalSessionStore succeeded, want source-retire failure")
+	}
+	if !strings.Contains(err.Error(), "retire source session state") {
+		t.Fatalf("adoptFromExternalSessionStore error = %v, want source-retire failure", err)
+	}
+
+	loadedTarget, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedTarget == nil {
+		t.Fatal("target rollback removed preexisting state, want restore")
+	}
+	if loadedTarget.LastPrompt != "preexisting target state" {
+		t.Fatalf("target LastPrompt after rollback = %q, want preexisting target state", loadedTarget.LastPrompt)
+	}
+	if loadedTarget.Phase != session.PhaseIdle {
+		t.Fatalf("target Phase after rollback = %q, want idle", loadedTarget.Phase)
+	}
+
+	sourceAfter, err := sourceStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfter == nil || sourceAfter.Phase != session.PhaseActive {
+		t.Fatalf("source state after failed adoption = %#v, want original active state", sourceAfter)
+	}
+}
+
+func TestSessionAdopt_ExternalStoreClearsNewTargetWhenSourceRetireFails(t *testing.T) {
+	if runtime.GOOS == windowsGOOS {
+		t.Skip("uses POSIX directory permissions to force source save failure")
+	}
+
+	sourceRepo := setupAdoptRepo(t)
+	targetRepo := setupAdoptRepo(t)
+
+	sessionID := "test-adopt-retire-clear-target"
+	lastInteraction := time.Now().Add(-1 * time.Minute)
+	sourceStateDir := filepath.Join(sourceRepo, ".git", session.SessionStateDirName)
+	sourceStore := session.NewStateStoreWithDir(sourceStateDir)
+	if err := sourceStore.Save(context.Background(), &session.State{
+		SessionID:             sessionID,
+		AgentType:             agent.AgentTypeClaudeCode,
+		StartedAt:             time.Now().Add(-5 * time.Minute),
+		LastInteractionTime:   &lastInteraction,
+		Phase:                 session.PhaseActive,
+		BaseCommit:            testutil.GetHeadHash(t, sourceRepo),
+		AttributionBaseCommit: testutil.GetHeadHash(t, sourceRepo),
+		WorktreePath:          sourceRepo,
+		LastPrompt:            "move this session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFile(t, targetRepo, "feature.txt", "agent change\n")
+	t.Chdir(targetRepo)
+	targetStore, err := session.NewStateStore(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, sourceCommonDir, err := stateStoreForWorktree(context.Background(), sourceRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, targetCommonDir, err := stateStoreForWorktree(context.Background(), targetRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(sourceStateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreSourceStateDir := func() error {
+		return os.Chmod(sourceStateDir, info.Mode().Perm())
+	}
+	if err := os.Chmod(sourceStateDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := restoreSourceStateDir(); err != nil {
+			t.Logf("restore source state dir permissions: %v", err)
+		}
+	})
+
+	_, _, err = adoptFromExternalSessionStore(
+		context.Background(),
+		sourceStore,
+		sourceRepo,
+		sourceCommonDir,
+		targetStore,
+		targetCommonDir,
+		sessionID,
+		adoptOptions{Force: true},
+	)
+	if err := restoreSourceStateDir(); err != nil {
+		t.Fatalf("restore source state dir permissions: %v", err)
+	}
+	if err == nil {
+		t.Fatal("adoptFromExternalSessionStore succeeded, want source-retire failure")
+	}
+	if !strings.Contains(err.Error(), "retire source session state") {
+		t.Fatalf("adoptFromExternalSessionStore error = %v, want source-retire failure", err)
+	}
+
+	loadedTarget, err := targetStore.Load(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedTarget != nil {
+		t.Fatalf("target state after rollback = %#v, want nil", loadedTarget)
+	}
+}
+
 func TestSessionAdopt_ClearsSourceOwner(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetRepo := setupAdoptRepo(t)

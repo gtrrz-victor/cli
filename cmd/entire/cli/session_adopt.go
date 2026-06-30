@@ -174,6 +174,9 @@ func adoptFromExternalSessionStore(
 		}
 		retired := retireAdoptedSourceSession(sourceState, next)
 		if err := sourceStore.Save(ctx, &retired); err != nil {
+			if rollbackErr := rollbackExternalAdoptTarget(ctx, targetStore, next.SessionID, existing); rollbackErr != nil {
+				return fmt.Errorf("retire source session state: %w; rollback adopted target session state: %w", err, rollbackErr)
+			}
 			return fmt.Errorf("retire source session state: %w", err)
 		}
 		adopted = next
@@ -184,6 +187,19 @@ func adoptFromExternalSessionStore(
 		return nil, nil, fmt.Errorf("adopt external session state: %w", err)
 	}
 	return adopted, filesTouched, nil
+}
+
+func rollbackExternalAdoptTarget(ctx context.Context, targetStore *session.StateStore, sessionID string, previous *session.State) error {
+	if previous == nil {
+		if err := targetStore.Clear(ctx, sessionID); err != nil {
+			return fmt.Errorf("clear adopted target session state: %w", err)
+		}
+		return nil
+	}
+	if err := targetStore.Save(ctx, previous); err != nil {
+		return fmt.Errorf("restore previous target session state: %w", err)
+	}
+	return nil
 }
 
 func retireAdoptedSourceSession(source, target *session.State) session.State {
