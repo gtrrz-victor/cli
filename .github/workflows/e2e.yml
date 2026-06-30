@@ -172,10 +172,10 @@ jobs:
           $failed_names
           EOF
 
-          # Normalize to comma-separated lists. paste -d takes a delimiter
-          # *set* used in rotation, so join with a single ',' then space it out.
-          red=$(echo $red | tr ' ' '\n' | sed '/^$/d' | paste -sd, - | sed 's/,/, /g')
-          yellow=$(echo $yellow | tr ' ' '\n' | sed '/^$/d' | paste -sd, - | sed 's/,/, /g')
+          # Each list was built as " a b c" (leading space, space-separated).
+          # Strip the leading space, then join on ", ". Empty stays empty.
+          red="${red# }";       red="${red// /, }"
+          yellow="${yellow# }"; yellow="${yellow// /, }"
 
           if [ -n "$red" ]; then
             color="#d50200"
