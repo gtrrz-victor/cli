@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/codex"
@@ -387,12 +388,34 @@ func normalizeToolUsePaths(files []string, eventCWD, repoRoot string) []string {
 
 // handleLifecycleTurnStart handles turn start: captures pre-prompt state,
 // ensures strategy setup, initializes session.
-// entireTrailContextInjection is the one-time, model-facing documentation Entire
-// injects to teach the agent the `entire trail` command. Kept terse: it costs
-// context-window tokens on the first turn of every session, and states no
-// transient fact (whether a trail exists can change at any time).
-func entireTrailContextInjection() string {
-	return "A trail ties together the context for a branch. Use `entire trail` to view, create, update, or watch it."
+// entireTrailContextInjection is the one-time, model-facing pointer Entire
+// injects on the first turn of a session. It deliberately enumerates NO flags or
+// subcommands — that surface is fetched on demand via `entire agent-help`, which
+// always matches the installed CLI — so the injection never goes stale when the
+// command surface grows. It names the auto-detected repo (from the already-loaded
+// session scope, no IO) and carries the standing rule that the agent is inside
+// the repo and must never ask the user for the repo name. Kept terse: it costs
+// context-window tokens on the first turn of every session.
+func entireTrailContextInjection(scope trailEnablementScope) string {
+	repo := ""
+	if scope.Forge != "" && scope.Owner != "" && scope.Repo != "" {
+		repo = trailEnablementRepoKey(scope.Forge, scope.Owner, scope.Repo)
+	}
+	var b strings.Builder
+	b.WriteString("Entire is enabled for this repo. Run `entire agent-help` to see what entire does and which subcommand to use, then `entire agent-help <command>` for that command's exact, current flags. ")
+	// Mirror agentHelpRepoBlock's defense-in-depth: this string is injected raw
+	// into the agent's model context (no escaping), so a repo key carrying control
+	// characters (e.g. an <sessionID>.trail-scope.json cache written by a pre-fix
+	// binary, or tampered) degrades to the generic message rather than reaching
+	// that sink.
+	if repo != "" && strings.IndexFunc(repo, unicode.IsControl) < 0 {
+		b.WriteString("This repo is auto-detected from the git origin remote as ")
+		b.WriteString(repo)
+		b.WriteString("; you are already inside it, so never ask the user for the repo name.")
+	} else {
+		b.WriteString("Entire auto-detects the repo from the git origin remote, so never ask the user for the repo name.")
+	}
+	return b.String()
 }
 
 // emitContextInjection writes ag's native context-injection payload to stdout
@@ -449,7 +472,7 @@ func emitContextInjection(ctx context.Context, ag agent.Agent, event *agent.Even
 		return
 	}
 
-	payload, err := injector.RenderContextInjection(agent.ContextInjection{Text: entireTrailContextInjection()})
+	payload, err := injector.RenderContextInjection(agent.ContextInjection{Text: entireTrailContextInjection(scope)})
 	if err != nil {
 		logging.Warn(logCtx, "failed to render context injection",
 			slog.String("error", err.Error()))
