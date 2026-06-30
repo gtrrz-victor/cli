@@ -79,7 +79,7 @@ func runAdopt(ctx context.Context, w io.Writer, sessionID string, opts adoptOpti
 	if err != nil {
 		return fmt.Errorf("open current session store: %w", err)
 	}
-	sameSessionStore := sourceCommonDir == targetCommonDir
+	sameSessionStore := sameAdoptStore(sourceCommonDir, targetCommonDir)
 	if sameSessionStore && sameAdoptPath(sourceWorktree, targetWorktree) {
 		return errors.New("source and target are the same worktree; no session adoption is needed")
 	}
@@ -545,6 +545,10 @@ func clonePromptAttribution(attr session.PromptAttribution) session.PromptAttrib
 }
 
 func sameAdoptPath(a, b string) bool {
+	return canonicalAdoptPath(a) == canonicalAdoptPath(b)
+}
+
+func sameAdoptStore(a, b string) bool {
 	return canonicalAdoptPath(a) == canonicalAdoptPath(b)
 }
 

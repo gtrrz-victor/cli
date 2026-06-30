@@ -1270,6 +1270,25 @@ printf '%s\n%s\n' "$FAKE_WORKTREE_ROOT" "$FAKE_GIT_COMMON_DIR"
 	}
 }
 
+func TestSameAdoptStoreCanonicalizesGitCommonDirSymlinks(t *testing.T) {
+	if runtime.GOOS == windowsGOOS {
+		t.Skip("symlink path canonicalization is POSIX-only in this test")
+	}
+
+	realCommonDir := filepath.Join(t.TempDir(), "real-common.git")
+	if err := os.MkdirAll(realCommonDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	commonDirLink := filepath.Join(t.TempDir(), "common-link.git")
+	if err := os.Symlink(realCommonDir, commonDirLink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if !sameAdoptStore(commonDirLink, realCommonDir) {
+		t.Fatalf("sameAdoptStore(%q, %q) = false, want true", commonDirLink, realCommonDir)
+	}
+}
+
 func TestSessionAdopt_SameStoreReloadsSourceStateUnderLock(t *testing.T) {
 	sourceRepo := setupAdoptRepo(t)
 	targetWorktree := filepath.Join(t.TempDir(), "target-worktree")
