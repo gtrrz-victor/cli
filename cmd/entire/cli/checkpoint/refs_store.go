@@ -74,7 +74,11 @@ func (s *gitRefsStore) Write(ctx context.Context, req WriteRequest) error {
 // next write) and subtree object (the checkpoint's current contents). A missing
 // ref yields (ZeroHash, nil) so the next write becomes an orphan commit.
 func (s *gitRefsStore) refBase(cid id.CheckpointID) (plumbing.Hash, *object.Tree, error) {
-	ref, err := s.repo.Reference(RefName(cid), true)
+	refName, err := RefName(cid)
+	if err != nil {
+		return plumbing.ZeroHash, nil, err
+	}
+	ref, err := s.repo.Reference(refName, true)
 	if err != nil {
 		return plumbing.ZeroHash, nil, nil //nolint:nilerr // no ref yet → new checkpoint
 	}
@@ -94,7 +98,10 @@ func (s *gitRefsStore) refBase(cid id.CheckpointID) (plumbing.Hash, *object.Tree
 // not fail condensation. The ref is still local; only its remote sync is missed
 // until a later write to the same checkpoint re-enqueues it.
 func (s *gitRefsStore) setRef(ctx context.Context, cid id.CheckpointID, hash plumbing.Hash) error {
-	refName := RefName(cid)
+	refName, err := RefName(cid)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.Storer.SetReference(plumbing.NewHashReference(refName, hash)); err != nil {
 		return fmt.Errorf("set checkpoint ref %s to %s: %w", refName, hash, err)
 	}
@@ -251,7 +258,10 @@ func (s *gitRefsStore) checkpointTree(ctx context.Context, cid id.CheckpointID) 
 // checkpoint may have been written on another machine). A failed fetch returns
 // the original not-found error so the read resolves to ErrCheckpointNotFound.
 func (s *gitRefsStore) resolveRefMaybeFetch(ctx context.Context, cid id.CheckpointID) (*plumbing.Reference, error) {
-	refName := RefName(cid)
+	refName, err := RefName(cid)
+	if err != nil {
+		return nil, err
+	}
 	ref, err := s.repo.Reference(refName, true)
 	if err == nil {
 		return ref, nil
@@ -369,7 +379,11 @@ func (s *gitRefsStore) GetCheckpointAuthor(ctx context.Context, checkpointID id.
 	if err := ctx.Err(); err != nil {
 		return Author{}, err //nolint:wrapcheck // Propagating context cancellation
 	}
-	ref, err := s.repo.Reference(RefName(checkpointID), true)
+	refName, err := RefName(checkpointID)
+	if err != nil {
+		return Author{}, nil //nolint:nilerr // invalid ID → unknown author
+	}
+	ref, err := s.repo.Reference(refName, true)
 	if err != nil {
 		return Author{}, nil //nolint:nilerr // no ref → unknown author
 	}

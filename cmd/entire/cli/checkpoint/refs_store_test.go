@@ -51,7 +51,7 @@ func TestGitRefsStore_WriteEnqueuesForPush(t *testing.T) {
 	require.NoError(t, err)
 	refs, err := q.Drain()
 	require.NoError(t, err)
-	assert.Contains(t, refs, RefName(cid), "a session write should enqueue its checkpoint ref for push")
+	assert.Contains(t, refs, mustRefName(t, cid), "a session write should enqueue its checkpoint ref for push")
 }
 
 func TestGitRefsStore_OnDemandRefFetch(t *testing.T) {
@@ -61,13 +61,13 @@ func TestGitRefsStore_OnDemandRefFetch(t *testing.T) {
 	cid := id.MustCheckpointID("a1b2c3d4e5f6")
 
 	refsWrite(t, store, cid, "sess-1", "transcript")
-	ref, err := store.repo.Reference(RefName(cid), true)
+	ref, err := store.repo.Reference(mustRefName(t, cid), true)
 	require.NoError(t, err)
 	commitHash := ref.Hash()
 
 	// Simulate "not present locally" by dropping the ref (the commit object
 	// survives, so a fetch can restore the ref).
-	require.NoError(t, store.repo.Storer.RemoveReference(RefName(cid)))
+	require.NoError(t, store.repo.Storer.RemoveReference(mustRefName(t, cid)))
 
 	// No fetcher configured: read resolves to not-found (nil summary).
 	summary, err := store.Read(ctx, cid)
@@ -120,7 +120,7 @@ func TestGitRefsStore_WriteAllVariantsAndRead(t *testing.T) {
 	}))
 
 	// The per-checkpoint ref exists at the sharded name.
-	_, err := store.repo.Reference(RefName(cid), true)
+	_, err := store.repo.Reference(mustRefName(t, cid), true)
 	require.NoError(t, err, "checkpoint ref should exist")
 
 	summary, err := store.Read(ctx, cid)
@@ -161,7 +161,7 @@ func TestGitRefsStore_RefSharding(t *testing.T) {
 	// id.CheckpointID JSON (un)marshaling to accept ULIDs, which lands with the
 	// deferred ULID-generation switch.
 	ulid := id.CheckpointID("01KVBJCWYA4YW6J5M9GP655HZN")
-	assert.Equal(t, "refs/entire/checkpoints/ZN/01KVBJCWYA4YW6J5M9GP655HZN", RefName(ulid).String())
+	assert.Equal(t, "refs/entire/checkpoints/ZN/01KVBJCWYA4YW6J5M9GP655HZN", mustRefName(t, ulid).String())
 }
 
 func TestGitRefsStore_MultipleSessions(t *testing.T) {
@@ -212,7 +212,7 @@ func TestGitRefsStore_PerCheckpointHistory(t *testing.T) {
 	refsWrite(t, store, cid, "sess-1", "t")
 
 	// First write is an orphan (no parent).
-	ref, err := store.repo.Reference(RefName(cid), true)
+	ref, err := store.repo.Reference(mustRefName(t, cid), true)
 	require.NoError(t, err)
 	first, err := store.repo.CommitObject(ref.Hash())
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestGitRefsStore_PerCheckpointHistory(t *testing.T) {
 	require.NoError(t, store.Write(ctx, SessionSummary{
 		CheckpointID: cid, Summary: &Summary{Intent: "later"},
 	}))
-	ref, err = store.repo.Reference(RefName(cid), true)
+	ref, err = store.repo.Reference(mustRefName(t, cid), true)
 	require.NoError(t, err)
 	second, err := store.repo.CommitObject(ref.Hash())
 	require.NoError(t, err)

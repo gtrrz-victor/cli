@@ -206,8 +206,12 @@ func matchCheckpointPrefixWithRemoteFallback(ctx context.Context, errW io.Writer
 	// then re-list. Falls through to the v1-branch fetch below otherwise.
 	if cpCfg, _ := settings.LoadCheckpointsConfig(ctx); checkpoint.PrimaryIsRefs(cpCfg) { //nolint:errcheck // fail-soft: bad config surfaces via Open elsewhere
 		if cid, err := id.NewCheckpointID(prefix); err == nil {
+			refName, refErr := checkpoint.RefName(cid)
+			if refErr != nil {
+				return nil, lookup
+			}
 			stop := startSpinner(errW, "Fetching checkpoint from remote")
-			fetchErr := FetchCheckpointRef(ctx, checkpoint.RefName(cid))
+			fetchErr := FetchCheckpointRef(ctx, refName)
 			stop(false)
 			if fetchErr == nil {
 				if fresh, freshErr := newExplainCheckpointLookup(ctx); freshErr == nil {

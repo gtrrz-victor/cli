@@ -14,8 +14,8 @@ func TestPushQueue_EnqueueDrainRemove(t *testing.T) {
 	t.Parallel()
 	q := NewPushQueue(t.TempDir())
 
-	a := RefName("a1b2c3d4e5f6")
-	b := RefName("b2c3d4e5f6a1")
+	a := mustRefName(t, "a1b2c3d4e5f6")
+	b := mustRefName(t, "b2c3d4e5f6a1")
 
 	// Empty queue drains to nothing.
 	refs, err := q.Drain()
@@ -51,7 +51,7 @@ func TestPushQueue_EnqueueDrainRemove(t *testing.T) {
 func TestPushQueue_DrainDedupes(t *testing.T) {
 	t.Parallel()
 	q := NewPushQueue(t.TempDir())
-	a := RefName("a1b2c3d4e5f6")
+	a := mustRefName(t, "a1b2c3d4e5f6")
 
 	require.NoError(t, q.Enqueue(a))
 	require.NoError(t, q.Enqueue(a))
@@ -65,8 +65,8 @@ func TestPushQueue_DrainDedupes(t *testing.T) {
 func TestPushQueue_RemovePreservesLaterEntries(t *testing.T) {
 	t.Parallel()
 	q := NewPushQueue(t.TempDir())
-	a := RefName("a1b2c3d4e5f6")
-	b := RefName("b2c3d4e5f6a1")
+	a := mustRefName(t, "a1b2c3d4e5f6")
+	b := mustRefName(t, "b2c3d4e5f6a1")
 
 	// Simulate: drain sees [a], then b is enqueued during the push, then we
 	// Remove(a). b must survive for the next pre-push.
@@ -87,7 +87,7 @@ func TestPushQueue_SkipsMalformedLines(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	q := NewPushQueue(dir)
-	a := RefName("a1b2c3d4e5f6")
+	a := mustRefName(t, "a1b2c3d4e5f6")
 	require.NoError(t, q.Enqueue(a))
 
 	// Append a garbage line + a blank line directly.

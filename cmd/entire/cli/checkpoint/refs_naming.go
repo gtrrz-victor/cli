@@ -1,6 +1,7 @@
 package checkpoint
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/go-git/go-git/v6/plumbing"
@@ -18,8 +19,16 @@ const CheckpointRefPrefix = "refs/entire/checkpoints/"
 // refs/entire/checkpoints/<shard>/<id>, where <shard> is id.ShardFor() (the
 // first two chars for legacy hex IDs, the last two for ULIDs). The full ID is
 // always the leaf, so the ref round-trips through ParseRef.
-func RefName(cid id.CheckpointID) plumbing.ReferenceName {
-	return plumbing.ReferenceName(CheckpointRefPrefix + cid.ShardFor() + "/" + cid.String())
+//
+// It errors on an empty or unrecognized checkpoint ID rather than returning a
+// malformed ref (e.g. "refs/entire/checkpoints//"), so callers at trust
+// boundaries — and future ones — can't silently push, fetch, or look up a bad
+// ref.
+func RefName(cid id.CheckpointID) (plumbing.ReferenceName, error) {
+	if cid.Kind() == id.KindUnknown {
+		return "", fmt.Errorf("cannot build checkpoint ref: invalid checkpoint ID %q", cid)
+	}
+	return plumbing.ReferenceName(CheckpointRefPrefix + cid.ShardFor() + "/" + cid.String()), nil
 }
 
 // ParseRef extracts the checkpoint ID from a per-checkpoint ref name,

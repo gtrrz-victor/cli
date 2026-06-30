@@ -16,6 +16,14 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 )
 
+// mustRefName builds a checkpoint ref for a known-valid ID in tests.
+func mustRefName(t *testing.T, cid id.CheckpointID) plumbing.ReferenceName {
+	t.Helper()
+	ref, err := checkpoint.RefName(cid)
+	require.NoError(t, err)
+	return ref
+}
+
 // setupRepoWithCheckpointRefs creates a work repo with two per-checkpoint refs
 // pointing at HEAD, plus a fresh bare remote. Returns (workDir, bareDir, refs).
 func setupRepoWithCheckpointRefs(t *testing.T) (string, string, []plumbing.ReferenceName) {
@@ -34,8 +42,8 @@ func setupRepoWithCheckpointRefs(t *testing.T) (string, string, []plumbing.Refer
 	require.NoError(t, err)
 
 	refs := []plumbing.ReferenceName{
-		checkpoint.RefName(id.MustCheckpointID("a1b2c3d4e5f6")),
-		checkpoint.RefName(id.MustCheckpointID("b2c3d4e5f6a1")),
+		mustRefName(t, id.MustCheckpointID("a1b2c3d4e5f6")),
+		mustRefName(t, id.MustCheckpointID("b2c3d4e5f6a1")),
 	}
 	for _, ref := range refs {
 		require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(ref, head.Hash())))
@@ -57,7 +65,7 @@ func TestPartitionLocalRefs(t *testing.T) {
 	repo, err := git.PlainOpen(workDir)
 	require.NoError(t, err)
 
-	stale := checkpoint.RefName(id.MustCheckpointID("ffffffffffff"))
+	stale := mustRefName(t, id.MustCheckpointID("ffffffffffff"))
 	existing, missing := partitionLocalRefs(repo, append([]plumbing.ReferenceName{stale}, refs...))
 
 	assert.ElementsMatch(t, refs, existing, "local refs are pushable")

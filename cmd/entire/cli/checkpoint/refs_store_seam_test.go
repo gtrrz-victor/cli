@@ -65,7 +65,7 @@ func TestSeam_GitRefsPrimaryWithGitBranchMirror(t *testing.T) {
 	t.Run("git-refs primary", func(t *testing.T) {
 		assertSeamVariants(t, stores.Persistent, cid, CheckpointVersionRefsV1)
 		// The primary is the per-checkpoint-ref store, not a fan-out of nothing.
-		_, err := repo.Reference(RefName(cid), true)
+		_, err := repo.Reference(mustRefName(t, cid), true)
 		assert.NoError(t, err, "primary should have written the per-checkpoint ref")
 	})
 

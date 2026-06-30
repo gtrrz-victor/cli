@@ -5,9 +5,18 @@ import (
 
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 )
+
+// mustRefName is a test helper for the common case of a known-valid checkpoint ID.
+func mustRefName(t *testing.T, cid id.CheckpointID) plumbing.ReferenceName {
+	t.Helper()
+	ref, err := RefName(cid)
+	require.NoError(t, err)
+	return ref
+}
 
 func TestRefName(t *testing.T) {
 	t.Parallel()
@@ -32,8 +41,18 @@ func TestRefName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, RefName(tt.cid))
+			got, err := RefName(tt.cid)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestRefName_RejectsInvalidID(t *testing.T) {
+	t.Parallel()
+	for _, cid := range []id.CheckpointID{"", "not-an-id", "A1B2C3D4E5F6"} {
+		_, err := RefName(cid)
+		assert.Error(t, err, "RefName(%q) should error rather than build a malformed ref", cid)
 	}
 }
 
@@ -98,7 +117,7 @@ func TestParseRef(t *testing.T) {
 			if tt.wantOK {
 				assert.Equal(t, tt.wantID, gotID)
 				// Round-trip: building the ref from the parsed ID reproduces it.
-				assert.Equal(t, tt.ref, RefName(gotID))
+				assert.Equal(t, tt.ref, mustRefName(t, gotID))
 			} else {
 				assert.Equal(t, id.EmptyCheckpointID, gotID)
 			}
