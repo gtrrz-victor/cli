@@ -14,6 +14,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
+	"github.com/entireio/cli/cmd/entire/cli/telemetry"
 	"github.com/entireio/cli/cmd/entire/cli/versioncheck"
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 	"github.com/entireio/cli/perf"
@@ -75,6 +76,12 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 		if interactive.CanPromptInteractively() {
 			fmt.Fprintf(os.Stderr, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
 		}
+		emitCheckpointPolicyBlocked(g.ctx, telemetry.CheckpointPolicyBlockedEvent{
+			Hook:     g.hookName,
+			HookType: telemetry.PolicyBlockedHookTypeGit,
+			Reason:   telemetry.PolicyBlockedReasonUnreadable,
+			Outcome:  telemetry.PolicyBlockedOutcomeSkipped,
+		})
 		return true
 	}
 	defer repo.Close()
@@ -86,6 +93,12 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 		if interactive.CanPromptInteractively() {
 			fmt.Fprintf(os.Stderr, "[entire] Could not read checkpoint policy; skipping Entire checkpoint work: %v\n", err)
 		}
+		emitCheckpointPolicyBlocked(g.ctx, telemetry.CheckpointPolicyBlockedEvent{
+			Hook:     g.hookName,
+			HookType: telemetry.PolicyBlockedHookTypeGit,
+			Reason:   telemetry.PolicyBlockedReasonUnreadable,
+			Outcome:  telemetry.PolicyBlockedOutcomeSkipped,
+		})
 		return true
 	}
 
@@ -103,6 +116,14 @@ func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
 			versioncheck.UpdateCommandForCurrentBinary(versioninfo.Version),
 		))
 	}
+	emitCheckpointPolicyBlocked(g.ctx, telemetry.CheckpointPolicyBlockedEvent{
+		Hook:                 g.hookName,
+		HookType:             telemetry.PolicyBlockedHookTypeGit,
+		Reason:               telemetry.PolicyBlockedReasonUnsupported,
+		Outcome:              telemetry.PolicyBlockedOutcomeSkipped,
+		CheckpointVersion:    policy.CheckpointVersion,
+		CheckpointMinVersion: policy.CheckpointMinVersion,
+	})
 	return true
 }
 
