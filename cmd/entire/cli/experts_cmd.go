@@ -405,7 +405,7 @@ func renderExperts(w io.Writer, resp expertsResponse) {
 		scopeLabel = resp.RepoFullName
 	}
 	if len(resp.Profiles) == 0 {
-		fmt.Fprintf(w, "No expert evidence found for %s.\n", scopeLabel)
+		fmt.Fprintf(w, "No agent provenance found for %s.\n", scopeLabel)
 		return
 	}
 
@@ -435,7 +435,7 @@ func renderExperts(w io.Writer, resp expertsResponse) {
 		for _, session := range profile.Sessions {
 			fmt.Fprintf(w, "  - %s", session.DisplayName)
 			if session.CheckpointCount > 0 || session.StepCount > 0 {
-				fmt.Fprintf(w, " — %d checkpoints, %d steps", session.CheckpointCount, session.StepCount)
+				fmt.Fprintf(w, " - %d checkpoints, %d steps", session.CheckpointCount, session.StepCount)
 			}
 			fmt.Fprintln(w)
 		}
