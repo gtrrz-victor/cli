@@ -29,12 +29,15 @@ pointing at the canonical group form. Newer experimental command families are
 discoverable through `entire labs` and may remain hidden from root help while
 their canonical paths are still runnable.
 
-- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `resume`, `current`.
+- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `adopt`, `resume`, `current`.
   `resume` with a branch arg switches to it and resumes its session; with no arg
   it opens an interactive picker of stopped sessions (across all worktrees),
   resolving each to its branch and pointing at the owning worktree when the
   branch is checked out elsewhere. Resume keeps an existing local session log
   as-is by default (`--force` overwrites it from the checkpoint).
+  `adopt` moves an active session from another repo or worktree into the current
+  worktree and resets target-local checkpoint bookkeeping so future commits link
+  to the adopted session from the new location.
 - `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `tokens`, `search`, plus
   the deprecated `rewind` (functional, prints a cobra deprecation message, will
   be removed in a future release)
@@ -55,7 +58,16 @@ Experimental command families advertised through `entire labs`:
 
 Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
 `login`, `logout`, `clean`, `version`, `dispatch`, `activity`, `help`,
-`configure`.
+`configure`, `agent-help`.
+
+`agent-help` renders machine-readable, agent-facing usage live from the Cobra
+command tree (so it always matches the installed binary): bare prints a
+"when to use entire / which subcommand" map; `agent-help <command>` drills into
+one command's current flags; `--json` emits structured output. It is the single
+source of truth the first-turn context injection and the `--agent-help-skill`
+skill point agents at, instead of enumerating a surface that goes stale.
+Hidden commands opt into being advertised here by setting
+`Annotations[agentHelpAnnotation] = "true"` (e.g. `trail`).
 
 Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
 `resume` → `session resume`, `attach` → `session attach`, `explain` →
