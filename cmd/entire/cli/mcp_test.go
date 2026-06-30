@@ -287,6 +287,21 @@ func TestMCPServer_UnknownMethodReturnsError(t *testing.T) {
 	}
 }
 
+// A parseable-but-invalid request (missing method or wrong jsonrpc version) is
+// rejected with -32600 before dispatch, not treated as method-not-found.
+func TestMCPServer_InvalidRequest(t *testing.T) {
+	t.Parallel()
+	for _, req := range []string{
+		`{"jsonrpc":"2.0","id":1}`,                 // missing method
+		`{"jsonrpc":"1.0","id":2,"method":"ping"}`, // wrong jsonrpc version
+	} {
+		resps := driveMCP(t, req)
+		if len(resps) != 1 || resps[0].Error == nil || resps[0].Error.Code != -32600 {
+			t.Errorf("request %s should be rejected with -32600 (invalid request), got %+v", req, resps)
+		}
+	}
+}
+
 // A single line larger than maxMCPMessageBytes is rejected without consuming
 // unbounded memory, and the server stops cleanly.
 func TestMCPServer_OversizedMessageRejected(t *testing.T) {

@@ -95,6 +95,20 @@ func runMCPServer(ctx context.Context, rootCmd *cobra.Command, in io.Reader, out
 			continue
 		}
 
+		// Reject a parseable-but-invalid request (missing/incorrect jsonrpc version
+		// or empty method) with -32600 before dispatch, per JSON-RPC, rather than
+		// treating it as method-not-found.
+		if req.JSONRPC != "2.0" || req.Method == "" {
+			id := req.ID
+			if len(id) == 0 {
+				id = json.RawMessage("null")
+			}
+			if encErr := enc.Encode(mcpResponse{JSONRPC: "2.0", ID: id, Error: &mcpError{Code: -32600, Message: "invalid request"}}); encErr != nil {
+				return fmt.Errorf("write mcp invalid-request response: %w", encErr)
+			}
+			continue
+		}
+
 		result, rpcErr := dispatchMCP(ctx, rootCmd, req.Method, req.Params)
 
 		// A request without an id is a notification: never responded to.
