@@ -135,7 +135,7 @@ Flags:
   --profile NAME select a profile (also accepted as positional arg)
   --prompt TEXT  add one-off per-run instructions for this invocation
   --timeout DUR  max time each reviewer may run before it's cancelled and
-                 marked failed (default 10m; 0 disables). Siblings and the
+                 marked failed (default 20m; 0 disables). Siblings and the
                  judge proceed.
   --base REF     scope against REF instead of mainline. Useful for stacked
                  PRs where the base is the parent feature branch, not main.
