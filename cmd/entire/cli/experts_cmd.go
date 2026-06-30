@@ -16,6 +16,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/entireio/cli/cmd/entire/cli/api"
 	"github.com/entireio/cli/cmd/entire/cli/gitremote"
+	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +45,7 @@ type expertsFlags struct {
 	limit        int
 	json         bool
 	staged       bool
+	tui          bool
 	insecureHTTP bool
 }
 
@@ -121,7 +123,10 @@ type expertsStyles struct {
 }
 
 func newExpertsStyles(w io.Writer) expertsStyles {
-	useColor := shouldUseColor(w)
+	return expertsStylesForColor(shouldUseColor(w))
+}
+
+func expertsStylesForColor(useColor bool) expertsStyles {
 	styles := expertsStyles{colorEnabled: useColor}
 	if !useColor {
 		return styles
@@ -144,6 +149,17 @@ func (s expertsStyles) render(style lipgloss.Style, text string) string {
 	return style.Render(text)
 }
 
+// link renders text in the given style with an OSC 8 terminal hyperlink to url
+// attached. Links are only emitted when styling is enabled (a capable, non-piped
+// terminal); otherwise it falls back to plain styled text so scripts and dumb
+// terminals are unaffected.
+func (s expertsStyles) link(style lipgloss.Style, url, text string) string {
+	if !s.colorEnabled || strings.TrimSpace(url) == "" {
+		return s.render(style, text)
+	}
+	return style.Hyperlink(url).Render(text)
+}
+
 func newExpertsCmd() *cobra.Command {
 	f := &expertsFlags{limit: 8}
 	cmd := &cobra.Command{
@@ -160,6 +176,7 @@ func newExpertsCmd() *cobra.Command {
 	cmd.Flags().IntVar(&f.limit, "limit", 8, "Maximum profiles to return")
 	cmd.Flags().BoolVar(&f.json, "json", false, "Print JSON")
 	cmd.Flags().BoolVar(&f.staged, "staged", false, "Use staged file paths as scopes")
+	cmd.Flags().BoolVar(&f.tui, "tui", false, "Browse provenance in an interactive viewer (TTY only)")
 	cmd.Flags().BoolVar(&f.insecureHTTP, "insecure-http-auth", false, "Allow plain-HTTP auth (local dev only)")
 	if err := cmd.Flags().MarkHidden("insecure-http-auth"); err != nil {
 		panic(fmt.Sprintf("hide experts insecure auth flag: %v", err))
@@ -258,6 +275,14 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		return nil
 	}
 
+	// The interactive viewer is opt-in and only runs on a real terminal with
+	// results to show. Piped/accessible output and empty results always fall
+	// through to the deterministic plain renderer so agents and scripts get
+	// stable output.
+	if f.tui && len(decoded.Profiles) > 0 && interactive.IsTerminalWriter(out) && !IsAccessibleMode() {
+		return runExpertsTUI(decoded, shouldUseColor(out))
+	}
+
 	renderExperts(out, decoded)
 	return nil
 }
@@ -291,6 +316,48 @@ func parseExpertsRepo(value string) (string, error) {
 func expertsAPIPath(repoFullName string) string {
 	owner, repo, _ := strings.Cut(repoFullName, "/")
 	return "/api/v1/cache/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/experts"
+}
+
+// expertsWebBaseURL is the origin used to build user-facing session links.
+//
+// Session links must point at the real Entire web app, not at whatever data API
+// the CLI happens to be talking to. So:
+//   - ENTIRE_WEB_BASE_URL wins when set (e.g. http://localhost:5173 for a local
+//     frontend during dev).
+//   - otherwise, if the API base is itself an entire.io host (prod/staging), use
+//     it (frontend and API share that origin).
+//   - otherwise (local dev API like 127.0.0.1) fall back to the canonical
+//     https://entire.io so links still resolve to the proper site.
+func expertsWebBaseURL() string {
+	if raw := strings.TrimSpace(os.Getenv("ENTIRE_WEB_BASE_URL")); raw != "" {
+		return strings.TrimRight(raw, "/")
+	}
+	if base := strings.TrimRight(api.BaseURL(), "/"); isEntireWebHost(base) {
+		return base
+	}
+	return strings.TrimRight(api.DefaultBaseURL, "/")
+}
+
+func isEntireWebHost(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "entire.io" || strings.HasSuffix(host, ".entire.io")
+}
+
+// expertsSessionURL builds the entire.io web URL for a session, matching the
+// frontend route /gh/:org/:repo/session/:sessionId. Returns "" when the inputs
+// can't form a valid link.
+func expertsSessionURL(repoFullName, sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	owner, repo, ok := strings.Cut(repoFullName, "/")
+	if !ok || owner == "" || repo == "" || sessionID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/gh/%s/%s/session/%s",
+		expertsWebBaseURL(), url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(sessionID))
 }
 
 func localExpertScope(ctx context.Context, input string) (string, bool, bool, error) {
@@ -419,7 +486,9 @@ func stagedExpertScopes(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read staged files: %w", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	trimmed := strings.TrimSpace(string(output))
+	trimmed = strings.ReplaceAll(trimmed, "\r\n", "\n")
+	lines := strings.Split(trimmed, "\n")
 	scopes := make([]string, 0, len(lines))
 	seen := make(map[string]bool, len(lines))
 	for _, line := range lines {
@@ -474,17 +543,14 @@ func renderExpertsWithStyles(w io.Writer, resp expertsResponse, styles expertsSt
 			fmt.Fprintf(w, "  %s: %s\n", styles.render(styles.label, "files"), strings.Join(renderExpertFiles(profile.MatchedFiles, styles), ", "))
 		}
 		for _, session := range profile.Sessions {
-			fmt.Fprintf(w, "  %s %s", styles.render(styles.bullet, "-"), styles.render(styles.facet, session.DisplayName))
+			sessionURL := expertsSessionURL(resp.RepoFullName, session.SessionID)
+			fmt.Fprintf(w, "  %s %s", styles.render(styles.bullet, "-"), styles.link(styles.facet, sessionURL, session.DisplayName))
 			if session.CheckpointCount > 0 || session.StepCount > 0 {
 				fmt.Fprintf(w, " %s %s", styles.render(styles.muted, "-"), styles.render(styles.muted, fmt.Sprintf("%d checkpoints, %d steps", session.CheckpointCount, session.StepCount)))
 			}
 			fmt.Fprintln(w)
 		}
 	}
-}
-
-func writeFacetLine(w io.Writer, label string, facets []expertsFacetCount) {
-	writeFacetLineWithStyles(w, label, facets, expertsStyles{})
 }
 
 func writeFacetLineWithStyles(w io.Writer, label string, facets []expertsFacetCount, styles expertsStyles) {
