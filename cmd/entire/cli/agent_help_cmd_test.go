@@ -30,12 +30,13 @@ func contains(names []string, want string) bool {
 
 // agent-help advertises visible commands plus hidden commands that explicitly
 // opt in via the agentHelpAnnotation (e.g. trail), but never plain-hidden
-// commands or the help command itself.
+// commands, the help command, or agent-help itself (avoid a meta-loop).
 func TestAgentHelpCommands_IncludesAnnotatedHiddenOnly(t *testing.T) {
 	t.Parallel()
 
 	root := &cobra.Command{Use: "entire"}
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Show status"})
+	root.AddCommand(&cobra.Command{Use: "agent-help", Short: "Agent usage map"})
 	root.AddCommand(&cobra.Command{Use: "secret", Hidden: true})
 	root.AddCommand(&cobra.Command{
 		Use:         "trail",
@@ -59,6 +60,9 @@ func TestAgentHelpCommands_IncludesAnnotatedHiddenOnly(t *testing.T) {
 	if contains(got, "help") {
 		t.Errorf("help command must not be advertised, got %v", got)
 	}
+	if contains(got, "agent-help") {
+		t.Errorf("agent-help must not advertise itself, got %v", got)
+	}
 	if contains(got, "reset") {
 		t.Errorf("deprecated command 'reset' must not be advertised, got %v", got)
 	}
@@ -73,6 +77,9 @@ func TestAgentHelpCommands_GatesTrailOnTrailsEnabled(t *testing.T) {
 	enabled := commandNames(agentHelpCommands(root, true))
 	if !contains(enabled, "trail") {
 		t.Errorf("trail should be advertised when trails are enabled, got %v", enabled)
+	}
+	if contains(enabled, "agent-help") {
+		t.Errorf("agent-help must not list itself, got %v", enabled)
 	}
 
 	disabled := commandNames(agentHelpCommands(root, false))

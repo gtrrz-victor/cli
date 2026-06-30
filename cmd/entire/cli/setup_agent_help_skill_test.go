@@ -204,6 +204,32 @@ func TestManageAgentsNonInteractive_AgentHelpSkillWithoutAgentsShowsGuidance(t *
 	}
 }
 
+func TestManageAgentsNonInteractive_BothSkillFlagsWithoutAgentsShowsBothGuidance(t *testing.T) {
+	setupTestRepo(t)
+	writeSettings(t, testSettingsEnabled)
+
+	var out bytes.Buffer
+	err := runManageAgents(context.Background(), &out, EnableOptions{SearchSkill: true, AgentHelpSkill: true}, nil)
+	if err == nil {
+		t.Fatal("expected error when skill install cannot choose an agent non-interactively")
+	}
+	var silentErr *SilentError
+	if !errors.As(err, &silentErr) {
+		t.Fatalf("error = %T %v, want SilentError", err, err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"search skill",
+		"agent-help skill",
+		"entire enable --agent <name> --search-skill",
+		"entire enable --agent <name> --agent-help-skill",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q, got: %s", want, output)
+		}
+	}
+}
+
 // The multi-agent dispatcher dedups repeated names and reports (without erroring)
 // agents that have no agent-help template.
 func TestSetupOptionalAgentHelpSkillForNames_DedupsAndSkipsUnsupported(t *testing.T) {

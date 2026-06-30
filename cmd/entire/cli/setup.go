@@ -449,7 +449,8 @@ func runManageAgents(ctx context.Context, w io.Writer, opts EnableOptions, selec
 			}
 			if opts.SearchSkill {
 				printSkillNonInteractiveNoAgentsGuidance(w, "search skill", flagSearchSkill)
-			} else {
+			}
+			if opts.AgentHelpSkill {
 				printSkillNonInteractiveNoAgentsGuidance(w, "agent-help skill", flagAgentHelpSkill)
 			}
 			return NewSilentError(errors.New("skill install requires an agent in non-interactive mode"))

@@ -188,7 +188,7 @@ func renderAgentHelpJSON(rootCmd, target *cobra.Command, repoLine string, trails
 // plus hidden commands that opt in via agentHelpAnnotation, minus the help
 // command, deprecated commands, and (when trails are disabled) trail-gated ones.
 func isAgentHelpAdvertised(sub *cobra.Command, trailsEnabled bool) bool {
-	if sub.Name() == "help" || sub.Deprecated != "" {
+	if sub.Name() == "help" || sub.Name() == "agent-help" || sub.Deprecated != "" {
 		return false
 	}
 	if sub.Hidden && sub.Annotations[agentHelpAnnotation] != agentHelpAnnotationEnabled {
