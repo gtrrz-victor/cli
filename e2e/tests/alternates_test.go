@@ -25,7 +25,7 @@ import (
 // checkpoint commits, even though git itself resolves them.
 func TestAlternates_RelativeObjectAlternate_CheckpointSync(t *testing.T) {
 	if testutil.UsingGitRefs() {
-		t.Skip("git-branch-specific: exercises the v1 checkpoint branch's non-fast-forward push/rebase sync over an object alternate; the git-refs store force-pushes independent per-checkpoint refs with no such rebase path")
+		t.Skip("git-branch-specific: exercises the v1 checkpoint branch's non-fast-forward push/rebase sync over an object alternate; the git-refs store writes independent per-checkpoint refs (fast-forward push with fetch+replay recovery) and has no such v1-branch rebase path")
 	}
 	// Siblings under one parent so the relative alternate path is short and
 	// mirrors a real shared-clone layout.
