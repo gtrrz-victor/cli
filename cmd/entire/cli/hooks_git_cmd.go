@@ -66,6 +66,8 @@ func (g *gitHookContext) logCompleted(err error) {
 }
 
 func (g *gitHookContext) skipUnsupportedCheckpointPolicy() bool {
+	// Callers return success when this is true because policy failures should
+	// disable Entire checkpoint work, not make Git reject the user's operation.
 	repo, err := gitrepo.OpenCurrent(g.ctx)
 	if err != nil {
 		logging.Warn(g.ctx, "checkpoint policy read skipped for git hook",

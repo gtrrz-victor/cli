@@ -25,15 +25,7 @@ func readLocalCheckpointPolicy(ctx context.Context, repo *git.Repository) (check
 	return state.Policy, nil
 }
 
-func checkpointPolicyAllowsGitHook(ctx context.Context) bool {
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		logging.Warn(ctx, "checkpoint policy read skipped for git hook",
-			slog.String("error", err.Error()))
-		return true
-	}
-	defer repo.Close()
-
+func checkpointPolicyAllowsGitHook(ctx context.Context, repo *git.Repository) bool {
 	policy, err := readLocalCheckpointPolicy(ctx, repo)
 	if err != nil {
 		warnOrLogCheckpointPolicyReadFailure(ctx, err)
@@ -46,16 +38,7 @@ func checkpointPolicyAllowsGitHook(ctx context.Context) bool {
 	return false
 }
 
-func syncCheckpointPolicyForPrePush(ctx context.Context, ps pushSettings) {
-	repo, err := OpenRepository(ctx)
-	if err != nil {
-		logging.Warn(ctx, "checkpoint policy pre-push: failed to open repository; allowing checkpoint push",
-			slog.String("error", err.Error()),
-		)
-		return
-	}
-	defer repo.Close()
-
+func syncCheckpointPolicyForPrePush(ctx context.Context, repo *git.Repository, ps pushSettings) {
 	dir, err := paths.WorktreeRoot(ctx)
 	if err != nil {
 		logging.Warn(ctx, "checkpoint policy pre-push: failed to resolve worktree root; allowing checkpoint push",

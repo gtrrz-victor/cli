@@ -214,6 +214,8 @@ func shouldSkipAgentHookForPolicy(ctx context.Context, worktreeRoot string, errW
 		logging.Warn(ctx, "checkpoint policy read failed for agent hook",
 			slog.String("error", err.Error()))
 		if eventType == agent.SessionStart {
+			// Let the agent start; the warning explains that checkpoint capture is
+			// disabled until the policy can be read.
 			return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyReadErrorWarning(err))
 		}
 		fmt.Fprint(errW, agentCheckpointCaptureDisabledReadErrorMessage(err))
@@ -223,6 +225,8 @@ func shouldSkipAgentHookForPolicy(ctx context.Context, worktreeRoot string, errW
 		return false, nil
 	}
 	if eventType == agent.SessionStart {
+		// Let the agent start; the warning explains that checkpoint capture is
+		// disabled until the CLI is upgraded.
 		return true, writeUnsupportedPolicySessionStartWarning(errW, ag, sessionStartPolicyWarning(policy))
 	}
 	fmt.Fprint(errW, agentCheckpointCaptureDisabledMessage(policy))

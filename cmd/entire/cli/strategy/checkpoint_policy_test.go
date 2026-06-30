@@ -265,7 +265,7 @@ func TestSyncCheckpointPolicyForPrePushUsesPushTarget(t *testing.T) {
 	t.Chdir(workDir)
 	paths.ClearWorktreeRootCache()
 
-	syncCheckpointPolicyForPrePush(context.Background(), pushSettings{
+	syncCheckpointPolicyForPrePush(context.Background(), repo, pushSettings{
 		remote:        "origin",
 		checkpointURL: pushTargetDir,
 	})
