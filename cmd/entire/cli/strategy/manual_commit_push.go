@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/go-git/go-git/v6/plumbing"
+
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
@@ -172,18 +174,34 @@ func (s *ManualCommitStrategy) prePushCheckpointRefs(ctx context.Context, ps pus
 	}
 
 	pushCtx, pushSpan := perf.Start(ctx, "push_checkpoint_refs")
-	pushErr := batchPushRefs(pushCtx, ps.pushTarget(), existing)
-	pushSpan.End()
-	if pushErr != nil {
-		// Leave the refs queued; the next pre-push retries. Non-fatal so the
-		// user's push proceeds. The push is fast-forward-only, so this can mean a
-		// checkpoint ref diverged on the remote (non-fast-forward) — we leave it
-		// queued rather than force-overwriting it.
-		logging.Warn(ctx, "git-refs pre-push: checkpoint ref push failed (possible non-fast-forward divergence); refs left queued, not overwritten",
-			slog.String("error", pushErr.Error()))
+	defer pushSpan.End()
+
+	// Fast path: push all refs in one round-trip (fast-forward-only). If every
+	// ref was up to date or fast-forwarded, we're done.
+	if err := batchPushRefs(pushCtx, ps.pushTarget(), existing); err == nil {
+		if removeErr := queue.Remove(existing); removeErr != nil {
+			logging.Warn(ctx, "git-refs pre-push: clear pushed refs from queue failed",
+				slog.String("error", removeErr.Error()))
+		}
+		cleanupPushedShadowBranches(ctx)
 		return nil
 	}
-	if err := queue.Remove(existing); err != nil {
+
+	// At least one ref was rejected — typically a non-fast-forward divergence
+	// (the same checkpoint re-written on another machine). Retry per ref with
+	// fetch+replay recovery, and remove from the queue only the refs that land
+	// (a genuine cherry-pick conflict leaves that ref queued for a later push,
+	// never force-overwriting the remote).
+	pushed := make([]plumbing.ReferenceName, 0, len(existing))
+	for _, ref := range existing {
+		if err := pushCheckpointRefWithRecovery(pushCtx, ps.pushTarget(), ref); err != nil {
+			logging.Warn(ctx, "git-refs pre-push: checkpoint ref push/sync failed; left queued, not overwritten",
+				slog.String("ref", ref.String()), slog.String("error", err.Error()))
+			continue
+		}
+		pushed = append(pushed, ref)
+	}
+	if err := queue.Remove(pushed); err != nil {
 		logging.Warn(ctx, "git-refs pre-push: clear pushed refs from queue failed",
 			slog.String("error", err.Error()))
 	}

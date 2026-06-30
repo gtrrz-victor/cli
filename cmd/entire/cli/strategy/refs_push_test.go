@@ -152,6 +152,65 @@ func TestBatchPushRefs_RejectsNonFastForward(t *testing.T) {
 		"remote ref must be unchanged after a rejected non-fast-forward push")
 }
 
+// TestPushCheckpointRefWithRecovery_MergesDivergedRef: when a checkpoint ref has
+// diverged on the remote (the same checkpoint advanced differently elsewhere), the
+// recovery fetches the remote tip and replays the local-only commit on top, so the
+// retry is a fast-forward — preserving the remote's change instead of overwriting
+// it. Non-overlapping changes merge.
+func TestPushCheckpointRefWithRecovery_MergesDivergedRef(t *testing.T) {
+	workDir, bareDir, refs := setupRepoWithCheckpointRefs(t)
+	t.Chdir(workDir)
+	ctx := context.Background()
+	ref := refs[0]
+
+	repo, err := git.PlainOpen(workDir)
+	require.NoError(t, err)
+	head := func() plumbing.Hash {
+		h, e := repo.Head()
+		require.NoError(t, e)
+		return h.Hash()
+	}
+	setRef := func(h plumbing.Hash) {
+		require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(ref, h)))
+	}
+
+	c1 := head()
+	require.NoError(t, batchPushRefs(ctx, bareDir, []plumbing.ReferenceName{ref})) // remote ref = C1
+
+	// Remote advances: C2 (child of C1) adds b.txt; point the ref at it and push.
+	testutil.WriteFile(t, workDir, "b.txt", "b")
+	testutil.GitAdd(t, workDir, "b.txt")
+	testutil.GitCommit(t, workDir, "add b")
+	setRef(head())
+	require.NoError(t, batchPushRefs(ctx, bareDir, []plumbing.ReferenceName{ref})) // remote ref = C2
+
+	// Local diverges: reset to C1 and make C3 (sibling of C2) adding c.txt.
+	testutil.GitReset(t, workDir, c1.String())
+	testutil.WriteFile(t, workDir, "c.txt", "c")
+	testutil.GitAdd(t, workDir, "c.txt")
+	testutil.GitCommit(t, workDir, "add c")
+	setRef(head())
+
+	// C3 is not a descendant of the remote's C2 → the plain push is rejected and
+	// recovery replays C3's delta onto C2.
+	require.NoError(t, pushCheckpointRefWithRecovery(ctx, bareDir, ref),
+		"diverged ref should be recovered by fetch+replay, not rejected")
+
+	files := remoteRefFiles(t, bareDir, ref)
+	assert.Contains(t, files, "b.txt", "remote-only change must be preserved (not overwritten)")
+	assert.Contains(t, files, "c.txt", "local-only change must be replayed on top")
+}
+
+// remoteRefFiles lists the files in the tree a ref points at on the bare remote.
+func remoteRefFiles(t *testing.T, bareDir string, ref plumbing.ReferenceName) string {
+	t.Helper()
+	c := exec.CommandContext(context.Background(), "git", "-C", bareDir, "ls-tree", "-r", "--name-only", ref.String())
+	c.Env = testutil.GitIsolatedEnv()
+	out, err := c.CombinedOutput()
+	require.NoError(t, err, "ls-tree failed: %s", out)
+	return string(out)
+}
+
 // remoteRefHash returns the object hash a ref points at on the bare remote.
 func remoteRefHash(t *testing.T, bareDir string, ref plumbing.ReferenceName) string {
 	t.Helper()

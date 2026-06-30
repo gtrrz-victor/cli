@@ -45,10 +45,9 @@ func partitionLocalRefs(repo *git.Repository, refs []plumbing.ReferenceName) (ex
 // differently on another machine — is REJECTED rather than silently overwriting
 // the remote. We deliberately do not force: there is no server-side ref
 // protection, so a force push would make a buggy or racing client clobber good
-// remote history with no signal. On rejection the whole push errors and the
-// caller leaves the refs queued (not overwritten) for a later pre-push;
-// reconciling a genuinely diverged ref is deferred (a future rewrite path, e.g.
-// OPF, would use --force-with-lease for the cases that must replace a ref).
+// remote history with no signal. On rejection the whole push errors; the caller
+// retries the rejected refs individually with fetch+replay recovery
+// (pushCheckpointRefWithRecovery).
 func batchPushRefs(ctx context.Context, target string, refs []plumbing.ReferenceName) error {
 	if len(refs) == 0 {
 		return nil
@@ -61,6 +60,31 @@ func batchPushRefs(ctx context.Context, target string, refs []plumbing.Reference
 		return fmt.Errorf("push %d checkpoint refs: %w", len(refs), err)
 	}
 	return nil
+}
+
+// pushCheckpointRefWithRecovery pushes a single checkpoint ref fast-forward-only;
+// on rejection — typically the ref diverged on the remote (the same checkpoint
+// re-written elsewhere) — it fetches the remote ref and replays the local-only
+// commits on top via fetchAndRebaseRefCommon, then retries. The retry is still
+// non-force: after the replay the local ref is a fast-forward over the remote, so
+// the remote commit is preserved as an ancestor rather than overwritten. The
+// cherry-pick is delta-based, so non-overlapping changes merge; a genuine overlap
+// (e.g. both sides rewrote the root metadata.json) surfaces as a rebase error and
+// the ref is left for a later pre-push. Returns nil only if the ref reached the
+// remote.
+func pushCheckpointRefWithRecovery(ctx context.Context, target string, ref plumbing.ReferenceName) error {
+	// One shared budget across the initial push, fetch+replay, and retry, matching
+	// doPushRef (fetchAndRebaseRefCommon relies on the caller's deadline).
+	ctx, cancel := context.WithTimeout(ctx, checkpointPushBudget)
+	defer cancel()
+
+	if err := batchPushRefs(ctx, target, []plumbing.ReferenceName{ref}); err == nil {
+		return nil
+	}
+	if err := fetchAndRebaseRefCommon(ctx, target, ref); err != nil {
+		return fmt.Errorf("sync diverged checkpoint ref %s: %w", ref, err)
+	}
+	return batchPushRefs(ctx, target, []plumbing.ReferenceName{ref})
 }
 
 // pushRefIfNeeded pushes a ref to the given target if it has unpushed changes.
