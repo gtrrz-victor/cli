@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -124,6 +125,51 @@ func TestExpertsTUINavigationClampsCursor(t *testing.T) {
 	m = updateExpertsTUI(t, m, tea.KeyPressMsg{Code: 'k', Text: "k"})
 	if m.cursor != 0 {
 		t.Fatalf("up past start cursor = %d, want 0", m.cursor)
+	}
+}
+
+func TestListScrollStartKeepsSelectionVisible(t *testing.T) {
+	const profileLines = 2
+	tests := []struct {
+		name   string
+		cursor int
+		height int
+		total  int
+		want   int
+	}{
+		{name: "fits without scroll", cursor: 0, height: 10, total: 6, want: 0},
+		{name: "first item", cursor: 0, height: 4, total: 10, want: 0},
+		{name: "middle item scrolls down", cursor: 2, height: 4, total: 10, want: 2},
+		{name: "last item scrolls to end", cursor: 4, height: 4, total: 10, want: 6},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := listScrollStart(tc.cursor, profileLines, tc.height, tc.total); got != tc.want {
+				t.Fatalf("listScrollStart(%d, %d, %d) = %d, want %d", tc.cursor, tc.height, tc.total, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExpertsTUIListScrollsSelectedAgentIntoView(t *testing.T) {
+	profiles := make([]expertsProfile, 5)
+	for i := range profiles {
+		profiles[i] = expertsProfile{
+			AgentID:    fmt.Sprintf("agent-%d", i),
+			AgentLabel: fmt.Sprintf("Agent %d", i),
+		}
+	}
+	resp := expertsResponse{RepoFullName: "acme/widget", Branch: "main", Scopes: []string{"cmd/"}, Profiles: profiles}
+	m := newExpertsTUIModel(resp, false)
+	// Short window: body height leaves room for only two agent rows in the list pane.
+	m = updateExpertsTUI(t, m, tea.WindowSizeMsg{Width: 80, Height: 12})
+
+	for i := range profiles {
+		m.cursor = i
+		got := m.renderList(m.listPaneWidth(), m.bodyHeight())
+		if !strings.Contains(got, "▸ Agent "+fmt.Sprint(i)) {
+			t.Fatalf("cursor=%d: selected agent not visible in list pane:\n%s", i, got)
+		}
 	}
 }
 

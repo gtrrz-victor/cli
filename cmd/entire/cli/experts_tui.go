@@ -312,7 +312,8 @@ func (m expertsTUIModel) verticalSep(h int) string {
 }
 
 func (m expertsTUIModel) renderList(width, height int) string {
-	lines := make([]string, 0, height)
+	const profileLines = 2 // label row + summary row per agent
+	lines := make([]string, 0, len(m.resp.Profiles)*profileLines)
 	for i, p := range m.resp.Profiles {
 		caret := "  "
 		labelStyle := m.styles.agent
@@ -326,13 +327,41 @@ func (m expertsTUIModel) renderList(width, height int) string {
 			m.fitLine("  "+m.styles.render(m.styles.muted, summary), width),
 		)
 	}
-	for len(lines) < height {
-		lines = append(lines, strings.Repeat(" ", width))
+	start := listScrollStart(m.cursor, profileLines, height, len(lines))
+	end := start + height
+	if end > len(lines) {
+		end = len(lines)
 	}
-	if len(lines) > height {
-		lines = lines[:height]
+	window := lines[start:end]
+	for len(window) < height {
+		window = append(window, strings.Repeat(" ", width))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(window, "\n")
+}
+
+// listScrollStart picks the first visible line in the left list pane so the
+// selected profile (cursor) stays in view when the full list exceeds height.
+func listScrollStart(cursor, profileLines, height, totalLines int) int {
+	if height <= 0 || totalLines <= height {
+		return 0
+	}
+	selStart := cursor * profileLines
+	selEnd := selStart + profileLines
+	start := 0
+	if selEnd > start+height {
+		start = selEnd - height
+	}
+	if selStart < start {
+		start = selStart
+	}
+	maxStart := totalLines - height
+	if start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		return 0
+	}
+	return start
 }
 
 // renderDetail builds the right-pane content for the selected profile and
