@@ -16,12 +16,34 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
-type fakeExpertsClient struct {
-	status int
-	body   string
+// expertsTestRepoULID is the id the fake resolves "acme/widget" to via the
+// accessible-repo list, so path assertions can reference the retargeted
+// /api/v1/repos/{id}/experts route.
+const expertsTestRepoULID = "0123456789ABCDEFGHJKMNPQRS"
 
-	gotPath string
-	gotBody any
+var defaultExpertsReposBody = `{"repos":[{"id":"` + expertsTestRepoULID + `","full_name":"acme/widget"}],"from_db":true}`
+
+type fakeExpertsClient struct {
+	status    int
+	body      string
+	reposBody string // GET /api/v1/repos body; defaults to acme/widget -> expertsTestRepoULID
+
+	gotPath    string
+	gotBody    any
+	gotGetPath string
+}
+
+// Get serves the accessible-repo discovery list used to resolve owner/repo -> ULID.
+func (f *fakeExpertsClient) Get(_ context.Context, path string) (*http.Response, error) {
+	f.gotGetPath = path
+	body := f.reposBody
+	if body == "" {
+		body = defaultExpertsReposBody
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
 }
 
 func (f *fakeExpertsClient) Post(_ context.Context, path string, body any) (*http.Response, error) {
@@ -117,8 +139,11 @@ func TestExpertsCommandSendsQueryAndPrintsJSON(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute experts: %v", err)
 	}
-	if fake.gotPath != "/api/v1/cache/acme/widget/experts" {
+	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
 		t.Fatalf("path = %q", fake.gotPath)
+	}
+	if fake.gotGetPath != "/api/v1/repos" {
+		t.Fatalf("owner/repo should resolve via GET /api/v1/repos, got %q", fake.gotGetPath)
 	}
 	body, ok := fake.gotBody.(expertsRequest)
 	if !ok {
@@ -515,6 +540,31 @@ func TestParseGitStagedScopeLinesNormalizesCRLF(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("scopes[%d] = %q, want %q (full: %#v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestExpertsCommandAcceptsRepoULIDWithoutResolution(t *testing.T) {
+	fake := &fakeExpertsClient{body: `{"repo_full_name":"acme/widget","scopes":["api/x.go"],"query":null,"branch":"main","source":"db","profiles":[]}`}
+	restore := setExpertsClientFactoryForTest(t, func(context.Context, bool) (expertsAPIClient, error) {
+		return fake, nil
+	})
+	defer restore()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"experts", "api/x.go", "--repo", expertsTestRepoULID, "--json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute experts with ULID repo: %v", err)
+	}
+	// A ULID --repo addresses the data API directly — no accessible-repo lookup.
+	if fake.gotGetPath != "" {
+		t.Fatalf("a ULID --repo should skip resolution, but GET %q was called", fake.gotGetPath)
+	}
+	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
+		t.Fatalf("path = %q, want /api/v1/repos/%s/experts", fake.gotPath, expertsTestRepoULID)
 	}
 }
 

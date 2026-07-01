@@ -22,6 +22,7 @@ import (
 )
 
 type expertsAPIClient interface {
+	Get(ctx context.Context, path string) (*http.Response, error)
 	Post(ctx context.Context, path string, body any) (*http.Response, error)
 }
 
@@ -195,9 +196,19 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		f.limit = 20
 	}
 
-	repoFullName, err := resolveExpertsRepo(ctx, f.repo)
-	if err != nil {
-		return err
+	// The data API (entire-api) is repo-ULID keyed. --repo may be a ULID (used
+	// directly) or an owner/repo, which we resolve to its ULID after the client
+	// exists (via the caller's accessible-repo list). With no --repo we derive
+	// owner/repo from the git origin.
+	repoOverride := strings.TrimSpace(f.repo)
+	repoIsULID := looksLikeULID(repoOverride)
+	var repoFullName string
+	if !repoIsULID {
+		var err error
+		repoFullName, err = resolveExpertsRepo(ctx, f.repo)
+		if err != nil {
+			return err
+		}
 	}
 
 	req := expertsRequest{Limit: f.limit, EvidenceLimit: 3}
@@ -228,7 +239,7 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 				return err
 			}
 			if isLocalScope {
-				if strings.TrimSpace(f.repo) != "" && validateLocalRepo {
+				if !repoIsULID && repoOverride != "" && validateLocalRepo {
 					currentRepo, err := resolveExpertsRepo(ctx, "")
 					if err == nil && currentRepo != repoFullName {
 						return fmt.Errorf("local path belongs to %s, not --repo %s", currentRepo, repoFullName)
@@ -247,7 +258,15 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 		return fmt.Errorf("create experts API client: %w", err)
 	}
 
-	resp, err := client.Post(ctx, expertsAPIPath(repoFullName), req)
+	repoID := repoOverride
+	if !repoIsULID {
+		repoID, err = resolveExpertsRepoID(ctx, client, repoFullName)
+		if err != nil {
+			return err
+		}
+	}
+
+	resp, err := client.Post(ctx, expertsAPIPath(repoID), req)
 	if err != nil {
 		return fmt.Errorf("post experts request: %w", err)
 	}
@@ -317,9 +336,41 @@ func parseExpertsRepo(value string) (string, error) {
 	return parts[0] + "/" + strings.TrimSuffix(parts[1], ".git"), nil
 }
 
-func expertsAPIPath(repoFullName string) string {
-	owner, repo, _ := strings.Cut(repoFullName, "/")
-	return "/api/v1/cache/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/experts"
+func expertsAPIPath(repoID string) string {
+	return "/api/v1/repos/" + url.PathEscape(repoID) + "/experts"
+}
+
+// resolveExpertsRepoID maps an owner/repo to its repo ULID for the entire-api
+// data plane, which is ULID-keyed. It reads the caller's accessible-repo list
+// (GET /api/v1/repos) and matches on full name — an authz-safe resolution (the
+// list only contains repos the caller can read, so it never reveals a repo they
+// can't see). A ULID is passed straight through by the caller, so this is only
+// hit for the owner/repo form.
+func resolveExpertsRepoID(ctx context.Context, client expertsAPIClient, fullName string) (string, error) {
+	resp, err := client.Get(ctx, "/api/v1/repos")
+	if err != nil {
+		return "", fmt.Errorf("list repos: %w", err)
+	}
+	defer resp.Body.Close()
+	if err := api.CheckResponse(resp); err != nil {
+		return "", fmt.Errorf("list repos: %w", err)
+	}
+	var body struct {
+		Repos []struct {
+			ID       string `json:"id"`
+			FullName string `json:"full_name"`
+		} `json:"repos"`
+	}
+	if err := api.DecodeJSON(resp, &body); err != nil {
+		return "", fmt.Errorf("decode repos: %w", err)
+	}
+	want := strings.ToLower(fullName)
+	for _, r := range body.Repos {
+		if r.ID != "" && strings.ToLower(r.FullName) == want {
+			return r.ID, nil
+		}
+	}
+	return "", fmt.Errorf("repo %q is not among your accessible repos on this API (is it onboarded to Entire, and do you have access?)", fullName)
 }
 
 // expertsWebBaseURL is the origin used to build user-facing session links.
