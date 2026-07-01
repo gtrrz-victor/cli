@@ -81,8 +81,9 @@ func (s *TmuxSession) Send(input string) error {
 	s.stableAtSend = stableContent(s.Capture())
 
 	// Verify the pane reacted to Enter; a swallowed Enter leaves the prompt
-	// sitting unsubmitted in the input box. Retry a couple of times — Enter
-	// on an already-submitted (empty) input box is a no-op.
+	// sitting unsubmitted in the input box. Retry a couple of times — TUIs
+	// treat Enter on an already-submitted (empty) input box as a no-op, and
+	// the vogon REPL ignores empty lines.
 	for range 3 {
 		preEnter := s.Capture()
 		if err := s.SendKeys("Enter"); err != nil {
