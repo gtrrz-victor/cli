@@ -72,48 +72,49 @@ func (s *TmuxSession) Send(input string) error {
 	if err := s.SendKeys(input); err != nil {
 		return err
 	}
-	s.waitForInputIngested(preSendRaw)
+	settled := s.waitForInputIngested(preSendRaw)
 
 	// Snapshot the post-echo, pre-submit content. WaitFor requires content to
 	// change from this snapshot before it can settle, preventing false matches
 	// on prompt characters (e.g. ❯) in the echoed input. Taken before Enter so
 	// it can never include response output from a fast agent.
-	s.stableAtSend = stableContent(s.Capture())
+	s.stableAtSend = stableContent(settled)
 
 	// Verify the pane reacted to Enter; a swallowed Enter leaves the prompt
 	// sitting unsubmitted in the input box. Retry a couple of times — TUIs
 	// treat Enter on an already-submitted (empty) input box as a no-op, and
 	// the vogon REPL ignores empty lines.
+	preEnter := settled
 	for range 3 {
-		preEnter := s.Capture()
 		if err := s.SendKeys("Enter"); err != nil {
 			return err
 		}
 		if s.paneChangedFrom(preEnter, 2*time.Second) {
 			break
 		}
+		preEnter = s.Capture()
 	}
 	return nil
 }
 
 // waitForInputIngested waits until the pane content has changed from preSend
 // (the echoed input is visible) and stopped changing between consecutive
-// polls (the TUI's input handler has caught up).
-func (s *TmuxSession) waitForInputIngested(preSend string) {
+// polls (the TUI's input handler has caught up), then returns the settled
+// content. Gives up after 15s and returns the last capture.
+func (s *TmuxSession) waitForInputIngested(preSend string) string {
 	deadline := time.Now().Add(15 * time.Second)
 	last := s.Capture()
 	for time.Now().Before(deadline) {
 		time.Sleep(300 * time.Millisecond)
 		current := s.Capture()
 		if current == last && current != preSend {
-			return
+			return current
 		}
 		last = current
 	}
+	return last
 }
 
-// paneChangedFrom reports whether the pane content diverges from prev within
-// the timeout.
 func (s *TmuxSession) paneChangedFrom(prev string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
