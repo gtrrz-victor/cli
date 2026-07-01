@@ -31,11 +31,18 @@ func runReviewFindings(ctx context.Context, cmd *cobra.Command, handle string, s
 	if err != nil {
 		return err
 	}
+	handle = strings.TrimSpace(handle)
 	if len(manifests) == 0 {
+		if handle != "" {
+			err := fmt.Errorf("no local review findings match %q", handle)
+			cmd.SilenceUsage = true
+			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
+			return wrapReviewSilentError(silentErr, err)
+		}
 		fmt.Fprintln(cmd.OutOrStdout(), "No local review findings found.")
 		return nil
 	}
-	if handle = strings.TrimSpace(handle); handle != "" {
+	if handle != "" {
 		manifest, findErr := findReviewManifestByHandle(manifests, handle)
 		if findErr != nil {
 			cmd.SilenceUsage = true
@@ -117,7 +124,7 @@ func writeReviewCompletionFooter(w io.Writer, manifest LocalReviewManifest) {
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Browse findings:")
-	fmt.Fprintf(w, "  %s --findings %s\n", reviewCommandBinary, handle)
+	fmt.Fprintf(w, "  %s\n", reviewFindingsCommand(handle))
 }
 
 func reviewManifestHandle(manifest LocalReviewManifest) string {
@@ -138,9 +145,17 @@ func printReviewFindingsList(w io.Writer, manifests []LocalReviewManifest) {
 	for _, manifest := range manifests {
 		fmt.Fprintf(w, "%s\n", reviewManifestListLabel(manifest))
 		if handle := reviewManifestHandle(manifest); handle != "" {
-			fmt.Fprintf(w, "  view: %s --findings %s\n", reviewCommandBinary, handle)
+			fmt.Fprintf(w, "  view: %s\n", reviewFindingsCommand(handle))
 		}
 	}
+}
+
+func reviewFindingsCommand(handle string) string {
+	return fmt.Sprintf("%s --findings %s", reviewCommandBinary, quoteReviewFindingsHandle(handle))
+}
+
+func quoteReviewFindingsHandle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func printReviewFindingsHandles(w io.Writer, manifests []LocalReviewManifest) {

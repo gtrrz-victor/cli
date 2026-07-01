@@ -150,7 +150,7 @@ To tag an already-finished session as a review, use
 			if len(args) > 1 {
 				return fmt.Errorf("accepts at most one argument, received %d", len(args))
 			}
-			if len(args) == 1 && profileOverride != "" {
+			if len(args) == 1 && profileOverride != "" && !findings {
 				return errors.New("pass profile either positionally or with --profile, not both")
 			}
 			return nil
@@ -188,9 +188,13 @@ To tag an already-finished session as a review, use
 			if modelOverride != "" && agentOverride == "" {
 				return errors.New("--model requires --agent (the model applies to a single reviewer)")
 			}
-			profileName := profileOverride
+			positionalArg := ""
 			if len(args) == 1 {
-				profileName = args[0]
+				positionalArg = args[0]
+			}
+			profileName := profileOverride
+			if positionalArg != "" && !findings {
+				profileName = positionalArg
 			}
 			if configure {
 				return runReviewConfigure(ctx, cmd, profileName, reviewConfigureOptions{
@@ -217,7 +221,7 @@ To tag an already-finished session as a review, use
 				return RunReviewProfileConfigPicker(ctx, cmd.OutOrStdout(), deps.GetAgentsWithHooksInstalled, profileName)
 			}
 			if findings {
-				return runReviewFindings(ctx, cmd, profileName, deps.NewSilentError)
+				return runReviewFindings(ctx, cmd, positionalArg, deps.NewSilentError)
 			}
 			// Map the flag to the RunConfig timeout convention: a non-positive
 			// value (the user passed --timeout 0) means "disable", encoded as the
