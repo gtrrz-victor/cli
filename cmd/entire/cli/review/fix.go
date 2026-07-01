@@ -32,16 +32,6 @@ func runReviewFindings(ctx context.Context, cmd *cobra.Command, handle string, s
 		return err
 	}
 	handle = strings.TrimSpace(handle)
-	if len(manifests) == 0 {
-		if handle != "" {
-			err := fmt.Errorf("no local review findings match %q", handle)
-			cmd.SilenceUsage = true
-			fmt.Fprintln(cmd.ErrOrStderr(), err.Error())
-			return wrapReviewSilentError(silentErr, err)
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), "No local review findings found.")
-		return nil
-	}
 	if handle != "" {
 		manifest, findErr := findReviewManifestByHandle(manifests, handle)
 		if findErr != nil {
@@ -51,6 +41,10 @@ func runReviewFindings(ctx context.Context, cmd *cobra.Command, handle string, s
 			return wrapReviewSilentError(silentErr, findErr)
 		}
 		printReviewManifestDetail(cmd.OutOrStdout(), manifest)
+		return nil
+	}
+	if len(manifests) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No local review findings found.")
 		return nil
 	}
 	if interactive.IsTerminalWriter(cmd.OutOrStdout()) && interactive.CanPromptInteractively() {
@@ -128,13 +122,8 @@ func writeReviewCompletionFooter(w io.Writer, manifest LocalReviewManifest) {
 }
 
 func reviewManifestHandle(manifest LocalReviewManifest) string {
-	for _, source := range manifest.Sources {
-		if source.SessionID != "" {
-			return source.SessionID
-		}
-	}
-	if !manifest.CreatedAt.IsZero() {
-		return reviewManifestTimeHandle(manifest.CreatedAt)
+	if handles := reviewManifestHandles(manifest); len(handles) > 0 {
+		return handles[0]
 	}
 	return ""
 }
@@ -151,21 +140,22 @@ func printReviewFindingsList(w io.Writer, manifests []LocalReviewManifest) {
 }
 
 func reviewFindingsCommand(handle string) string {
-	return fmt.Sprintf("%s --findings %s", reviewCommandBinary, quoteReviewFindingsHandle(handle))
-}
-
-func quoteReviewFindingsHandle(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+	quoted := "'" + strings.ReplaceAll(handle, "'", "'\\''") + "'"
+	return fmt.Sprintf("%s --findings %s", reviewCommandBinary, quoted)
 }
 
 func printReviewFindingsHandles(w io.Writer, manifests []LocalReviewManifest) {
-	handles := reviewManifestHandleList(manifests)
+	var handles []string
+	for _, manifest := range manifests {
+		handles = append(handles, reviewManifestHandles(manifest)...)
+	}
+	handles = dedupeStrings(handles)
 	if len(handles) == 0 {
 		return
 	}
 	fmt.Fprintln(w, "Available findings:")
 	for _, handle := range handles {
-		fmt.Fprintf(w, "  %s\n", handle)
+		fmt.Fprintf(w, "  view: %s\n", reviewFindingsCommand(handle))
 	}
 }
 
@@ -228,38 +218,17 @@ func reviewManifestHasHandle(manifest LocalReviewManifest, handle string) bool {
 	return slices.Contains(reviewManifestHandles(manifest), handle)
 }
 
-func reviewManifestHandleList(manifests []LocalReviewManifest) []string {
-	handles := []string{}
-	for _, manifest := range manifests {
-		for _, handle := range reviewManifestHandles(manifest) {
-			if slices.Contains(handles, handle) {
-				continue
-			}
-			handles = append(handles, handle)
-		}
-	}
-	return handles
-}
-
 func reviewManifestHandles(manifest LocalReviewManifest) []string {
-	handles := []string{}
-	add := func(handle string) {
-		handle = strings.TrimSpace(handle)
-		if handle == "" {
-			return
-		}
-		if slices.Contains(handles, handle) {
-			return
-		}
-		handles = append(handles, handle)
-	}
+	var handles []string
 	for _, source := range manifest.Sources {
-		add(source.SessionID)
+		if id := strings.TrimSpace(source.SessionID); id != "" {
+			handles = append(handles, id)
+		}
 	}
 	if !manifest.CreatedAt.IsZero() {
-		add(reviewManifestTimeHandle(manifest.CreatedAt))
+		handles = append(handles, reviewManifestTimeHandle(manifest.CreatedAt))
 	}
-	return handles
+	return dedupeStrings(handles)
 }
 
 func reviewManifestTimeHandle(t time.Time) string {

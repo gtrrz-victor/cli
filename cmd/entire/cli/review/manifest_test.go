@@ -341,7 +341,7 @@ func TestReviewFindingsCommand_UnknownHandleListsValidHandles(t *testing.T) {
 	if err := writeLocalReviewManifest(context.Background(), LocalReviewManifest{
 		CreatedAt: time.Date(2026, 5, 7, 10, 0, 0, 0, time.UTC),
 		Sources: []ManifestSource{{
-			SessionID: "claude-session",
+			SessionID: "claude-session; echo pwned",
 			Label:     "Claude Code",
 			Output:    manifestTestFinding,
 		}},
@@ -358,7 +358,7 @@ func TestReviewFindingsCommand_UnknownHandleListsValidHandles(t *testing.T) {
 		t.Fatal("expected unknown findings handle to fail")
 	}
 	got := errOut.String()
-	for _, want := range []string{"no local review findings match", "claude-session"} {
+	for _, want := range []string{"no local review findings match", "view: entire review --findings 'claude-session; echo pwned'"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("unknown-handle error missing %q:\n%s", want, got)
 		}
