@@ -94,6 +94,62 @@ func TestJurisdictionCoreURLHonorsLoopbackAndFamily(t *testing.T) {
 	if got := jurisdictionCoreURL("eu", "https://partial.to", "https://us.auth.partial.to"); got != "https://eu.auth.partial.to" {
 		t.Errorf("staging core = %q, want https://eu.auth.partial.to", got)
 	}
+	// Prod: mirrors the audience test's prod/staging pair.
+	if got := jurisdictionCoreURL("eu", "https://entire.io", "https://us.auth.entire.io"); got != "https://eu.auth.entire.io" {
+		t.Errorf("prod core = %q, want https://eu.auth.entire.io", got)
+	}
+}
+
+func TestJurisdictionCoreURLHonorsFixedTemplate(t *testing.T) {
+	// A placeholder-less template names a single core for every jurisdiction
+	// (single-core deployments), matching the BFF and the audience handler.
+	t.Setenv("ENTIRE_CORE_BASE_URL_TEMPLATE", "https://single-core.example")
+	if got := jurisdictionCoreURL("eu", "https://entire.io", "https://us.auth.entire.io"); got != "https://single-core.example" {
+		t.Errorf("fixed-template core = %q, want https://single-core.example", got)
+	}
+	// A loopback discovered core still wins over any template (local dev).
+	if got := jurisdictionCoreURL("eu", "https://entire.io", "http://127.0.0.1:9000"); got != "http://127.0.0.1:9000" {
+		t.Errorf("loopback core = %q, want http://127.0.0.1:9000", got)
+	}
+}
+
+func TestRequireSafeExchangeURL(t *testing.T) {
+	// Exercises the plaintext-downgrade guard. Reset the process-global insecure
+	// override (no public setter) so the assertion is order-independent.
+	prev := insecureHTTPOverride.Load()
+	insecureHTTPOverride.Store(false)
+	t.Cleanup(func() { insecureHTTPOverride.Store(prev) })
+
+	tests := []struct {
+		raw     string
+		wantErr bool
+	}{
+		{"https://us.entire.io", false},
+		{"https://aws-eu-west-1.api.entire.io", false},
+		{"http://127.0.0.1:9000", false}, // loopback allowed
+		{"http://localhost:8787", false}, // loopback allowed
+		{"http://evil.example.com", true},
+		{"ftp://evil.example.com", true},  // non-https, non-loopback
+		{"ws://evil.example.com", true},   // scheme-relative-ish
+		{"//evil.example.com/path", true}, // no scheme
+		{"", true},                        // empty
+		{"https://", true},                // no host
+	}
+	for _, tc := range tests {
+		err := requireSafeExchangeURL("test", tc.raw)
+		if tc.wantErr && err == nil {
+			t.Errorf("requireSafeExchangeURL(%q) = nil, want error", tc.raw)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("requireSafeExchangeURL(%q) = %v, want nil", tc.raw, err)
+		}
+	}
+
+	// With the insecure override on, a plain-http non-loopback host is allowed.
+	insecureHTTPOverride.Store(true)
+	if err := requireSafeExchangeURL("test", "http://dev.example.com"); err != nil {
+		t.Errorf("with insecure override: got %v, want nil", err)
+	}
 }
 
 func TestTargetJurisdictionRejectsBadLabel(t *testing.T) {
@@ -124,7 +180,7 @@ func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
 	var gotExchangeAudience, gotReposHost string
 	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/clusters":
+		case clustersAPIPath:
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck // test handler
 				"clusters": []map[string]any{{
@@ -195,13 +251,19 @@ func TestNewEntireAPICellClient_KeepsDirectCellBaseURL(t *testing.T) {
 	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
 	t.Cleanup(restore)
 
+	var exchangeHit, clustersHit bool
 	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != oauthTokenPath {
+		switch r.URL.Path {
+		case oauthTokenPath:
+			exchangeHit = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"access_token":"cell-identity-token","token_type":"Bearer","expires_in":3600}`)
+		case clustersAPIPath:
+			clustersHit = true
 			http.NotFound(w, r)
-			return
+		default:
+			http.NotFound(w, r)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"access_token":"cell-identity-token","token_type":"Bearer","expires_in":3600}`)
 	}))
 	defer coreSrv.Close()
 
@@ -226,12 +288,33 @@ func TestNewEntireAPICellClient_KeepsDirectCellBaseURL(t *testing.T) {
 	if client == nil {
 		t.Fatal("client is nil")
 	}
+	// A direct cell origin must NOT trigger cluster resolution, but the identity
+	// token must still be minted.
+	if clustersHit {
+		t.Error("direct cell URL should not resolve clusters")
+	}
+	if !exchangeHit {
+		t.Error("identity token exchange did not happen for a direct cell URL")
+	}
+	if !strings.HasSuffix(api.OriginOnly(cellBase), ".api.entire.io") {
+		t.Fatalf("test precondition: %q is not a direct cell URL", cellBase)
+	}
+}
 
-	// api.Client doesn't expose baseURL; verify via a stub round trip by calling
-	// ResolveURLFromBase indirectly through Get — use httptest on cell path instead.
-	gotBase := api.OriginOnly(cellBase)
-	if !strings.HasSuffix(gotBase, ".api.entire.io") {
-		t.Fatalf("unexpected cell base %q", gotBase)
+func TestResolveTargetCellBaseURL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	// A direct cell origin (host with .api.) is kept verbatim, no resolution.
+	if got, err := resolveTargetCellBaseURL(ctx, nil, "https://aws-us-east-2.api.entire.io", "us", "https://us.auth.entire.io", "login", nil); err != nil || got != "https://aws-us-east-2.api.entire.io" {
+		t.Fatalf("direct cell: got %q, %v", got, err)
+	}
+	// A loopback (local dev) origin is kept verbatim.
+	if got, err := resolveTargetCellBaseURL(ctx, nil, "http://127.0.0.1:8099", "us", "http://127.0.0.1:9000", "login", nil); err != nil || got != "http://127.0.0.1:8099" {
+		t.Fatalf("loopback: got %q, %v", got, err)
+	}
+	// An explicit target wins over everything and is trimmed of a trailing slash.
+	if got, err := resolveTargetCellBaseURL(ctx, &CellTarget{BaseURL: "https://eu.api.entire.io/"}, "https://entire.io", "eu", "https://eu.auth.entire.io", "login", nil); err != nil || got != "https://eu.api.entire.io" {
+		t.Fatalf("target override: got %q, %v", got, err)
 	}
 }
 
@@ -250,7 +333,7 @@ func TestNewEntireAPICellClient_TargetRoutesToRepoCell(t *testing.T) {
 
 	var gotExchangeAudience string
 	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/clusters" {
+		if r.URL.Path == clustersAPIPath {
 			t.Errorf("target path must not resolve clusters, but /api/v1/clusters was called")
 		}
 		if r.URL.Path != oauthTokenPath {

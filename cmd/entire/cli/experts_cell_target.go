@@ -3,11 +3,32 @@ package cli
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/internal/coreapi"
 )
+
+// expertsCellResolveTimeout bounds the best-effort control-plane lookups that
+// pick a repo's cell. Without it, a reachable-but-hung control plane would block
+// the whole experts command instead of degrading to home-jurisdiction routing —
+// the "any failure falls back" contract must hold for slow cores, not just
+// erroring ones.
+const expertsCellResolveTimeout = 5 * time.Second
+
+// expertsCoreClient is the control-plane surface the cell-target resolver needs.
+// An interface (with a swappable constructor) so the resolver is unit-testable
+// against a fake control plane; *coreapi.Client satisfies it.
+type expertsCoreClient interface {
+	GetRepo(ctx context.Context, params coreapi.GetRepoParams) (*coreapi.Repo, error)
+	ListClusters(ctx context.Context) (*coreapi.ListClustersOutputBody, error)
+	ListMirrors(ctx context.Context, params coreapi.ListMirrorsParams) (*coreapi.ListMirrorsOutputBody, error)
+}
+
+// newExpertsCoreClient builds the control-plane client used for cell resolution.
+// Swapped in tests.
+var newExpertsCoreClient = func() (expertsCoreClient, error) { return coreapi.New() }
 
 // resolveExpertsCellTarget resolves the entire-api cell that HOSTS the given
 // repo, plus that cell's jurisdiction, so a repo-scoped experts call reaches the
@@ -16,20 +37,24 @@ import (
 // caller's home cell.
 //
 // It is deliberately best-effort: ANY failure (not logged in, control-plane
-// error, unknown/ambiguous placement, missing apiUrl) returns nil, and the
-// auth-layer client falls back to home-jurisdiction routing. That fallback is
-// exactly the previous behaviour, so this can never regress the common
-// same-region case (where the repo's jurisdiction equals the caller's home).
+// error or timeout, unknown/ambiguous placement, missing apiUrl) returns nil,
+// and the auth-layer client falls back to home-jurisdiction routing. That
+// fallback is exactly the previous behaviour, so this can never regress the
+// common same-region case (where the repo's jurisdiction equals the caller's
+// home). A short deadline keeps a slow control plane from stalling the command.
 //
 // Placement source:
 //   - ulid form: coreapi.GetRepo(ulid) -> Repo.ClusterHost;
 //   - owner/repo form: coreapi mirrors filtered to this repo -> ClusterHost.
 //
 // The cluster host is then mapped to a cell apiUrl + jurisdiction via the
-// coreapi cluster catalog (ListClusters), which is the authoritative source for
-// a jurisdiction's cell URL.
+// coreapi cluster catalog (ListClusters), the authoritative source for a
+// jurisdiction's cell URL.
 func resolveExpertsCellTarget(ctx context.Context, fullName, ulid string) *auth.CellTarget {
-	c, err := coreapi.New()
+	ctx, cancel := context.WithTimeout(ctx, expertsCellResolveTimeout)
+	defer cancel()
+
+	c, err := newExpertsCoreClient()
 	if err != nil {
 		logging.Debug(ctx, "experts cell target: core client unavailable, using home-jurisdiction routing", "error", err.Error())
 		return nil
@@ -51,7 +76,10 @@ func resolveExpertsCellTarget(ctx context.Context, fullName, ulid string) *auth.
 		return nil
 	}
 	apiURL := strings.TrimRight(strings.TrimSpace(cluster.ApiUrl.Or("")), "/")
-	jurisdiction := strings.TrimSpace(cluster.Jurisdiction)
+	// DNS is case-insensitive; normalise the catalog jurisdiction so a
+	// non-lowercase value still passes the auth layer's strict label check
+	// instead of hard-failing the target path.
+	jurisdiction := strings.ToLower(strings.TrimSpace(cluster.Jurisdiction))
 	if apiURL == "" || jurisdiction == "" {
 		logging.Debug(ctx, "experts cell target: matched cluster missing apiUrl/jurisdiction, using home-jurisdiction routing", "cluster_host", clusterHost)
 		return nil
@@ -62,7 +90,7 @@ func resolveExpertsCellTarget(ctx context.Context, fullName, ulid string) *auth.
 // resolveRepoClusterHost finds the public cluster host that owns the repo. It
 // returns ok=false to signal "fall back to home-jurisdiction routing" for every
 // unresolved or ambiguous case, never an error.
-func resolveRepoClusterHost(ctx context.Context, c *coreapi.Client, fullName, ulid string) (string, bool) {
+func resolveRepoClusterHost(ctx context.Context, c expertsCoreClient, fullName, ulid string) (string, bool) {
 	if strings.TrimSpace(ulid) != "" {
 		repo, err := c.GetRepo(ctx, coreapi.GetRepoParams{RepoId: ulid})
 		if err != nil {
@@ -95,13 +123,20 @@ func resolveRepoClusterHost(ctx context.Context, c *coreapi.Client, fullName, ul
 }
 
 // distinctActiveClusterHosts returns the set of cluster hosts a repo is actively
-// mirrored on, excluding archived placements. Case-folded to match DNS
-// semantics; order-stable is unnecessary since callers only use it when the set
-// has exactly one member.
+// serviced on: excluding archived placements and unhealthy ones (failed /
+// suspended clone status), since those cells can't answer experts for the repo.
+// A failed/suspended placement must neither manufacture false cross-region
+// ambiguity nor become a sole "active" host. Case-folded to match DNS
+// semantics; order is unimportant (callers only use a single-member set).
 func distinctActiveClusterHosts(mirrors []coreapi.Mirror) []string {
 	seen := make(map[string]string, len(mirrors))
 	for _, m := range mirrors {
 		if m.IsArchived.Or(false) {
+			continue
+		}
+		// Treat unset status as active (older data); only failed/suspended
+		// placements can't serve experts for the repo.
+		if st := m.Status.Or(coreapi.MirrorStatusReady); st == coreapi.MirrorStatusFailed || st == coreapi.MirrorStatusSuspended {
 			continue
 		}
 		host := strings.TrimSpace(m.ClusterHost)

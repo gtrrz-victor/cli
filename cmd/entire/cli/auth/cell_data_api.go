@@ -24,6 +24,9 @@ const (
 	cellDataAPITimeout = 30 * time.Second
 
 	jurisdictionIdentityScope = "openid"
+
+	// clustersAPIPath is entire-core's cluster catalog endpoint.
+	clustersAPIPath = "/api/v1/clusters"
 )
 
 // jurisdictionLabelPattern bounds a home_jurisdiction claim to a single DNS
@@ -294,10 +297,11 @@ func jurisdictionCoreURL(jurisdiction, dataOrigin, discoveredCore string) string
 		return strings.TrimRight(discoveredCore, "/")
 	}
 	if tmpl := strings.TrimSpace(os.Getenv("ENTIRE_CORE_BASE_URL_TEMPLATE")); tmpl != "" {
-		if strings.Contains(tmpl, "{jurisdiction}") {
-			return applyJurisdictionTemplate(tmpl, jurisdiction)
-		}
-		return strings.TrimRight(discoveredCore, "/")
+		// Apply unconditionally: applyJurisdictionTemplate is a no-op when the
+		// template has no {jurisdiction}, yielding the fixed core verbatim — the
+		// single-core case, matching the BFF's buildCoreBaseUrl and this file's
+		// own audience handling.
+		return applyJurisdictionTemplate(tmpl, jurisdiction)
 	}
 	if fam := environmentFamily(dataOrigin, discoveredCore); fam != "" {
 		return "https://" + jurisdiction + ".auth." + fam
@@ -311,14 +315,20 @@ func applyJurisdictionTemplate(tmpl, jurisdiction string) string {
 
 // requireSafeExchangeURL rejects a target the login JWT / identity token would
 // be sent to unless it is https (or an explicitly-allowed loopback/insecure
-// http). Mirrors the tokenmanager guard the sibling data_api.go relies on, so a
-// buggy core catalog can't downgrade the login JWT onto plaintext.
+// http). It affirmatively requires the https scheme — not merely "not http" —
+// so ftp/ws/scheme-relative/empty targets from a buggy core catalog can't
+// smuggle the login JWT off https. Mirrors the tokenmanager guard the sibling
+// data_api.go relies on.
 func requireSafeExchangeURL(label, raw string) error {
 	if insecureHTTPEnabled() || isLoopbackHTTP(raw) {
 		return nil
 	}
-	if err := api.RequireSecureURL(raw); err != nil {
-		return fmt.Errorf("%s URL check: %w", label, err)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s URL check: parse %q: %w", label, raw, err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("%s URL %q must be https", label, raw)
 	}
 	return nil
 }
@@ -354,7 +364,7 @@ type clusterListingRow struct {
 // so auth cannot import coreapi without a cycle — the repo-scoped path avoids
 // this by resolving the cell in the cli layer (see resolveExpertsCellTarget).
 func resolveCellAPIBaseURL(ctx context.Context, coreURL, loginJWT, jurisdiction string, httpClient *http.Client) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(coreURL, "/")+"/api/v1/clusters", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(coreURL, "/")+clustersAPIPath, nil)
 	if err != nil {
 		return "", fmt.Errorf("build clusters request: %w", err)
 	}
