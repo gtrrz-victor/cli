@@ -301,10 +301,13 @@ func runExperts(ctx context.Context, out, errOut io.Writer, args []string, f *ex
 	if err := api.CheckResponse(resp); err != nil {
 		var httpErr *api.HTTPError
 		if errors.As(err, &httpErr) {
-			if httpErr.StatusCode == http.StatusServiceUnavailable &&
-				req.Query != nil &&
-				strings.Contains(strings.ToLower(httpErr.Message), "code search") {
-				fmt.Fprintln(errOut, "Code search is not configured for natural-language experts queries.")
+			// A natural-language query needs code search on the cell. When it
+			// isn't available the cell returns 503 — sometimes with only a bare
+			// "Service Unavailable" body — so treat any 503 on a query as the
+			// code-search-unavailable case. Path scopes don't need code search
+			// and fall through to the generic error below.
+			if httpErr.StatusCode == http.StatusServiceUnavailable && req.Query != nil {
+				fmt.Fprintln(errOut, "Code search is not available for natural-language experts queries on this backend.")
 				return NewSilentError(err)
 			}
 			// entire-api returns 404 "repo not in this region" when the repo is
