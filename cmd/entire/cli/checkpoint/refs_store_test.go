@@ -87,16 +87,35 @@ func TestGitRefsStore_OnDemandRefFetch(t *testing.T) {
 	assert.Equal(t, 1, fetched, "fetcher invoked once for the missing ref")
 }
 
-func TestGitRefsStore_OnDemandRefFetch_FailureIsNotFound(t *testing.T) {
+// TestGitRefsStore_OnDemandRefFetch_FailurePropagates: a fetch that fails
+// (offline, network error, context cancellation) must surface as a real error
+// rather than be masked as "checkpoint not found" — otherwise a transient
+// failure looks like missing data. A fetch that succeeds but still finds no such
+// ref on the remote is a genuine not-found and reads as (nil, nil).
+func TestGitRefsStore_OnDemandRefFetch_FailurePropagates(t *testing.T) {
 	t.Parallel()
-	store := newRefsStore(t)
-	store.SetRefFetcher(func(_ context.Context, _ plumbing.ReferenceName) error {
-		return assert.AnError // fetch fails (e.g. offline / unknown checkpoint)
+
+	t.Run("fetch error propagates", func(t *testing.T) {
+		t.Parallel()
+		store := newRefsStore(t)
+		store.SetRefFetcher(func(_ context.Context, _ plumbing.ReferenceName) error {
+			return assert.AnError // fetch fails (e.g. offline / network)
+		})
+		summary, err := store.Read(context.Background(), id.MustCheckpointID("ffffffffffff"))
+		require.ErrorIs(t, err, assert.AnError, "a failed fetch must not be masked as not-found")
+		assert.Nil(t, summary)
 	})
 
-	summary, err := store.Read(context.Background(), id.MustCheckpointID("ffffffffffff"))
-	require.NoError(t, err)
-	assert.Nil(t, summary, "a failed fetch reads as not-found, not an error")
+	t.Run("successful fetch with still-absent ref reads as not-found", func(t *testing.T) {
+		t.Parallel()
+		store := newRefsStore(t)
+		store.SetRefFetcher(func(_ context.Context, _ plumbing.ReferenceName) error {
+			return nil // fetch "succeeds" but the ref still doesn't exist
+		})
+		summary, err := store.Read(context.Background(), id.MustCheckpointID("ffffffffffff"))
+		require.NoError(t, err, "a genuinely absent checkpoint reads as not-found")
+		assert.Nil(t, summary)
+	})
 }
 
 func TestGitRefsStore_WriteAllVariantsAndRead(t *testing.T) {

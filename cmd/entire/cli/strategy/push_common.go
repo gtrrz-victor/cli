@@ -28,11 +28,18 @@ import (
 // rather than retrying them forever.
 func partitionLocalRefs(repo *git.Repository, refs []plumbing.ReferenceName) (existing, stale []plumbing.ReferenceName) {
 	for _, ref := range refs {
-		if _, err := repo.Reference(ref, false); err != nil {
+		_, err := repo.Reference(ref, false)
+		switch {
+		case err == nil:
+			existing = append(existing, ref)
+		case errors.Is(err, plumbing.ErrReferenceNotFound):
+			// Genuinely gone (e.g. deleted by cleanup) — never pushable, drop it.
 			stale = append(stale, ref)
-			continue
+		default:
+			// A transient/IO lookup error: keep the ref as pushable so a real
+			// entry isn't dropped from the queue forever over a flaky read.
+			existing = append(existing, ref)
 		}
-		existing = append(existing, ref)
 	}
 	return existing, stale
 }

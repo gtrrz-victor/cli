@@ -136,7 +136,16 @@ func (s *ManualCommitStrategy) PrePush(ctx context.Context, remote string) error
 // swallowed — like the v1 path, they must not block the user's git push — and the
 // refs stay queued for the next pre-push. OPF is not applied (it is descoped for
 // the git-refs store for now).
+//
+// It honors the checkpoint policy exactly like the v1 path: the policy gates on
+// checkpoint *format* compatibility (diverged from the remote, or an unsupported
+// local format), which is independent of the storage backend, so a blocked
+// policy skips the ref push (leaving refs queued) rather than pushing.
 func (s *ManualCommitStrategy) prePushCheckpointRefs(ctx context.Context, ps pushSettings) error {
+	if !syncCheckpointPolicyForPrePush(ctx, ps) {
+		return nil
+	}
+
 	repo, err := OpenRepository(ctx)
 	if err != nil {
 		logging.Warn(ctx, "git-refs pre-push: open repo failed; skipping checkpoint push",

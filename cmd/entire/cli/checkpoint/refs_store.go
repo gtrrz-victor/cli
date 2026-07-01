@@ -79,8 +79,13 @@ func (s *gitRefsStore) refBase(cid id.CheckpointID) (plumbing.Hash, *object.Tree
 		return plumbing.ZeroHash, nil, err
 	}
 	ref, err := s.repo.Reference(refName, true)
+	if errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return plumbing.ZeroHash, nil, nil // no ref yet → new checkpoint (orphan)
+	}
 	if err != nil {
-		return plumbing.ZeroHash, nil, nil //nolint:nilerr // no ref yet → new checkpoint
+		// A real lookup failure (IO/corruption), not an absent ref: surface it
+		// rather than silently starting a fresh orphan history over the ref.
+		return plumbing.ZeroHash, nil, fmt.Errorf("resolve checkpoint ref %s: %w", refName, err)
 	}
 	commit, err := s.repo.CommitObject(ref.Hash())
 	if err != nil {
@@ -240,23 +245,31 @@ func (s *gitRefsStore) checkpointTree(ctx context.Context, cid id.CheckpointID) 
 	}
 	ref, err := s.resolveRefMaybeFetch(ctx, cid)
 	if err != nil {
-		return nil, ErrCheckpointNotFound
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			return nil, ErrCheckpointNotFound
+		}
+		return nil, err
 	}
 	commit, err := s.repo.CommitObject(ref.Hash())
 	if err != nil {
-		return nil, ErrCheckpointNotFound
+		// The ref resolved but its commit object doesn't — corruption/IO, not an
+		// absent checkpoint. Surface it instead of masking as "not found".
+		return nil, fmt.Errorf("read checkpoint commit %s for %s: %w", ref.Hash(), cid, err)
 	}
 	tree, err := commit.Tree()
 	if err != nil {
-		return nil, ErrCheckpointNotFound
+		return nil, fmt.Errorf("read checkpoint tree for %s: %w", cid, err)
 	}
 	return NewFetchingTree(ctx, tree, s.repo.Storer, s.blobFetcher), nil
 }
 
 // resolveRefMaybeFetch resolves a checkpoint ref, fetching it from the remote
 // once when it is missing locally and a ref fetcher is configured (the
-// checkpoint may have been written on another machine). A failed fetch returns
-// the original not-found error so the read resolves to ErrCheckpointNotFound.
+// checkpoint may have been written on another machine). It distinguishes a
+// genuinely absent ref (returns a plumbing.ErrReferenceNotFound-wrapped error,
+// which callers map to ErrCheckpointNotFound) from a real failure — an IO error,
+// or a fetch that failed for network/context reasons — which is returned as-is
+// so it is not silently swallowed as "checkpoint not found".
 func (s *gitRefsStore) resolveRefMaybeFetch(ctx context.Context, cid id.CheckpointID) (*plumbing.Reference, error) {
 	refName, err := RefName(cid)
 	if err != nil {
@@ -266,15 +279,24 @@ func (s *gitRefsStore) resolveRefMaybeFetch(ctx context.Context, cid id.Checkpoi
 	if err == nil {
 		return ref, nil
 	}
+	if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, fmt.Errorf("resolve checkpoint ref %s: %w", refName, err)
+	}
 	if s.refFetcher == nil {
-		return nil, err //nolint:wrapcheck // caller maps any error to ErrCheckpointNotFound
+		return nil, err //nolint:wrapcheck // genuinely absent; caller maps ErrReferenceNotFound to ErrCheckpointNotFound
 	}
 	if fetchErr := s.refFetcher(ctx, refName); fetchErr != nil {
 		logging.Debug(ctx, "git-refs: on-demand checkpoint ref fetch failed",
 			slog.String("ref", refName.String()), slog.String("error", fetchErr.Error()))
-		return nil, err //nolint:wrapcheck // caller maps any error to ErrCheckpointNotFound
+		return nil, fmt.Errorf("fetch checkpoint ref %s: %w", refName, fetchErr)
 	}
-	return s.repo.Reference(refName, true) //nolint:wrapcheck // caller maps any error to ErrCheckpointNotFound
+	// Re-resolve after a successful fetch. ErrReferenceNotFound here means the
+	// remote genuinely has no such checkpoint; anything else is a real error.
+	ref, err = s.repo.Reference(refName, true)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // ErrReferenceNotFound (absent) or a real error; caller distinguishes via errors.Is
+	}
+	return ref, nil
 }
 
 // sessionTree resolves the FetchingTree for one session within a checkpoint ref.
@@ -295,7 +317,10 @@ func (s *gitRefsStore) sessionTree(ctx context.Context, cid id.CheckpointID, ses
 func (s *gitRefsStore) Read(ctx context.Context, checkpointID id.CheckpointID) (*CheckpointSummary, error) {
 	ct, err := s.checkpointTree(ctx, checkpointID)
 	if err != nil {
-		return nil, nil //nolint:nilnil,nilerr // No ref means no checkpoint exists
+		if errors.Is(err, ErrCheckpointNotFound) {
+			return nil, nil //nolint:nilnil // absent ref → no checkpoint; contract normalizes to ErrCheckpointNotFound
+		}
+		return nil, err
 	}
 	return readSummaryFromCheckpointTree(ct)
 }
