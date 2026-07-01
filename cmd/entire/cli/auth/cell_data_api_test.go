@@ -29,21 +29,86 @@ func TestHomeJurisdictionFromLoginJWT(t *testing.T) {
 	}
 }
 
-func TestIsEntireIOBFF(t *testing.T) {
+func TestIsBFFOrigin(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		origin string
 		want   bool
 	}{
-		{"https://entire.io", true},
-		{"https://staging.entire.io", true},
-		{"https://aws-us-east-2.api.entire.io", false},
-		{"http://127.0.0.1:8099", false},
+		{"https://entire.io", true},                     // prod BFF
+		{"https://staging.entire.io", true},             // prod apex variant
+		{"https://partial.to", true},                    // staging BFF
+		{"https://us.partial.to", true},                 // staging apex variant
+		{"https://aws-us-east-2.api.entire.io", false},  // direct cell
+		{"https://aws-eu-west-1.api.partial.to", false}, // staging direct cell
+		{"http://127.0.0.1:8099", false},                // local dev
+		{"http://localhost:8787", false},                // local dev
 	}
 	for _, tc := range tests {
-		if got := isEntireIOBFF(tc.origin); got != tc.want {
-			t.Errorf("isEntireIOBFF(%q) = %v, want %v", tc.origin, got, tc.want)
+		if got := isBFFOrigin(tc.origin); got != tc.want {
+			t.Errorf("isBFFOrigin(%q) = %v, want %v", tc.origin, got, tc.want)
 		}
+	}
+}
+
+func TestEntireDomainFamily(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		core string
+		want string
+	}{
+		{"https://us.auth.entire.io", "entire.io"},
+		{"https://eu.auth.entire.io", "entire.io"},
+		{"https://us.auth.partial.to", "partial.to"},
+		{"http://127.0.0.1:9000", ""},
+		{"https://auth.example.com", ""},
+	}
+	for _, tc := range tests {
+		if got := entireDomainFamily(tc.core); got != tc.want {
+			t.Errorf("entireDomainFamily(%q) = %q, want %q", tc.core, got, tc.want)
+		}
+	}
+}
+
+func TestJurisdictionAudienceFollowsLoginFamily(t *testing.T) {
+	// No env override: the audience must follow the environment family so a
+	// staging (partial.to) login mints a partial.to audience, not a prod one.
+	t.Setenv("ENTIRE_API_AUDIENCE_TEMPLATE", "")
+	if got := jurisdictionAudience("us", "https://entire.io", "https://us.auth.entire.io"); got != "https://us.entire.io" {
+		t.Errorf("prod audience = %q, want https://us.entire.io", got)
+	}
+	if got := jurisdictionAudience("eu", "https://partial.to", "https://us.auth.partial.to"); got != "https://eu.partial.to" {
+		t.Errorf("staging audience = %q, want https://eu.partial.to", got)
+	}
+}
+
+func TestJurisdictionCoreURLHonorsLoopbackAndFamily(t *testing.T) {
+	t.Setenv("ENTIRE_CORE_BASE_URL_TEMPLATE", "")
+	// Local dev: a loopback discovered core must be honored verbatim, NOT
+	// replaced by the production template (which would send the local login JWT
+	// to prod).
+	if got := jurisdictionCoreURL("us", "http://127.0.0.1:8099", "http://127.0.0.1:9000"); got != "http://127.0.0.1:9000" {
+		t.Errorf("loopback core = %q, want http://127.0.0.1:9000", got)
+	}
+	// Staging: core follows the environment family and target jurisdiction.
+	if got := jurisdictionCoreURL("eu", "https://partial.to", "https://us.auth.partial.to"); got != "https://eu.auth.partial.to" {
+		t.Errorf("staging core = %q, want https://eu.auth.partial.to", got)
+	}
+}
+
+func TestTargetJurisdictionRejectsBadLabel(t *testing.T) {
+	t.Parallel()
+	bad := makeJWT(t, fmt.Sprintf(`{"home_jurisdiction":"us.auth.evil.tld","exp":%d}`, time.Now().Add(time.Hour).Unix()))
+	if _, err := targetJurisdiction(nil, bad); err == nil {
+		t.Fatal("expected rejection of non-label home_jurisdiction")
+	}
+	good := makeJWT(t, fmt.Sprintf(`{"home_jurisdiction":"us","exp":%d}`, time.Now().Add(time.Hour).Unix()))
+	if got, err := targetJurisdiction(nil, good); err != nil || got != "us" {
+		t.Fatalf("targetJurisdiction(good) = %q, %v; want us, nil", got, err)
+	}
+	// An explicit target wins over the JWT claim.
+	if got, err := targetJurisdiction(&CellTarget{Jurisdiction: "eu"}, good); err != nil || got != "eu" {
+		t.Fatalf("targetJurisdiction(target=eu) = %q, %v; want eu, nil", got, err)
 	}
 }
 
@@ -61,14 +126,14 @@ func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/clusters":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck // test handler
 				"clusters": []map[string]any{{
 					"jurisdiction": "us",
 					"isDefault":    true,
 					"apiUrl":       "http://" + r.Host,
 				}},
 			})
-		case "/oauth/token":
+		case oauthTokenPath:
 			_ = r.ParseForm() //nolint:errcheck // test handler
 			gotExchangeAudience = r.FormValue("audience")
 			if r.FormValue("scope") != jurisdictionIdentityScope {
@@ -98,11 +163,9 @@ func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
 	})
 	t.Cleanup(cleanupDiscovery)
 
-	prevTransport := cellExchangeTransportForTest
-	cellExchangeTransportForTest = coreSrv.Client().Transport
-	t.Cleanup(func() { cellExchangeTransportForTest = prevTransport })
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
 
-	client, err := NewEntireAPICellClient(context.Background(), false)
+	client, err := NewEntireAPICellClient(context.Background(), false, nil)
 	if err != nil {
 		t.Fatalf("NewEntireAPICellClient: %v", err)
 	}
@@ -133,7 +196,7 @@ func TestNewEntireAPICellClient_KeepsDirectCellBaseURL(t *testing.T) {
 	t.Cleanup(restore)
 
 	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/oauth/token" {
+		if r.URL.Path != oauthTokenPath {
 			http.NotFound(w, r)
 			return
 		}
@@ -154,11 +217,9 @@ func TestNewEntireAPICellClient_KeepsDirectCellBaseURL(t *testing.T) {
 	})
 	t.Cleanup(cleanupDiscovery)
 
-	prevTransport := cellExchangeTransportForTest
-	cellExchangeTransportForTest = coreSrv.Client().Transport
-	t.Cleanup(func() { cellExchangeTransportForTest = prevTransport })
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
 
-	client, err := NewEntireAPICellClient(context.Background(), false)
+	client, err := NewEntireAPICellClient(context.Background(), false, nil)
 	if err != nil {
 		t.Fatalf("NewEntireAPICellClient: %v", err)
 	}
@@ -171,5 +232,76 @@ func TestNewEntireAPICellClient_KeepsDirectCellBaseURL(t *testing.T) {
 	gotBase := api.OriginOnly(cellBase)
 	if !strings.HasSuffix(gotBase, ".api.entire.io") {
 		t.Fatalf("unexpected cell base %q", gotBase)
+	}
+}
+
+// TestNewEntireAPICellClient_TargetRoutesToRepoCell proves the repo-scoped path:
+// when a CellTarget names a different jurisdiction than the caller's home, the
+// client mints for the TARGET jurisdiction and dials the TARGET cell — not the
+// caller's home cell. This is the cross-jurisdiction case the home-only routing
+// could never satisfy.
+func TestNewEntireAPICellClient_TargetRoutesToRepoCell(t *testing.T) {
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	t.Setenv("ENTIRE_API_BASE_URL", "https://entire.io")
+	t.Setenv("ENTIRE_API_AUDIENCE_TEMPLATE", "")
+	t.Setenv("ENTIRE_CORE_BASE_URL_TEMPLATE", "")
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	var gotExchangeAudience string
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/clusters" {
+			t.Errorf("target path must not resolve clusters, but /api/v1/clusters was called")
+		}
+		if r.URL.Path != oauthTokenPath {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm() //nolint:errcheck // test handler
+		gotExchangeAudience = r.FormValue("audience")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"eu-identity-token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer coreSrv.Close()
+
+	var euCellHit bool
+	euCell := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		euCellHit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"repos":[]}`)
+	}))
+	defer euCell.Close()
+
+	svc := tokenstore.CoreKeyringService(coreSrv.URL)
+	loginJWT := makeJWT(t, fmt.Sprintf(`{"iss":%q,"home_jurisdiction":"us","exp":%d}`, coreSrv.URL, time.Now().Add(2*time.Hour).Unix()))
+	if err := tokenstore.Set(svc, "me", tokenstore.EncodeTokenWithExpiration(loginJWT, 7200)); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	ctxObj := &contexts.Context{Name: "me@core", CoreURL: coreSrv.URL, Handle: "me", KeychainService: svc}
+	t.Cleanup(SetResolveContextForCellAPIForTest(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+		return ctxObj, nil
+	}))
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
+
+	// Caller home_jurisdiction is "us"; the repo is homed in "eu".
+	target := &CellTarget{BaseURL: euCell.URL, Jurisdiction: "eu"}
+	client, err := NewEntireAPICellClient(context.Background(), false, target)
+	if err != nil {
+		t.Fatalf("NewEntireAPICellClient: %v", err)
+	}
+	if gotExchangeAudience != "https://eu.entire.io" {
+		t.Fatalf("exchange audience = %q, want https://eu.entire.io (repo jurisdiction, not caller home us)", gotExchangeAudience)
+	}
+
+	resp, err := client.Get(context.Background(), "/api/v1/repos")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer resp.Body.Close()
+	if !euCellHit {
+		t.Fatal("request did not reach the target (eu) cell")
+	}
+	if got := resp.Request.Header.Get("Authorization"); !strings.Contains(got, "eu-identity-token") {
+		t.Fatalf("Authorization = %q, want eu identity token", got)
 	}
 }

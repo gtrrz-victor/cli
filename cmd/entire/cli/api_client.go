@@ -50,8 +50,19 @@ func NewAuthenticatedAPIClient(ctx context.Context, insecureHTTP bool) (*api.Cli
 
 // NewAuthenticatedEntireAPICellClient creates an API client for repo-scoped
 // entire-api routes (e.g. experts). It exchanges the login JWT for a
-// jurisdictional identity token and dials the home entire-api cell directly
-// when the configured data host is the entire.io BFF (COR-666).
-func NewAuthenticatedEntireAPICellClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
-	return auth.NewEntireAPICellClient(ctx, insecureHTTP)
+// jurisdictional identity token and dials the entire-api cell directly, because
+// the BFF does not proxy these routes for bearer callers (COR-666).
+//
+// fullName (owner/repo) and/or ulid identify the repo whose cell to reach. When
+// either is supplied, the repo's OWNING cell + jurisdiction are resolved from
+// the control plane (mirroring the BFF's per-repo cell selection) so the call
+// lands in the region that hosts the repo. Resolution is best-effort: any
+// failure yields a nil target and NewEntireAPICellClient falls back to
+// home-jurisdiction routing, so the common same-region case never regresses.
+func NewAuthenticatedEntireAPICellClient(ctx context.Context, insecureHTTP bool, fullName, ulid string) (*api.Client, error) {
+	target := resolveExpertsCellTarget(ctx, fullName, ulid)
+	// NewEntireAPICellClient already returns user-facing, context-rich errors
+	// (login hint, discovery-unavailable, region guidance); re-wrapping here
+	// would bury them, so surface them verbatim.
+	return auth.NewEntireAPICellClient(ctx, insecureHTTP, target) //nolint:wrapcheck // pass through contextual auth errors
 }
