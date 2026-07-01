@@ -127,7 +127,11 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 		return nil, err
 	}
 
-	allowInsecure := insecureHTTPEnabled() || isLoopbackHTTP(selected.CoreURL) || isLoopbackHTTP(dataOrigin)
+	// Gate the login provider's HTTPS relaxation on the core it actually dials
+	// (selected.CoreURL) plus the explicit --insecure-http-auth opt-in, matching
+	// the sibling ResolveDataAPIToken. A loopback data API must not relax HTTPS
+	// for a non-loopback core.
+	allowInsecure := insecureHTTPEnabled() || isLoopbackHTTP(selected.CoreURL)
 	loginProvider, err := NewRefreshingLoginProvider(selected, cellExchangeTransportForTest, allowInsecure)
 	if err != nil {
 		return nil, err
@@ -138,7 +142,9 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 		if errors.Is(err, ErrNotLoggedIn) {
 			return nil, fmt.Errorf("not logged in (run 'entire login' first): %w", err)
 		}
-		return nil, fmt.Errorf("refresh login token: %w", err)
+		// The provider already prefixes "refresh login token:"; return as-is to
+		// avoid a doubled prefix.
+		return nil, err
 	}
 
 	jurisdiction, err := targetJurisdiction(target, loginJWT)
