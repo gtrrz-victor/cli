@@ -148,11 +148,11 @@ func TestExpertsCommandSendsQueryAndPrintsJSON(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute experts: %v", err)
 	}
-	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
+	if fake.gotPath != expertsReposListPath+"/"+expertsTestRepoULID+"/experts" {
 		t.Fatalf("path = %q", fake.gotPath)
 	}
-	if fake.gotGetPath != "/api/v1/repos" {
-		t.Fatalf("owner/repo should resolve via GET /api/v1/repos, got %q", fake.gotGetPath)
+	if fake.gotGetPath != expertsReposListPath {
+		t.Fatalf("owner/repo should resolve via GET %s, got %q", expertsReposListPath, fake.gotGetPath)
 	}
 	body, ok := fake.gotBody.(expertsRequest)
 	if !ok {
@@ -651,13 +651,13 @@ func TestResolveExpertsRepoIDPaginatesAccessibleRepoList(t *testing.T) {
 	if len(fake.gotGetPaths) != 2 {
 		t.Fatalf("GET paths = %#v, want two paginated requests", fake.gotGetPaths)
 	}
-	if fake.gotGetPaths[0] != "/api/v1/repos" {
+	if fake.gotGetPaths[0] != expertsReposListPath {
 		t.Fatalf("first GET = %q", fake.gotGetPaths[0])
 	}
-	if fake.gotGetPaths[1] != "/api/v1/repos?page_token=page2" {
+	if fake.gotGetPaths[1] != expertsReposListPath+"?page_token=page2" {
 		t.Fatalf("second GET = %q", fake.gotGetPaths[1])
 	}
-	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
+	if fake.gotPath != expertsReposListPath+"/"+expertsTestRepoULID+"/experts" {
 		t.Fatalf("path = %q", fake.gotPath)
 	}
 }
@@ -682,8 +682,8 @@ func TestExpertsCommandAcceptsRepoULIDWithoutResolution(t *testing.T) {
 	if fake.gotGetPath != "" {
 		t.Fatalf("a ULID --repo should skip resolution, but GET %q was called", fake.gotGetPath)
 	}
-	if fake.gotPath != "/api/v1/repos/"+expertsTestRepoULID+"/experts" {
-		t.Fatalf("path = %q, want /api/v1/repos/%s/experts", fake.gotPath, expertsTestRepoULID)
+	if fake.gotPath != expertsReposListPath+"/"+expertsTestRepoULID+"/experts" {
+		t.Fatalf("path = %q, want %s/%s/experts", fake.gotPath, expertsReposListPath, expertsTestRepoULID)
 	}
 }
 

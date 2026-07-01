@@ -51,8 +51,9 @@ type expertsFlags struct {
 }
 
 const (
-	expertsDefaultLimit = 8
-	expertsMaxLimit     = 20
+	expertsDefaultLimit  = 8
+	expertsMaxLimit      = 20
+	expertsReposListPath = "/api/v1/repos"
 )
 
 // expertLocalScopeResult is the outcome of interpreting a scope argument as a
@@ -350,7 +351,7 @@ func parseExpertsRepo(value string) (string, error) {
 }
 
 func expertsAPIPath(repoID string) string {
-	return "/api/v1/repos/" + url.PathEscape(repoID) + "/experts"
+	return expertsReposListPath + "/" + url.PathEscape(repoID) + "/experts"
 }
 
 // resolveExpertsRepoID maps an owner/repo to its repo ULID for the entire-api
@@ -384,7 +385,7 @@ type expertsRepoListItem struct {
 // is added — same pattern as fetchAllPages in core list commands.
 func listExpertsAccessibleRepos(ctx context.Context, client expertsAPIClient) ([]expertsRepoListItem, error) {
 	return fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]expertsRepoListItem, string, error) {
-		path := "/api/v1/repos"
+		path := expertsReposListPath
 		if cursor != "" {
 			path += "?" + url.Values{"page_token": {cursor}}.Encode()
 		}
