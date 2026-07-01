@@ -116,7 +116,11 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 		return nil, err
 	}
 
-	cellBaseURL, err := resolveTargetCellBaseURL(ctx, target, subject.dataOrigin, jurisdiction, coreURL, subject.loginJWT, subject.httpClient)
+	// The home-jurisdiction fallback lists the cluster catalog with loginJWT,
+	// which is signed by the discovered login core — so list there, not at the
+	// templated jurisdiction core (coreURL), which in a multi-core setup could
+	// differ and reject the token. coreURL still governs the token exchange below.
+	cellBaseURL, err := resolveTargetCellBaseURL(ctx, target, subject.dataOrigin, jurisdiction, subject.discoveredCore, subject.loginJWT, subject.httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -306,13 +310,13 @@ func targetJurisdiction(target *CellTarget, loginJWT string) (string, error) {
 }
 
 // resolveJurisdiction picks the jurisdiction to mint for: the explicit override
-// (normalised to a lowercase DNS label) when non-empty, otherwise the subject
-// token's home_jurisdiction claim. The result is validated as a DNS label before
-// it is templated into URLs. Normalising the override means `--jurisdiction US`,
-// `" us "` and `us` all resolve to `us`; the home-fallback claim is already a
-// lowercase label so it is left as-is (an off-spec claim still fails the check).
+// when non-empty, otherwise the subject token's home_jurisdiction claim. Either
+// source is normalised to a lowercase DNS label and validated before it is
+// templated into URLs — `--jurisdiction US`, `" us "` and `us` all resolve to
+// `us`, and an uppercase home_jurisdiction claim routes instead of hard-failing
+// the strict [a-z0-9-] label check.
 func resolveJurisdiction(override, loginJWT string) (string, error) {
-	jurisdiction := strings.ToLower(strings.TrimSpace(override))
+	jurisdiction := strings.TrimSpace(override)
 	if jurisdiction == "" {
 		var err error
 		jurisdiction, err = HomeJurisdictionFromLoginJWT(loginJWT)
@@ -320,6 +324,7 @@ func resolveJurisdiction(override, loginJWT string) (string, error) {
 			return "", err
 		}
 	}
+	jurisdiction = strings.ToLower(strings.TrimSpace(jurisdiction))
 	if jurisdiction == "" {
 		return "", errors.New("login token has no home_jurisdiction claim; cannot route to entire-api cell")
 	}
@@ -330,8 +335,10 @@ func resolveJurisdiction(override, loginJWT string) (string, error) {
 }
 
 // resolveTargetCellBaseURL decides which cell origin to dial. See
-// NewEntireAPICellClient's precedence doc.
-func resolveTargetCellBaseURL(ctx context.Context, target *CellTarget, dataOrigin, jurisdiction, coreURL, loginJWT string, httpClient *http.Client) (string, error) {
+// NewEntireAPICellClient's precedence doc. listCoreURL is the core the
+// home-jurisdiction fallback lists the cluster catalog against; it must be a
+// core that accepts loginJWT (i.e. the discovered login core).
+func resolveTargetCellBaseURL(ctx context.Context, target *CellTarget, dataOrigin, jurisdiction, listCoreURL, loginJWT string, httpClient *http.Client) (string, error) {
 	if target != nil && strings.TrimSpace(target.BaseURL) != "" {
 		return strings.TrimRight(target.BaseURL, "/"), nil
 	}
@@ -339,7 +346,7 @@ func resolveTargetCellBaseURL(ctx context.Context, target *CellTarget, dataOrigi
 		// Already a cell URL, or a loopback local-dev host: keep it verbatim.
 		return strings.TrimRight(dataOrigin, "/"), nil
 	}
-	return resolveCellAPIBaseURL(ctx, coreURL, loginJWT, jurisdiction, httpClient)
+	return resolveCellAPIBaseURL(ctx, listCoreURL, loginJWT, jurisdiction, httpClient)
 }
 
 // isBFFOrigin reports whether origin is a BFF / apex host that fronts multiple
@@ -499,6 +506,13 @@ type clusterListingRow struct {
 	APIURL       string `json:"apiUrl"`
 }
 
+// ErrNoCellForJurisdiction signals that the caller's home jurisdiction has no
+// entire-api cell in the cluster catalog (or its row carries no apiUrl). It is
+// not fatal: callers that also have a data-API path (e.g. activity/recap) treat
+// it as "entire-api isn't serving this region yet" and fall back rather than
+// failing the command. errors.Is unwraps it from the contextual message.
+var ErrNoCellForJurisdiction = errors.New("no entire-api cell configured for jurisdiction")
+
 // resolveCellAPIBaseURL is the home-jurisdiction fallback cell resolver: it
 // lists the caller's clusters and picks the apiUrl for `jurisdiction` (default
 // cluster first). It hand-parses GET /api/v1/clusters rather than reusing the
@@ -545,9 +559,9 @@ func resolveCellAPIBaseURL(ctx context.Context, coreURL, loginJWT, jurisdiction 
 		if sawJurisdiction {
 			// A cluster row exists for the jurisdiction but carries no apiUrl —
 			// a schema/deploy problem, distinct from "no cell for jurisdiction".
-			return "", fmt.Errorf("cluster for jurisdiction %q advertises no apiUrl (entire-api cell not configured?)", jurisdiction)
+			return "", fmt.Errorf("%w %q: cluster advertises no apiUrl (entire-api cell not configured?)", ErrNoCellForJurisdiction, jurisdiction)
 		}
-		return "", fmt.Errorf("no entire-api cell configured for jurisdiction %q", jurisdiction)
+		return "", fmt.Errorf("%w %q", ErrNoCellForJurisdiction, jurisdiction)
 	}
 	chosen := matches[0]
 	for _, row := range matches {
