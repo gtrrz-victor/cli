@@ -18,6 +18,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/cmd/entire/cli/gitremote"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/recap"
 )
@@ -123,7 +124,7 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 	if err != nil {
 		return err
 	}
-	client, err := newRecapClient(ctx, f.insecureHTTP)
+	client, repoSlug, err := newRecapClient(ctx, f.insecureHTTP)
 	if err != nil {
 		if errors.Is(err, api.ErrInsecureHTTP) {
 			fmt.Fprintf(errW, "ENTIRE_API_BASE_URL is set to an insecure http:// URL (%s). Use https:// for production, or pass --insecure-http-auth for local dev.\n", api.BaseURL())
@@ -138,7 +139,6 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 		return err
 	}
 	rangeKey := f.rangeKey()
-	repoSlug := currentRepoSlug(ctx)
 	if f.useTUI(interactive.IsTerminalWriter(w), interactive.CanPromptInteractively(), IsAccessibleMode()) {
 		return runRecapTUI(ctx, client, recapTUIOptions{
 			Range: rangeKey,
@@ -179,7 +179,26 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 // these were all relabelled as keyring read failures via keyringReadError,
 // which sent users on wild goose chases when the keyring was fine and the real
 // problem was downstream.
-func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, error) {
+// newRecapClient returns the recap client and the value to pass as /me/recap's
+// ?repo= (its team/contributors scope): the current repo's ULID when routed to
+// an entire-api cell (which addresses repos by id), or its owner/repo slug on
+// the data API (which addresses them by name). Empty when the current repo
+// can't be resolved — recap then shows the personal side only.
+//
+// It prefers the caller's home entire-api cell (the shared client), falling back
+// to the data API when the region has no cell yet (ErrNoCellForJurisdiction) or
+// the caller isn't logged in — recap tolerates the latter, rendering and letting
+// the server answer 401 rather than hard-failing. Every other failure surfaces.
+func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, string, error) {
+	if client, err := auth.NewEntireAPICellClient(ctx, insecureHTTP, nil); err == nil {
+		return client, currentRepoID(ctx), nil
+	} else if !errors.Is(err, auth.ErrNoCellForJurisdiction) {
+		// Best-effort upgrade: fall back to the data API on any cell failure. Its
+		// path below tolerates a missing login (renders, lets the server 401), so
+		// the not-logged-in case keeps working; log non-obvious failures.
+		logging.Debug(ctx, "recap: entire-api cell client unavailable, using data API", "error", err.Error())
+	}
+
 	if insecureHTTP {
 		auth.EnableInsecureHTTP()
 	}
@@ -189,14 +208,14 @@ func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, error)
 		err = nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if token != "" && !insecureHTTP {
 		if err := api.RequireSecureURL(api.BaseURL()); err != nil {
-			return nil, fmt.Errorf("base URL check: %w", err)
+			return nil, "", fmt.Errorf("base URL check: %w", err)
 		}
 	}
-	return api.NewClient(token), nil
+	return api.NewClient(token), currentRepoSlug(ctx), nil
 }
 
 func handleRecapFetchError(w io.Writer, err error) error {
