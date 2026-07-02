@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -33,18 +34,26 @@ func main() {
 	signal.Notify(sigChan, signals...)
 	go func() {
 		// First signal: cancel the context so in-flight work unwinds
-		// cleanly. signal.Notify has disabled Go's default "SIGINT
+		// cleanly. signal.Notify has disabled Go's default "signal
 		// terminates" behavior, so without the second read below a user
 		// who Ctrl-C's again during a slow/stuck shutdown (e.g. a keyring
 		// read blocked in a subprocess we can't cancel) would find every
 		// further Ctrl-C swallowed. The second read restores an escape
-		// hatch: press Ctrl-C again to force-exit with the conventional
-		// 130 (128 + SIGINT).
-		<-sigChan
-		fmt.Fprintln(os.Stderr, "\nInterrupting… press Ctrl-C again to force quit.")
+		// hatch: signal again to force-exit.
+		//
+		// We remember which signal fired so the eventual termination
+		// re-raises that same signal — a SIGTERM (from a supervisor /
+		// container stop) must exit 143, not masquerade as a SIGINT 130.
+		sig := <-sigChan
+		caughtSignal.Store(sig)
+		if sig == os.Interrupt {
+			fmt.Fprintln(os.Stderr, "\nInterrupting… press Ctrl-C again to force quit.")
+		} else {
+			fmt.Fprintln(os.Stderr, "\nReceived termination signal, shutting down… signal again to force quit.")
+		}
 		cancel()
 		<-sigChan
-		dieFromInterrupt()
+		dieFromSignal(sig)
 	}()
 
 	// Create and execute root command
@@ -81,14 +90,15 @@ func main() {
 
 		switch {
 		case errors.Is(err, context.Canceled):
-			// User aborted (Ctrl-C cancelled the root context). Don't dump
-			// the raw transport/keyring cancellation string ("...: context
+			// Aborted (a signal cancelled the root context). Don't dump the
+			// raw transport/keyring cancellation string ("...: context
 			// canceled", "read access token: signal: interrupt") as if it
-			// were a failure — die quietly by re-raising SIGINT (see
-			// dieFromInterrupt) so an enclosing `while ...; do entire; done`
-			// loop actually breaks on a single Ctrl-C.
+			// were a failure — die quietly by re-raising the signal that
+			// triggered it (see dieFromSignal) so an enclosing
+			// `while ...; do entire; done` loop actually breaks on a single
+			// Ctrl-C, and a SIGTERM shutdown still exits 143.
 			cancel()
-			dieFromInterrupt()
+			dieFromSignal(terminatingSignal())
 		case errors.As(err, &silent):
 			// Command already printed the error
 		case strings.Contains(err.Error(), "unknown command") || strings.Contains(err.Error(), "unknown flag"):
@@ -114,23 +124,51 @@ func main() {
 	cancel() // Cleanup on successful exit
 }
 
-// dieFromInterrupt terminates the process as if it had been killed by SIGINT,
-// rather than exiting normally with code 130. The distinction matters to an
-// interactive shell: it only aborts a `while true; do entire ...; done` loop
-// when the child is *killed by* SIGINT (WIFSIGNALED). A plain os.Exit(130) is
-// an ordinary exit, so the loop keeps respawning entire and Ctrl-C never
-// escapes it. We reset SIGINT to its default disposition, re-raise it to
+// caughtSignal records the terminating signal (SIGINT or SIGTERM) the handler
+// observed, so a later cancellation-driven exit can re-raise the *same* signal
+// rather than always SIGINT. Read via terminatingSignal.
+var caughtSignal atomic.Value // stores os.Signal
+
+// terminatingSignal returns the signal that cancelled the root context,
+// defaulting to SIGINT when the cancellation came from something other than
+// our signal handler (so a stray context.Canceled still exits 130).
+func terminatingSignal() os.Signal {
+	if v := caughtSignal.Load(); v != nil {
+		if s, ok := v.(os.Signal); ok {
+			return s
+		}
+	}
+	return os.Interrupt
+}
+
+// dieFromSignal terminates the process as if it had been killed by sig, rather
+// than exiting normally. The distinction matters to an interactive shell: it
+// only aborts a `while true; do entire ...; done` loop when the child is
+// *killed by* SIGINT (WIFSIGNALED). A plain os.Exit(130) is an ordinary exit,
+// so the loop keeps respawning entire and Ctrl-C never escapes it. Re-raising
+// the actual signal also keeps a SIGTERM shutdown reporting the conventional
+// 143 (not 130). We reset sig to its default disposition, re-raise it to
 // ourselves, and briefly wait for delivery; if the re-raise can't be delivered
-// (e.g. Windows, where os.Interrupt-to-self is unsupported) we fall back to a
-// conventional exit so we never hang.
-func dieFromInterrupt() {
-	signal.Reset(os.Interrupt)
+// (e.g. Windows, where signal-to-self is unsupported) we fall back to a
+// conventional 128+signal exit so we never hang.
+func dieFromSignal(sig os.Signal) {
+	signal.Reset(sig)
 	if p, err := os.FindProcess(os.Getpid()); err == nil {
-		if err := p.Signal(os.Interrupt); err == nil {
+		if err := p.Signal(sig); err == nil {
 			time.Sleep(500 * time.Millisecond) // signal delivery ends the process well before this elapses
 		}
 	}
-	os.Exit(130)
+	os.Exit(exitCodeForSignal(sig))
+}
+
+// exitCodeForSignal maps a signal to the conventional 128+signum exit code
+// (130 for SIGINT, 143 for SIGTERM), falling back to 130 for a signal that
+// doesn't carry a numeric value on this platform.
+func exitCodeForSignal(sig os.Signal) int {
+	if s, ok := sig.(syscall.Signal); ok {
+		return 128 + int(s)
+	}
+	return 130
 }
 
 // isPositionalArgError reports whether err looks like a cobra positional-
