@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	cli "github.com/entireio/cli/cmd/entire/cli"
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -146,8 +147,12 @@ func TestReviewCmd_ListModels(t *testing.T) {
 			t.Errorf("--models output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "gpt-5-codex") {
-		t.Errorf("--models should not invent example codex models:\n%s", out)
+	// codex has no enumeration command, so its own section must show the
+	// no-advertised-models note rather than invented examples. (A substring
+	// check would false-positive on Pi's live list, which legitimately
+	// includes openai/gpt-5-codex.)
+	if !strings.Contains(out, "codex:\n  (no advertised models") {
+		t.Errorf("codex section should show no advertised models:\n%s", out)
 	}
 }
 
@@ -394,6 +399,26 @@ func TestRunReview_BareNonInteractiveRequiresProfile(t *testing.T) {
 	_, exists, markerErr := review.ReadPendingReviewMarker(context.Background())
 	if markerErr == nil && exists {
 		t.Error("bare non-interactive review should not have started a review")
+	}
+}
+
+func TestReviewEditNonInteractiveRefusesWithScriptedAlternatives(t *testing.T) {
+	setupCmdTestRepo(t)
+
+	rootCmd := cli.NewRootCmd()
+	errBuf := &bytes.Buffer{}
+	rootCmd.SetErr(errBuf)
+	rootCmd.SetArgs([]string{"review", "--edit"})
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected non-interactive --edit to fail")
+	}
+	got := errBuf.String()
+	for _, want := range []string{"--edit requires an interactive terminal", "entire review --configure --set-agents", "entire review --list"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("--edit error missing %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -907,6 +932,50 @@ func TestComposeMultiAgentSinks(t *testing.T) {
 	}
 }
 
+// TestComposeMultiAgentSinks_JudgeTimeoutWired proves the resolved --timeout
+// value AND the synthesis-error callback reach the judge: composeMultiAgentSinks
+// must set the SynthesisSink's ProviderTimeout from judgeTimeout and its OnError
+// from onSynthesisError, in both the TTY and non-TTY paths. Without the former
+// the judge would silently keep its own default regardless of --timeout; without
+// the latter a failed judge could not surface in the command's exit status.
+func TestComposeMultiAgentSinks_JudgeTimeoutWired(t *testing.T) {
+	t.Parallel()
+
+	provider := &stubCmdSynthesisProvider{}
+	noopCancel := func() {}
+	const want = 17 * time.Minute
+
+	for _, isTTY := range []bool{false, true} {
+		t.Run(map[bool]string{false: "non-tty", true: "tty"}[isTTY], func(t *testing.T) {
+			t.Parallel()
+			sinks := review.ExposedComposeMultiAgentSinks(review.SinkComposeInputs{
+				Out:               &bytes.Buffer{},
+				IsTTY:             isTTY,
+				AgentNames:        []string{"a", "b"},
+				CancelRun:         noopCancel,
+				SynthesisProvider: provider,
+				JudgeTimeout:      want,
+				OnSynthesisError:  func(error) {},
+			})
+			var found bool
+			for _, s := range sinks {
+				if ss, ok := s.(review.SynthesisSink); ok {
+					found = true
+					if ss.ProviderTimeout != want {
+						t.Errorf("SynthesisSink.ProviderTimeout = %v, want %v (judgeTimeout not wired)", ss.ProviderTimeout, want)
+					}
+					if ss.OnError == nil {
+						t.Error("SynthesisSink.OnError is nil (onSynthesisError not wired) — a failed judge could not fail the command")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("no SynthesisSink composed")
+			}
+		})
+	}
+}
+
 func TestComposeSingleAgentSinks(t *testing.T) {
 	t.Parallel()
 
@@ -1007,12 +1076,8 @@ func TestComposeSinks_TUIWritersRunBeforePostRunWriters(t *testing.T) {
 	if _, ok := multi[0].(*review.TUISink); !ok {
 		t.Fatalf("multi sink[0] = %T, want *TUISink", multi[0])
 	}
-	multiDump, ok := multi[1].(review.DumpSink)
-	if !ok {
+	if _, ok := multi[1].(review.DumpSink); !ok {
 		t.Fatalf("multi sink[1] = %T, want buffered DumpSink", multi[1])
-	}
-	if multiDump.RenderWriter != multiOut {
-		t.Fatalf("multi DumpSink RenderWriter = %T, want output writer", multiDump.RenderWriter)
 	}
 	multiSynth, ok := multi[2].(review.SynthesisSink)
 	if !ok {
@@ -1036,12 +1101,8 @@ func TestComposeSinks_TUIWritersRunBeforePostRunWriters(t *testing.T) {
 	if _, ok := single[0].(*review.TUISink); !ok {
 		t.Fatalf("single sink[0] = %T, want *TUISink", single[0])
 	}
-	singleDump, ok := single[1].(review.DumpSink)
-	if !ok {
+	if _, ok := single[1].(review.DumpSink); !ok {
 		t.Fatalf("single sink[1] = %T, want buffered DumpSink", single[1])
-	}
-	if singleDump.RenderWriter != singleOut {
-		t.Fatalf("single DumpSink RenderWriter = %T, want output writer", singleDump.RenderWriter)
 	}
 	if !review.ExposedIsTUIPostRunCompleteSink(single[2]) {
 		t.Fatalf("single sink[2] = %T, want TUI post-run finalizer", single[2])

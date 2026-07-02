@@ -506,7 +506,7 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 	// Same create-then-wait path as the one-shot `repo mirror create <url>`
 	// (createAndAwaitMirror), so both report identical lifecycle states. The
 	// per-poll status drives this mirror's progress line.
-	outcome, err := createAndAwaitMirror(ctx, c, t.owner, t.repo, t.region.host, noWait, waitTimeout,
+	outcome, err := createAndAwaitMirror(ctx, c, t.owner, t.repo, t.region.host, noWait, waitTimeout, nil,
 		func(s coreapi.MirrorStatus) { report(string(s), false, false) })
 	if outcome.created == nil {
 		res.status, res.err = mirrorStatusError, renderCoreError(err)
@@ -514,6 +514,15 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 		return res
 	}
 	res.cloneURL = outcome.created.MirrorUrl
+
+	if outcome.created.Suspended {
+		// An admin suspended this existing placement, so it won't be served.
+		// Surface it as a distinct status and set an error so the batch exits
+		// non-zero, matching the one-shot: a suspended mirror isn't a success.
+		res.status, res.err = mirrorStatusSuspended, errors.New("suspended by an admin; won't be usable")
+		report(mirrorStatusSuspended, true, false)
+		return res
+	}
 
 	if !outcome.polled {
 		if outcome.created.Empty {
