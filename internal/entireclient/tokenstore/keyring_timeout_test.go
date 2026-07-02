@@ -3,6 +3,7 @@ package tokenstore
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,38 @@ func TestCallKeyringWithTimeout_DeadlineExceeded(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("timeout error %q missing %q", msg, want)
 		}
+	}
+}
+
+// A Ctrl-C must unblock a stuck keyring call immediately — well before the
+// timeout — and surface as a context.Canceled so the CLI treats it as a user
+// abort rather than a keyring failure.
+func TestCallKeyringWithInterrupt_AbortsOnSignal(t *testing.T) {
+	t.Parallel()
+
+	interrupt := make(chan os.Signal, 1)
+	started := make(chan struct{})
+	start := time.Now()
+	go func() {
+		<-started
+		interrupt <- os.Interrupt
+	}()
+
+	_, err := callKeyringWithInterrupt("get", 10*time.Second, func() (string, error) {
+		close(started)
+		time.Sleep(10 * time.Second) // never completes within the test
+		return "should not be returned", nil
+	}, interrupt)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled wrapped, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("interrupt did not return promptly: elapsed=%s", elapsed)
+	}
+	if !strings.Contains(err.Error(), "interrupted") {
+		t.Errorf("error %q should mention it was interrupted", err.Error())
 	}
 }
 
