@@ -71,6 +71,7 @@ func main() {
 			// doesn't visibly react in time, and treating that as termination
 			// would end the session mid-test.
 			if line == "" {
+				fmt.Fprint(os.Stdout, "> ")
 				continue
 			}
 			// Give tmux's Send() time to observe a distinct pre-output pane

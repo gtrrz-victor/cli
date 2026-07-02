@@ -98,19 +98,29 @@ func (s *TmuxSession) Send(input string) error {
 }
 
 // waitForInputIngested waits until the pane content has changed from preSend
-// (the echoed input is visible) and stopped changing between consecutive
-// polls (the TUI's input handler has caught up), then returns the settled
-// content. Gives up after 15s and returns the last capture.
+// (the echoed input is visible) and held still for two consecutive polls
+// (the TUI's input handler has caught up — droid renders long pastes in
+// bursts, so a single quiet interval can fake stability), then returns the
+// settled content. Gives up after 15s and returns the last capture.
+//
+// Compares raw captures: the input box lives in the bottom lines that
+// stableContent strips, so stable comparison would be blind to the echo.
 func (s *TmuxSession) waitForInputIngested(preSend string) string {
 	deadline := time.Now().Add(15 * time.Second)
 	last := s.Capture()
+	stablePolls := 0
 	for time.Now().Before(deadline) {
 		time.Sleep(300 * time.Millisecond)
 		current := s.Capture()
-		if current == last && current != preSend {
+		if current != last || current == preSend {
+			stablePolls = 0
+			last = current
+			continue
+		}
+		stablePolls++
+		if stablePolls >= 2 {
 			return current
 		}
-		last = current
 	}
 	return last
 }
