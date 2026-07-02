@@ -34,7 +34,7 @@ func TestFactoryTaskCheckpointExistsBeforeCommit(t *testing.T) {
 		// WaitFor can return while droid is still working: the input box's
 		// "> Enter to steer" matches the prompt pattern even mid-turn, so the
 		// file wait must absorb the Worker's runtime (60-120s turns on CI).
-		testutil.WaitForFileExists(t, s.Dir, "docs/factory-hook-check.md", 90*time.Second)
+		testutil.WaitForFileExists(t, s.Dir, "docs/factory-hook-check.md", 120*time.Second)
 
 		waitForTaskRewindPoint(t, s.Dir, 30*time.Second)
 	})
@@ -62,7 +62,7 @@ func TestFactoryCommittedCheckpointExcludesPreExistingUntrackedFiles(t *testing.
 
 		// See TestFactoryTaskCheckpointExistsBeforeCommit: the file wait must
 		// absorb the Worker's runtime because WaitFor can return mid-turn.
-		testutil.WaitForFileExists(t, s.Dir, "docs/factory-prehook-worker.md", 90*time.Second)
+		testutil.WaitForFileExists(t, s.Dir, "docs/factory-prehook-worker.md", 120*time.Second)
 		waitForTaskRewindPoint(t, s.Dir, 30*time.Second)
 
 		s.Git(t, "add", "docs/factory-prehook-worker.md")
