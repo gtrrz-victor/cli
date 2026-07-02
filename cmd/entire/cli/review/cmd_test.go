@@ -147,8 +147,12 @@ func TestReviewCmd_ListModels(t *testing.T) {
 			t.Errorf("--models output missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "gpt-5-codex") {
-		t.Errorf("--models should not invent example codex models:\n%s", out)
+	// codex has no enumeration command, so its own section must show the
+	// no-advertised-models note rather than invented examples. (A substring
+	// check would false-positive on Pi's live list, which legitimately
+	// includes openai/gpt-5-codex.)
+	if !strings.Contains(out, "codex:\n  (no advertised models") {
+		t.Errorf("codex section should show no advertised models:\n%s", out)
 	}
 }
 
