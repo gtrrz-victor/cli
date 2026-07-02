@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
@@ -56,12 +57,51 @@ func NewClientWithBaseURL(token, baseURL string) *Client {
 				token: token,
 				base:  http.DefaultTransport,
 			},
+			// A cross-host redirect must never carry the Entire bearer to
+			// another origin; refuse it rather than follow it. Same-origin
+			// requests are guaranteed by the base-host check in do().
+			CheckRedirect: rejectCrossHostRedirect,
 		},
 		baseURL: baseURL,
 	}
 }
 
+// rejectCrossHostRedirect stops a redirect chain from leaving the origin the
+// client was built for. Same-host redirects (e.g. a trailing-slash normalize)
+// still follow, up to Go's usual 10-hop cap.
+func rejectCrossHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		return fmt.Errorf("refusing redirect to a different host (%s → %s): the Entire bearer must not leave its origin", via[0].URL.Host, req.URL.Host)
+	}
+	return nil
+}
+
+// requireSameHost rejects an endpoint whose host differs from the base URL's.
+// It guards the direct case (a path that resolved to another host); redirects
+// are handled by rejectCrossHostRedirect.
+func requireSameHost(baseURL, endpoint string) error {
+	b, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("parse base URL: %w", err)
+	}
+	e, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse endpoint URL: %w", err)
+	}
+	if !strings.EqualFold(b.Host, e.Host) {
+		return fmt.Errorf("refusing to send an authenticated request to %q, which is not the API host %q", e.Host, b.Host)
+	}
+	return nil
+}
+
 // bearerTransport is an http.RoundTripper that injects the Authorization header.
+//
+// The token is only ever sent to the client's base host: do() rejects a request
+// URL whose host differs from the base, and CheckRedirect refuses a cross-host
+// redirect, so every request this transport sees is same-origin as the base.
 //
 // When token is empty, the Authorization header is omitted (rather than sent
 // as a malformed "Authorization: Bearer "). This supports endpoints like
@@ -162,6 +202,12 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, he
 	endpoint, err := ResolveURLFromBase(c.baseURL, path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve URL %s: %w", path, err)
+	}
+	// The bearer is only ever sent to the API's own host. A path that resolves
+	// to another host (absolute or scheme-relative URL) would otherwise redirect
+	// the Authorization header off-origin.
+	if err := requireSameHost(c.baseURL, endpoint); err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)

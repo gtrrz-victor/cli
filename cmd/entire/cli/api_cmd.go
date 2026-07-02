@@ -121,7 +121,9 @@ func resolveAPIClient(ctx context.Context, to string, insecure bool) (*api.Clien
 			return nil, err
 		}
 		if target.token == "" {
-			return nil, NewSilentError(errors.New("not logged in (run 'entire login' first)"))
+			// Return a normal (non-silent) error so main.go prints the hint;
+			// a SilentError would exit non-zero with no explanation.
+			return nil, errors.New("not logged in: run 'entire login' to authenticate")
 		}
 		if !insecure && target.coreURL != "" {
 			if err := api.RequireSecureURL(target.coreURL); err != nil {
