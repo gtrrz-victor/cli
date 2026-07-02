@@ -29,12 +29,15 @@ pointing at the canonical group form. Newer experimental command families are
 discoverable through `entire labs` and may remain hidden from root help while
 their canonical paths are still runnable.
 
-- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `resume`, `current`.
+- `session` (alias: `sessions`): `list`, `info`, `tokens`, `stop`, `attach`, `adopt`, `resume`, `current`.
   `resume` with a branch arg switches to it and resumes its session; with no arg
   it opens an interactive picker of stopped sessions (across all worktrees),
   resolving each to its branch and pointing at the owning worktree when the
   branch is checked out elsewhere. Resume keeps an existing local session log
   as-is by default (`--force` overwrites it from the checkpoint).
+  `adopt` moves an active session from another repo or worktree into the current
+  worktree and resets target-local checkpoint bookkeeping so future commits link
+  to the adopted session from the new location.
 - `checkpoint` (aliases: `cp`, `checkpoints`): `list`, `explain`, `tokens`, `search`, plus
   the deprecated `rewind` (functional, prints a cobra deprecation message, will
   be removed in a future release)
@@ -55,7 +58,26 @@ Experimental command families advertised through `entire labs`:
 
 Top-level lifecycle and standalone commands: `enable`, `disable`, `status`,
 `login`, `logout`, `clean`, `version`, `dispatch`, `activity`, `help`,
-`configure`.
+`configure`, `agent-help`.
+
+`agent-help` renders machine-readable, agent-facing usage live from the Cobra
+command tree (so it always matches the installed binary): bare prints a
+"when to use entire / which subcommand" map; `agent-help <command>` drills into
+one command's current flags; `--json` emits structured output. It is the single
+source of truth the first-turn context injection and the `--agent-help-skill`
+skill point agents at, instead of enumerating a surface that goes stale.
+Hidden commands opt into being advertised here by setting
+`Annotations[agentHelpAnnotation] = "true"` (e.g. `trail`).
+No-channel agents (Cursor, Copilot CLI, Factory Droid, MCP hosts — no
+context-injection channel and no agent-help skill template) reach it without an
+active push. All of them can discover it passively: it is visible in `entire
+help`, the `entire status` footer points at it, and `entire status --json`
+exposes it as the `agent_help` field. On top of that, Factory AI Droid (which is
+banner-only) gets the pointer appended to its SessionStart hook banner, and
+MCP-host agents can launch the hidden `entire mcp` stdio server, which exposes
+`agent_help` and `entire_status` as MCP tools using the same live rendering.
+Enabling a no-channel agent with `--agent-help-skill` reports the skill
+unsupported and points the agent at this passive path instead.
 
 Hidden top-level shortcuts (functional, emit a one-line deprecation hint):
 `resume` → `session resume`, `attach` → `session attach`, `explain` →
@@ -68,7 +90,8 @@ Deprecated top-level commands (functional, print a cobra deprecation message):
 deprecation as `checkpoint rewind`).
 
 Hidden infrastructure commands: `hooks`, `trail`,
-`curl-bash-post-install`, `__send_analytics`.
+`curl-bash-post-install`, `__send_analytics`, `mcp` (MCP stdio server for
+MCP-host agents).
 
 The `hideAsAlias(cmd, canonical)` helper in `cmd/entire/cli/aliascmd.go`
 marks a command Hidden and sets cobra's `Deprecated` field so the hint
@@ -497,7 +520,7 @@ The manual-commit strategy (`manual_commit*.go`) does not modify the active bran
 - **Worktree-specific branches** - each git worktree gets its own shadow branch namespace, preventing conflicts
 - **Supports multiple concurrent sessions** - checkpoints from different sessions in the same directory interleave on the same shadow branch
 - Condenses session logs to permanent `entire/checkpoints/v1` branch on user commits
-- Each committed session stores the raw transcript (`full.jsonl`, read by CLI rewind/resume/explain) plus a best-effort compact transcript (`transcript.jsonl`, generated via `transcript/compact` and pre-sliced to the checkpoint's `checkpoint_transcript_start`). Both are pushed with the v1 branch. The root `metadata.json` `sessions[].transcript` pointer keeps targeting `full.jsonl`; when the compact transcript was generated the session entry also carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted otherwise) so external readers can locate it next to `full.jsonl`.
+- Each committed session stores the raw transcript (`full.jsonl`, read by CLI rewind/resume/explain) plus a best-effort compact transcript (`transcript.jsonl`, generated via `transcript/compact`). Like `full.jsonl`, `transcript.jsonl` stores the **full compacted session** on every checkpoint (via `compact.FullWithBoundary`), so each checkpoint is self-contained and the session survives a mid-history checkpoint being lost/reverted/rebased. This checkpoint's slice begins at the session metadata's `compact_transcript_start` (a line offset in compact-output coordinates, distinct from `checkpoint_transcript_start` which indexes raw `full.jsonl` lines); a nil/absent marker means a legacy delta-only `transcript.jsonl` (read from line 0). The marker rounds toward inclusion when a streaming message straddles the boundary, so the slice never drops this checkpoint's content but may repeat ≤1 merged line at its head. Compact generation is best-effort and is skipped when the compacted output exceeds the 50MB blob cap (unlike `full.jsonl`, `transcript.jsonl` is not chunked — `full.jsonl` stays authoritative and the compact is regenerable); in the OPF finalize rewrite a failed/skipped regeneration drops the prior `transcript.jsonl` and clears the marker rather than shipping a stale, less-redacted compact. Both files are pushed with the v1 branch. The root `metadata.json` `sessions[].transcript` pointer keeps targeting `full.jsonl`; when the compact transcript was generated the session entry also carries a `compact_transcript` path pointing at `transcript.jsonl` (omitted otherwise) so external readers can locate it next to `full.jsonl`.
 - Uses the `post-rewrite` Git hook to keep local session linkage aligned after amend/rebase rewrites
 - Builds git trees in-memory using go-git plumbing APIs
 - Rewind restores files from shadow branch commit tree (does not use `git reset`)
@@ -540,6 +563,56 @@ The phase state machine, metadata directory layout, sharded checkpoint format, m
 `entire review` runs a configured review profile. Keep documentation brief and user-facing.
 
 See [Review Command](docs/architecture/review-command.md) for usage, minimal profile config, and key files.
+
+### Agent-Safe CLI Fallbacks
+
+When building CLI features, do not make useful output available only through a
+TUI, picker, wizard, terminal selection menu, confirmation dialog, or stdin
+question. Agents must be able to complete the same read-only workflow from a
+non-interactive terminal.
+
+Plain text output is acceptable when it contains the full information needed for
+the workflow. JSON is preferred for structured data, following existing patterns
+such as `--json` on `status`, `agent-help`, `sessions`, `search`, and trail
+finding commands. Long human-readable output may use a pager in TTY mode, but
+must provide a bypass like the existing `--no-pager` pattern on `explain`.
+
+For interactive browsing flows, provide one of these non-interactive shapes:
+
+- a list command that prints stable identifiers, plus a show/detail command that
+  accepts an identifier
+- a flag or positional argument that selects the item directly
+- a complete text or JSON fallback when stdout is not a terminal, like existing
+  static/text fallbacks for TUI-backed commands
+
+When reviewing CLI changes, inspect terminal-gated paths such as
+`IsTerminalWriter`, `CanPromptInteractively`, Bubble Tea, `huh`, direct stdin
+reads, terminal selection menus, confirmation dialogs, and wizard flows. Flag
+the change if a non-interactive agent can only see a menu, preview, truncated
+summary, or cannot select the item whose details matter.
+
+Tests for interactive CLI features should cover the non-interactive path. See
+the "Spawning subprocesses in tests (TTY detection)" section above for the
+`execx.NonInteractive` pattern when testing a real `entire` command.
+
+Existing good patterns:
+
+- `entire investigate --findings` prints a complete plain-text list and includes
+  `view: entire investigate show <run-id>` hints.
+- `entire investigate show <run-id>` prints the saved investigation summary and
+  findings without needing a TUI.
+- `entire repo clone /gh/...` prompts only when several clusters are possible;
+  without a TTY it asks for `--cluster`.
+- `entire experts --tui` is safe because the TUI is opt-in and non-TTY output
+  falls back to deterministic plain text.
+- `entire explain --no-pager` is the local pattern for avoiding pager-only long
+  text output.
+- `entire status --json`, `entire agent-help --json`, `entire sessions list --json`,
+  and trail finding commands show the local `--json` convention.
+
+Do not require JSON everywhere. Human-readable text is fine if it contains the
+complete information an agent needs. The failure mode is requiring an
+interactive terminal to select something or reveal details.
 
 # Important Notes
 

@@ -75,6 +75,11 @@ type GetRepoParams struct {
 	RepoId string
 }
 
+// GetRepoVisibilityParams is parameters of getRepoVisibility operation.
+type GetRepoVisibilityParams struct {
+	RepoId string
+}
+
 // GetServiceAccountParams is parameters of getServiceAccount operation.
 type GetServiceAccountParams struct {
 	AccountId string
@@ -105,7 +110,7 @@ type ListAuditEventsParams struct {
 
 // ListAvailableMirrorsParams is parameters of listAvailableMirrors operation.
 type ListAvailableMirrorsParams struct {
-	// Optional: restrict to repos with this owner login.
+	// Optional: restrict to repos with this owner login (case-insensitive).
 	Owner OptString `json:",omitempty,omitzero"`
 }
 
@@ -134,10 +139,11 @@ type ListMirrorsParams struct {
 	// Opaque cursor from a previous response's nextPageToken.
 	PageToken OptString `json:",omitempty,omitzero"`
 	// Optional: restrict to mirrors on this cluster (public host, e.g. royalcanin.partial.to).
+	// Case-sensitive exact match.
 	Cluster OptString `json:",omitempty,omitzero"`
-	// Optional: restrict to mirrors of this upstream provider (e.g. "github").
+	// Optional: restrict to mirrors of this upstream provider, case-insensitive (e.g. "github").
 	Provider OptString `json:",omitempty,omitzero"`
-	// Optional: restrict to mirrors with this upstream owner login.
+	// Optional: restrict to mirrors with this upstream owner login (case-insensitive).
 	Owner OptString `json:",omitempty,omitzero"`
 }
 
@@ -175,7 +181,7 @@ type ListOrgsParams struct {
 	PageSize OptInt32 `json:",omitempty,omitzero"`
 	// Opaque cursor from a previous response's nextPageToken.
 	PageToken OptString `json:",omitempty,omitzero"`
-	// Optional: exact-match org name.
+	// Optional: exact-match org name (case-insensitive).
 	Name OptString `json:",omitempty,omitzero"`
 }
 
@@ -195,7 +201,7 @@ type ListProjectReposParams struct {
 	// Opaque cursor from a previous response's nextPageToken.
 	PageToken OptString `json:",omitempty,omitzero"`
 	ProjectId string
-	// Optional: exact-match repo name.
+	// Optional: exact-match repo name (case-insensitive).
 	Name OptString `json:",omitempty,omitzero"`
 }
 
@@ -205,7 +211,7 @@ type ListProjectsParams struct {
 	PageSize OptInt32 `json:",omitempty,omitzero"`
 	// Opaque cursor from a previous response's nextPageToken.
 	PageToken OptString `json:",omitempty,omitzero"`
-	// Optional: exact-match project name.
+	// Optional: exact-match project name (case-insensitive).
 	Name OptString `json:",omitempty,omitzero"`
 }
 
@@ -236,6 +242,12 @@ type ListServiceAccountsParams struct {
 	OrgId     string
 }
 
+// LookupRepoBySlugParams is parameters of lookupRepoBySlug operation.
+type LookupRepoBySlugParams struct {
+	// Provider-scoped slug, e.g. gh/acme/oss-lib or et/my-project/my-repo.
+	Slug string
+}
+
 // LookupResourcesParams is parameters of lookupResources operation.
 type LookupResourcesParams struct {
 	// Maximum entries to return; server may cap further.
@@ -261,17 +273,6 @@ type ResolveHandleParams struct {
 	// IdP slug (e.g. "github").
 	Provider string
 	// User-visible handle at the provider.
-	Handle string
-}
-
-// RevokeMirrorCollaboratorParams is parameters of revokeMirrorCollaborator operation.
-type RevokeMirrorCollaboratorParams struct {
-	Provider RevokeMirrorCollaboratorProvider
-	Owner    string
-	Repo     string
-	// Public host of the cluster serving the mirror.
-	ClusterHost string
-	// Qualified grantee handle, e.g. github:alice.
 	Handle string
 }
 
@@ -308,4 +309,9 @@ type RevokeServiceAccountAccessParams struct {
 	AccountId    string
 	ResourceType RevokeServiceAccountAccessResourceType
 	ResourceId   string
+}
+
+// SetRepoVisibilityParams is parameters of setRepoVisibility operation.
+type SetRepoVisibilityParams struct {
+	RepoId string
 }

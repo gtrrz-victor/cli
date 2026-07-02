@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,10 @@ import (
 
 	"github.com/entireio/cli/internal/coreapi"
 )
+
+// mirrorsAPIPath is the control-plane mirrors collection endpoint, shared by the
+// fake servers in these tests.
+const mirrorsAPIPath = "/api/v1/mirrors"
 
 func TestExplainSuspendedMirror(t *testing.T) {
 	t.Parallel()
@@ -120,6 +125,119 @@ func TestAwaitMirrorReady(t *testing.T) {
 	})
 }
 
+// serveMirrorCreate stands up a control plane that answers POST /mirrors with
+// the given CreatedMirror (or a 500 when createErr) and GET /mirrors/{id} with
+// a Ready status, then points createAndAwaitMirror's client at it. It records
+// the ordered request paths so tests can assert create-before-poll sequencing.
+func serveMirrorCreate(t *testing.T, created *coreapi.CreatedMirror, createErr bool) (*coreapi.Client, *[]string) {
+	t.Helper()
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == mirrorsAPIPath:
+			if createErr {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			if err := writeJSON(w, created); err != nil {
+				t.Errorf("encode created response: %v", err)
+			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/mirrors/"):
+			m := &coreapi.Mirror{}
+			m.Status = coreapi.NewOptMirrorStatus(coreapi.MirrorStatusReady)
+			if err := writeJSON(w, m); err != nil {
+				t.Errorf("encode mirror response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := coreapi.NewWithBearer(srv.URL, "tok")
+	require.NoError(t, err)
+	return c, &paths
+}
+
+// TestCreateAndAwaitMirror_OnCreated pins the onCreated callback contract: it
+// delimits the placing vs cloning phases, so it must fire exactly once on
+// CreateMirror success (before any clone polling / onStatus), and never on a
+// CreateMirror error.
+//
+// Not parallel: shortens the package-level mirrorPollInterval.
+func TestCreateAndAwaitMirror_OnCreated(t *testing.T) {
+	prev := mirrorPollInterval
+	mirrorPollInterval = time.Millisecond
+	t.Cleanup(func() { mirrorPollInterval = prev })
+	ctx := t.Context()
+
+	mk := func() *coreapi.CreatedMirror {
+		return &coreapi.CreatedMirror{Created: true, MirrorId: "m1", MirrorUrl: "entire://c/gh/o/r"}
+	}
+
+	t.Run("fires once before onStatus on success", func(t *testing.T) {
+		c, _ := serveMirrorCreate(t, mk(), false)
+		var events []string
+		outcome, err := createAndAwaitMirror(ctx, c, "o", "r", "c", false, time.Second,
+			func(m *coreapi.CreatedMirror) {
+				require.Equal(t, "m1", m.MirrorId, "onCreated receives the create response")
+				events = append(events, "created")
+			},
+			func(coreapi.MirrorStatus) { events = append(events, "status") },
+		)
+		require.NoError(t, err)
+		require.Equal(t, coreapi.MirrorStatusReady, outcome.status)
+		require.NotEmpty(t, events)
+		require.Equal(t, "created", events[0], "onCreated must fire before any onStatus")
+		require.Equal(t, 1, countEq(events, "created"), "onCreated fires exactly once")
+	})
+
+	t.Run("does not fire on CreateMirror error", func(t *testing.T) {
+		c, _ := serveMirrorCreate(t, nil, true)
+		fired := 0
+		outcome, err := createAndAwaitMirror(ctx, c, "o", "r", "c", false, time.Second,
+			func(*coreapi.CreatedMirror) { fired++ }, nil)
+		require.Error(t, err)
+		require.Nil(t, outcome.created)
+		require.Zero(t, fired, "onCreated must not fire when create fails")
+	})
+
+	t.Run("fires once even with no-wait (no polling)", func(t *testing.T) {
+		c, paths := serveMirrorCreate(t, mk(), false)
+		fired := 0
+		_, err := createAndAwaitMirror(ctx, c, "o", "r", "c", true, time.Second,
+			func(*coreapi.CreatedMirror) { fired++ }, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, fired)
+		require.Equal(t, []string{mirrorsAPIPath}, *paths, "no-wait must not poll GetMirror")
+	})
+
+	t.Run("suspended placement short-circuits without polling or error", func(t *testing.T) {
+		suspended := &coreapi.CreatedMirror{MirrorId: "m1", MirrorUrl: "entire://c/gh/o/r", Suspended: true}
+		c, paths := serveMirrorCreate(t, suspended, false)
+		fired := 0
+		outcome, err := createAndAwaitMirror(ctx, c, "o", "r", "c", false, time.Second,
+			func(*coreapi.CreatedMirror) { fired++ }, nil)
+		require.NoError(t, err, "an admin-suspended placement is non-fatal")
+		require.Equal(t, 1, fired, "onCreated still fires for a suspended placement")
+		require.False(t, outcome.polled, "a suspended placement is never polled for readiness")
+		require.Equal(t, []string{mirrorsAPIPath}, *paths, "suspended must not poll GetMirror")
+	})
+}
+
+func countEq(xs []string, want string) int {
+	n := 0
+	for _, x := range xs {
+		if x == want {
+			n++
+		}
+	}
+	return n
+}
+
 // TestReportOneShotMirror exercises the one-shot create's presentation across
 // the shared lifecycle outcomes — the branching finishMirrorCreate used to own,
 // now driven by mirrorCreateOutcome (and shared with the wizard).
@@ -178,6 +296,20 @@ func TestReportOneShotMirror(t *testing.T) {
 		require.NotContains(t, out.String(), "git clone")
 	})
 
+	t.Run("suspended placement warns after the placement and exits non-zero", func(t *testing.T) {
+		t.Parallel()
+		var out, errW bytes.Buffer
+		created := &coreapi.CreatedMirror{Created: false, MirrorId: id, MirrorUrl: mirrorURL, Suspended: true}
+		err := reportOneShotMirror(&out, &errW, mirrorCreateOutcome{created: created}, nil)
+		var silent *SilentError
+		require.ErrorAs(t, err, &silent, "a suspended re-create must exit non-zero")
+		require.ErrorIs(t, err, errMirrorSuspended)
+		require.Contains(t, out.String(), "Mirror exists ("+id, "the placement is still echoed")
+		require.Contains(t, errW.String(), "WARNING: this mirror has been suspended by an admin and won't be usable.")
+		require.NotContains(t, out.String(), "git clone")
+		require.NotContains(t, out.String(), "still be in progress")
+	})
+
 	t.Run("failed returns an error naming the mirror", func(t *testing.T) {
 		t.Parallel()
 		var out, errW bytes.Buffer
@@ -224,7 +356,7 @@ func serveMirrorList(t *testing.T, mirrors []coreapi.Mirror, available []coreapi
 			if err := writeJSON(w, &coreapi.ListAvailableMirrorsOutputBody{Available: available}); err != nil {
 				t.Errorf("encode available response: %v", err)
 			}
-		case "/api/v1/mirrors":
+		case mirrorsAPIPath:
 			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: mirrors}); err != nil {
 				t.Errorf("encode mirrors response: %v", err)
 			}
@@ -294,7 +426,7 @@ func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 		stdout, stderr := runMirrorList(t)
 		rec := <-recCh
 
-		require.Equal(t, "/api/v1/mirrors", rec.path)
+		require.Equal(t, mirrorsAPIPath, rec.path)
 		require.Contains(t, stderr, "Listing mirrors on")
 		require.Contains(t, stdout, "CLONE URL")
 		require.Contains(t, stdout, "entire://aws-us-east-2.entire.io/gh/acme/web")
@@ -318,7 +450,7 @@ func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 		runMirrorList(t, "--owner", "acme")
 		rec := <-recCh
 
-		require.Equal(t, "/api/v1/mirrors", rec.path)
+		require.Equal(t, mirrorsAPIPath, rec.path)
 		require.Equal(t, "acme", rec.query.Get("owner"))
 	})
 
@@ -328,7 +460,7 @@ func TestRepoMirrorList_ShowAvailableRouting(t *testing.T) {
 		)
 		runMirrorList(t, "--cluster", "eu-west-1.entire.io", "--provider", "github")
 		rec := <-recCh
-		require.Equal(t, "/api/v1/mirrors", rec.path)
+		require.Equal(t, mirrorsAPIPath, rec.path)
 		require.Equal(t, "eu-west-1.entire.io", rec.query.Get("cluster"))
 		require.Equal(t, "github", rec.query.Get("provider"))
 
@@ -402,6 +534,133 @@ func TestParseGitHubURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseMirrorCloneURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                             string
+		raw                              string
+		wantCluster, wantOwner, wantRepo string
+		wantErr                          bool
+	}{
+		{name: "github clone URL", raw: "entire://aws-eu-central-1.entire.io/gh/entirehq/entire-api",
+			wantCluster: "aws-eu-central-1.entire.io", wantOwner: "entirehq", wantRepo: "entire-api"},
+		{name: "owner and repo lowercased", raw: "entire://c.entire.io/gh/OctoCat/Hello-World",
+			wantCluster: "c.entire.io", wantOwner: "octocat", wantRepo: "hello-world"},
+		{name: "trailing .git is trimmed", raw: "entire://c.entire.io/gh/entireio/cli.git",
+			wantCluster: "c.entire.io", wantOwner: "entireio", wantRepo: "cli"},
+		{name: "interior dots in repo name are kept", raw: "entire://c.entire.io/gh/entirehq/entire-trails.el",
+			wantCluster: "c.entire.io", wantOwner: "entirehq", wantRepo: "entire-trails.el"},
+		{name: "wrong scheme", raw: "https://c.entire.io/gh/a/b", wantErr: true},
+		{name: "non-gh provider segment", raw: "entire://c.entire.io/git/a/b", wantErr: true},
+		{name: "missing repo", raw: "entire://c.entire.io/gh/a", wantErr: true},
+		{name: "extra path segment", raw: "entire://c.entire.io/gh/a/b/c", wantErr: true},
+		{name: "not a URL", raw: "not-a-url", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cluster, provider, owner, repo, err := parseMirrorCloneURL(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseMirrorCloneURL(%q) = (%q,%q,%q,%q), want error", tt.raw, cluster, provider, owner, repo)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMirrorCloneURL(%q): %v", tt.raw, err)
+			}
+			if provider != string(coreapi.CreateMirrorInputBodyProviderGithub) {
+				t.Errorf("provider = %q, want github", provider)
+			}
+			if cluster != tt.wantCluster || owner != tt.wantOwner || repo != tt.wantRepo {
+				t.Errorf("= (%q,%q,%q), want (%q,%q,%q)", cluster, owner, repo, tt.wantCluster, tt.wantOwner, tt.wantRepo)
+			}
+		})
+	}
+}
+
+func TestResolveMirrorRef(t *testing.T) {
+	t.Parallel()
+	// 26 Crockford base32 chars (no I/L/O/U) so the ULID short-circuit fires.
+	const mirrorULID = "0123456789ABCDEFGHJKMNPQRS"
+	const otherULID = "0123456789ABCDEFGHJKMNPQRT"
+	const cloneURL = "entire://aws-eu-central-1.entire.io/gh/entirehq/entire-api"
+
+	t.Run("ULID passes through without a network call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call for a ULID ref")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		got, err := resolveMirrorRef(context.Background(), c, mirrorULID)
+		if err != nil {
+			t.Fatalf("resolveMirrorRef: %v", err)
+		}
+		if got != mirrorULID {
+			t.Errorf("resolveMirrorRef = %q, want the ULID unchanged", got)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("ULID ref made %d HTTP calls, want 0", n)
+		}
+	})
+
+	t.Run("clone URL resolves to the matching mirror's ULID", func(t *testing.T) {
+		t.Parallel()
+		var gotCluster, gotProvider, gotOwner string
+		c, _ := resolveTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			gotCluster, gotProvider, gotOwner = q.Get("cluster"), q.Get("provider"), q.Get("owner")
+			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
+				{MirrorId: otherULID, Owner: "entirehq", Repo: "other", ClusterHost: "aws-eu-central-1.entire.io"},
+				{MirrorId: mirrorULID, Owner: "entirehq", Repo: "entire-api", ClusterHost: "aws-eu-central-1.entire.io"},
+			}}); err != nil {
+				t.Errorf("encode mirrors: %v", err)
+			}
+		})
+		got, err := resolveMirrorRef(context.Background(), c, cloneURL)
+		if err != nil {
+			t.Fatalf("resolveMirrorRef: %v", err)
+		}
+		if got != mirrorULID {
+			t.Errorf("resolveMirrorRef = %q, want %q", got, mirrorULID)
+		}
+		// The (cluster, provider, owner) narrowing must be server-side; only the
+		// repo is matched client-side (ListMirrors has no repo filter).
+		if gotCluster != "aws-eu-central-1.entire.io" || gotProvider != string(coreapi.CreateMirrorInputBodyProviderGithub) || gotOwner != "entirehq" {
+			t.Errorf("filters = cluster %q provider %q owner %q, want the clone URL's coords", gotCluster, gotProvider, gotOwner)
+		}
+	})
+
+	t.Run("no matching repo is a friendly error", func(t *testing.T) {
+		t.Parallel()
+		c, _ := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			if err := writeJSON(w, &coreapi.ListMirrorsOutputBody{Mirrors: []coreapi.Mirror{
+				{MirrorId: otherULID, Owner: "entirehq", Repo: "other", ClusterHost: "aws-eu-central-1.entire.io"},
+			}}); err != nil {
+				t.Errorf("encode mirrors: %v", err)
+			}
+		})
+		_, err := resolveMirrorRef(context.Background(), c, cloneURL)
+		if err == nil || !strings.Contains(err.Error(), "no mirror matching") {
+			t.Errorf("resolveMirrorRef no match: err = %v, want a \"no mirror matching\" error", err)
+		}
+	})
+
+	t.Run("unparseable ref errors before any call", func(t *testing.T) {
+		t.Parallel()
+		c, calls := resolveTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			t.Error("unexpected HTTP call for an unparseable ref")
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		if _, err := resolveMirrorRef(context.Background(), c, "not-a-url"); err == nil {
+			t.Fatal("resolveMirrorRef unparseable: want an error")
+		}
+		if n := calls.Load(); n != 0 {
+			t.Errorf("unparseable ref made %d HTTP calls, want 0", n)
+		}
+	})
 }
 
 func TestMirrorRow(t *testing.T) {
@@ -489,45 +748,13 @@ func TestClusterArg(t *testing.T) {
 
 func TestClusterArgAt(t *testing.T) {
 	t.Parallel()
-	// collaborators add/remove put the cluster at the trailing index 2,
-	// after <github-url> <handle>.
+	// clusterArgAt reads the cluster from the optional positional at an
+	// arbitrary index — here index 2, after two leading positionals.
 	if got := clusterArgAt([]string{"github.com/o/r", "github:alice", "eu-west-1.entire.io"}, 2); got != "eu-west-1.entire.io" {
 		t.Errorf("explicit cluster = %q, want eu-west-1.entire.io", got)
 	}
 	if got := clusterArgAt([]string{"github.com/o/r", "github:alice"}, 2); got != defaultClusterHost {
 		t.Errorf("omitted cluster = %q, want default %q", got, defaultClusterHost)
-	}
-}
-
-func TestParseMirrorRole(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		in      string
-		want    coreapi.GrantMirrorCollaboratorInputBodyRole
-		wantErr bool
-	}{
-		{in: "reader", want: coreapi.GrantMirrorCollaboratorInputBodyRoleReader},
-		{in: "writer", want: coreapi.GrantMirrorCollaboratorInputBodyRoleWriter},
-		{in: "admin", wantErr: true},
-		{in: "", wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			t.Parallel()
-			got, err := parseMirrorRole(tt.in)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("parseMirrorRole(%q) = nil error, want error", tt.in)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("parseMirrorRole(%q) = %v, want nil", tt.in, err)
-			}
-			if got != tt.want {
-				t.Errorf("parseMirrorRole(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
 	}
 }
 
