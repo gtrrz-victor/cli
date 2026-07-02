@@ -517,9 +517,9 @@ func createOneMirror(ctx context.Context, t mirrorTarget, c *coreapi.Client, cli
 
 	if outcome.created.Suspended {
 		// An admin suspended this existing placement, so it won't be served.
-		// Surface it as a distinct status rather than a bare "registered"; it is
-		// non-fatal (no res.err), matching the one-shot's warning semantics.
-		res.status = mirrorStatusSuspended
+		// Surface it as a distinct status and set an error so the batch exits
+		// non-zero, matching the one-shot: a suspended mirror isn't a success.
+		res.status, res.err = mirrorStatusSuspended, errors.New("suspended by an admin; won't be usable")
 		report(mirrorStatusSuspended, true, false)
 		return res
 	}

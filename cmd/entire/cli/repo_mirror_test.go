@@ -296,12 +296,14 @@ func TestReportOneShotMirror(t *testing.T) {
 		require.NotContains(t, out.String(), "git clone")
 	})
 
-	t.Run("suspended placement warns after the placement and succeeds", func(t *testing.T) {
+	t.Run("suspended placement warns after the placement and exits non-zero", func(t *testing.T) {
 		t.Parallel()
 		var out, errW bytes.Buffer
 		created := &coreapi.CreatedMirror{Created: false, MirrorId: id, MirrorUrl: mirrorURL, Suspended: true}
 		err := reportOneShotMirror(&out, &errW, mirrorCreateOutcome{created: created}, nil)
-		require.NoError(t, err, "a suspended re-create is a non-fatal warning")
+		var silent *SilentError
+		require.ErrorAs(t, err, &silent, "a suspended re-create must exit non-zero")
+		require.ErrorIs(t, err, errMirrorSuspended)
 		require.Contains(t, out.String(), "Mirror exists ("+id, "the placement is still echoed")
 		require.Contains(t, errW.String(), "WARNING: this mirror has been suspended by an admin and won't be usable.")
 		require.NotContains(t, out.String(), "git clone")

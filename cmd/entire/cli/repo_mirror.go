@@ -298,8 +298,11 @@ func reportOneShotMirror(out, errW io.Writer, outcome mirrorCreateOutcome, err e
 	fmt.Fprintf(out, "  %s\n", created.MirrorUrl)
 
 	if created.Suspended {
+		// Echo the placement (above), warn, and exit non-zero: the mirror can't
+		// be used, so a script chaining a clone shouldn't treat this as success.
+		// SilentError keeps main.go from reprinting — the warning is the message.
 		fmt.Fprintln(errW, "\nWARNING: this mirror has been suspended by an admin and won't be usable.")
-		return nil
+		return NewSilentError(errMirrorSuspended)
 	}
 
 	if !outcome.polled {

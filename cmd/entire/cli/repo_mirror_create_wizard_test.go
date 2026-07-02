@@ -13,9 +13,9 @@ import (
 )
 
 // TestCreateOneMirror_Suspended pins the wizard's per-mirror handling of an
-// admin-suspended existing placement: it surfaces the "suspended" status and,
-// like the one-shot warning, stays non-fatal (no res.err) rather than being
-// reported as a plain "registered" success or a hard failure.
+// admin-suspended existing placement: it surfaces the "suspended" status and
+// sets an error so the batch exits non-zero (matching the one-shot), rather
+// than being reported as a plain "registered" success.
 func TestCreateOneMirror_Suspended(t *testing.T) {
 	t.Parallel()
 
@@ -34,7 +34,7 @@ func TestCreateOneMirror_Suspended(t *testing.T) {
 		})
 
 	require.Equal(t, mirrorStatusSuspended, res.status)
-	require.NoError(t, res.err, "a suspended placement is non-fatal in the wizard too")
+	require.Error(t, res.err, "a suspended placement must fail the batch (non-zero exit)")
 	require.Equal(t, mirrorStatusSuspended, final)
 	require.False(t, finalOK)
 	require.Equal(t, []string{mirrorsAPIPath}, *paths, "suspended must not poll GetMirror")
