@@ -194,3 +194,22 @@ func TestWriteAPIResponse(t *testing.T) {
 		t.Fatalf("expected status+headers on errOut, got:\n%s", errOut.String())
 	}
 }
+
+func TestReadWithinLimit(t *testing.T) {
+	t.Parallel()
+
+	// Under and exactly at the limit: full content, no error.
+	for _, tc := range []struct {
+		in    string
+		limit int64
+	}{{"hello", 10}, {"hello", 5}, {"", 3}} {
+		got, err := readWithinLimit(strings.NewReader(tc.in), tc.limit)
+		if err != nil || string(got) != tc.in {
+			t.Errorf("readWithinLimit(%q, %d) = (%q, %v), want (%q, nil)", tc.in, tc.limit, got, err, tc.in)
+		}
+	}
+	// Over the limit: error rather than silent truncation.
+	if _, err := readWithinLimit(strings.NewReader("hello world"), 5); err == nil {
+		t.Error("readWithinLimit over limit = nil error, want limit error (must not truncate)")
+	}
+}

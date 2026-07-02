@@ -12,7 +12,10 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/versioninfo"
 )
 
-const testBearerHeader = "Bearer tok"
+const (
+	testBearerHeader = "Bearer tok"
+	jsonContentType  = "application/json"
+)
 
 func TestBearerTransport_InjectsAuthHeader(t *testing.T) {
 	t.Parallel()
@@ -52,8 +55,8 @@ func TestBearerTransport_InjectsAuthHeader(t *testing.T) {
 	if want := versioninfo.UserAgent(); gotUA != want {
 		t.Errorf("User-Agent = %q, want %q", gotUA, want)
 	}
-	if gotAccept != "application/json" {
-		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
+	if gotAccept != jsonContentType {
+		t.Errorf("Accept = %q, want %q", gotAccept, jsonContentType)
 	}
 }
 
@@ -171,7 +174,7 @@ func TestClient_Get(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer my-token" {
 			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.Write([]byte(`{"ok": true}`)) //nolint:errcheck // test handler
 	}))
 	defer server.Close()
@@ -219,7 +222,7 @@ func TestClient_Post_JSON(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("status = %d, want 201", resp.StatusCode)
 	}
-	if gotContentType != "application/json" {
+	if gotContentType != jsonContentType {
 		t.Errorf("Content-Type = %q, want application/json", gotContentType)
 	}
 	if gotBody["name"] != "test" {
@@ -268,7 +271,7 @@ func TestCheckResponse_ErrorWithJSON(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "insufficient permissions"}`)) //nolint:errcheck // test handler
 	}))
@@ -293,7 +296,7 @@ func TestCheckResponse_ErrorWithObjectEnvelope(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"error":{"code":"not_found","message":"session not found","field":null,"retryable":false}}`)) //nolint:errcheck // test handler
 	}))
@@ -342,7 +345,7 @@ func TestDecodeJSONResponse(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.Write([]byte(`{"id": "abc", "status": "ok"}`)) //nolint:errcheck // test handler
 	}))
 	defer server.Close()
@@ -400,7 +403,7 @@ func TestDecodeJSONResponse_LargeBodyOverOldCap(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.Write(encoded) //nolint:errcheck // test handler
 	}))
 	defer server.Close()
@@ -480,5 +483,40 @@ func TestClient_RefusesCrossHostRedirect(t *testing.T) {
 	}
 	if reached {
 		t.Fatalf("request reached the other host (Authorization=%q); bearer must not follow a cross-host redirect", leakedAuth)
+	}
+}
+
+// TestClient_Request_RespectsCallerContentType verifies a caller-supplied
+// Content-Type survives (the -H escape hatch), while a body with no
+// Content-Type still defaults to JSON.
+func TestClient_Request_RespectsCallerContentType(t *testing.T) {
+	t.Parallel()
+
+	var gotCT string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCT = r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	c := NewClientWithBaseURL("tok", server.URL)
+
+	resp, err := c.Request(context.Background(), http.MethodPost, "/x",
+		http.Header{"Content-Type": {"text/plain"}}, strings.NewReader("hi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if gotCT != "text/plain" {
+		t.Errorf("caller Content-Type = %q, want text/plain (must not be clobbered)", gotCT)
+	}
+
+	resp, err = c.Request(context.Background(), http.MethodPost, "/y", nil, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if gotCT != jsonContentType {
+		t.Errorf("default Content-Type = %q, want application/json", gotCT)
 	}
 }

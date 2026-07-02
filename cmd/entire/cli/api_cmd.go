@@ -338,9 +338,23 @@ func appendQuery(path string, q url.Values) string {
 	return path + sep + q.Encode()
 }
 
+// readWithinLimit reads r up to limit bytes and errors if the source is larger,
+// rather than silently truncating — a truncated JSON body would be malformed
+// and misleading for an escape-hatch command.
+func readWithinLimit(r io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("exceeds the %d-byte limit", limit)
+	}
+	return raw, nil
+}
+
 func readAPIInput(path string) ([]byte, error) {
 	if path == "-" {
-		raw, err := io.ReadAll(io.LimitReader(os.Stdin, apiMaxResponseBytes))
+		raw, err := readWithinLimit(os.Stdin, apiMaxResponseBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read body from stdin: %w", err)
 		}
@@ -381,7 +395,7 @@ func writeAPIResponse(w, errW io.Writer, resp *http.Response, include bool) erro
 		fmt.Fprintln(errW)
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, apiMaxResponseBytes))
+	raw, err := readWithinLimit(resp.Body, apiMaxResponseBytes)
 	if err != nil {
 		return fmt.Errorf("read response body: %w", err)
 	}

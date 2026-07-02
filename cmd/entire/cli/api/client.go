@@ -193,7 +193,8 @@ func (c *Client) Delete(ctx context.Context, path string) (*http.Response, error
 // extra headers, and an optional raw body. It's the general-purpose escape
 // hatch behind `entire api`; prefer the typed verbs (Get/Post/…) for normal
 // use. The bearer, User-Agent, and default Accept are still attached by the
-// transport; a body still gets Content-Type: application/json.
+// transport; a body defaults to Content-Type: application/json unless the
+// caller supplies its own via headers.
 func (c *Client) Request(ctx context.Context, method, path string, headers http.Header, body io.Reader) (*http.Response, error) {
 	return c.do(ctx, method, path, body, headers)
 }
@@ -221,7 +222,10 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, he
 		}
 	}
 
-	if body != nil {
+	// Default a body's Content-Type to JSON, but don't clobber a caller-supplied
+	// one — the `entire api -H 'Content-Type: …'` escape hatch must be able to
+	// send non-JSON bodies.
+	if body != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
