@@ -68,34 +68,33 @@ func TestParseAPIHeaders(t *testing.T) {
 
 func TestBuildAPIRequestBody_MethodInference(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 
 	// No fields, no method → GET, no body.
-	r, err := buildAPIRequestBody(ctx, "/p", &apiFlags{}, nil)
+	r, err := buildAPIRequestBody("/p", &apiFlags{}, nil)
 	if err != nil || r.method != http.MethodGet || r.body != nil {
 		t.Fatalf("bare = %+v, err %v", r, err)
 	}
 
 	// Fields, no method → POST with JSON body.
-	r, err = buildAPIRequestBody(ctx, "/p", &apiFlags{}, map[string]any{"a": "b"})
+	r, err = buildAPIRequestBody("/p", &apiFlags{}, map[string]any{"a": "b"})
 	if err != nil || r.method != http.MethodPost || r.body == nil {
 		t.Fatalf("fields = %+v, err %v", r, err)
 	}
 
 	// Explicit -X wins over inference.
-	r, err = buildAPIRequestBody(ctx, "/p", &apiFlags{method: "delete"}, nil)
+	r, err = buildAPIRequestBody("/p", &apiFlags{method: "delete"}, nil)
 	if err != nil || r.method != http.MethodDelete {
 		t.Fatalf("explicit method = %+v, err %v", r, err)
 	}
 
 	// GET + fields → fields go on the query string, no body.
-	r, err = buildAPIRequestBody(ctx, "/p", &apiFlags{method: "GET"}, map[string]any{"limit": int64(5)})
+	r, err = buildAPIRequestBody("/p", &apiFlags{method: "GET"}, map[string]any{"limit": int64(5)})
 	if err != nil || r.body != nil || !strings.Contains(r.path, "limit=5") {
 		t.Fatalf("GET+fields = %+v, err %v", r, err)
 	}
 
 	// --input together with fields is rejected.
-	if _, err := buildAPIRequestBody(ctx, "/p", &apiFlags{input: "x"}, map[string]any{"a": "b"}); err == nil {
+	if _, err := buildAPIRequestBody("/p", &apiFlags{input: "x"}, map[string]any{"a": "b"}); err == nil {
 		t.Error("expected error combining --input and fields")
 	}
 }

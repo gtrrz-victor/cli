@@ -88,7 +88,7 @@ func runAPI(ctx context.Context, w, errW io.Writer, rawPath string, f *apiFlags)
 		return err
 	}
 
-	req, err := buildAPIRequestBody(ctx, path, f, fields)
+	req, err := buildAPIRequestBody(path, f, fields)
 	if err != nil {
 		return err
 	}
@@ -141,19 +141,24 @@ func resolveAPIClient(ctx context.Context, to string, insecure bool) (*api.Clien
 // Resolution is lazy: {owner}/{repo} need only the git remote; {repo_id} costs
 // a control-plane mirror lookup, so it's only done when actually referenced.
 func expandAPIPlaceholders(ctx context.Context, s string) (string, error) {
-	if !strings.Contains(s, "{") {
+	needOwnerRepo := strings.Contains(s, "{owner}") || strings.Contains(s, "{repo}")
+	needRepoID := strings.Contains(s, "{repo_id}")
+	if !needOwnerRepo && !needRepoID {
 		return s, nil
 	}
-	if strings.Contains(s, "{owner}") || strings.Contains(s, "{repo}") {
-		_, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
-		if err != nil {
-			return "", fmt.Errorf("resolve {owner}/{repo} from origin remote: %w", err)
-		}
+
+	// Resolve the origin remote once, even when both {owner}/{repo} and
+	// {repo_id} are present, and thread it into the mirror lookup.
+	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
+	if err != nil {
+		return "", fmt.Errorf("resolve current repo from origin remote: %w", err)
+	}
+	if needOwnerRepo {
 		s = strings.ReplaceAll(s, "{owner}", owner)
 		s = strings.ReplaceAll(s, "{repo}", repo)
 	}
-	if strings.Contains(s, "{repo_id}") {
-		id, err := resolveCurrentRepoID(ctx)
+	if needRepoID {
+		id, err := resolveCurrentRepoID(ctx, forge, owner, repo)
 		if err != nil {
 			return "", err
 		}
@@ -162,14 +167,10 @@ func expandAPIPlaceholders(ctx context.Context, s string) (string, error) {
 	return s, nil
 }
 
-// resolveCurrentRepoID resolves the current repo's Entire ULID from its mirror
-// (the mirror id, which entire-api uses as the repo_id). Picks the first active
-// (non-archived, non-failed/suspended) placement.
-func resolveCurrentRepoID(ctx context.Context) (string, error) {
-	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
-	if err != nil {
-		return "", fmt.Errorf("resolve current repo: %w", err)
-	}
+// resolveCurrentRepoID resolves a repo's Entire ULID from its mirror (the mirror
+// id, which entire-api uses as the repo_id), given its already-resolved origin
+// coordinates. Picks the first active placement.
+func resolveCurrentRepoID(ctx context.Context, forge, owner, repo string) (string, error) {
 	if f := strings.ToLower(strings.TrimSpace(forge)); f != "gh" && f != mirrorCloneProviderGitHub {
 		return "", fmt.Errorf("{repo_id} needs a GitHub repo; origin forge is %q", forge)
 	}
@@ -182,10 +183,7 @@ func resolveCurrentRepoID(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("list mirrors for %s/%s: %w", owner, repo, err)
 	}
 	for i := range mirrors {
-		if mirrors[i].IsArchived.Or(false) {
-			continue
-		}
-		if st := mirrors[i].Status.Or(coreapi.MirrorStatusReady); st == coreapi.MirrorStatusFailed || st == coreapi.MirrorStatusSuspended {
+		if !isActiveMirror(mirrors[i]) {
 			continue
 		}
 		if id := strings.TrimSpace(mirrors[i].MirrorId); id != "" {
@@ -246,29 +244,25 @@ type apiRequest struct {
 // body), else fields become a JSON body. The method defaults to GET, or POST
 // when there's a body; an explicit -X wins. For a GET with fields, the fields
 // go on the query string instead of a body.
-func buildAPIRequestBody(ctx context.Context, path string, f *apiFlags, fields map[string]any) (apiRequest, error) {
+func buildAPIRequestBody(path string, f *apiFlags, fields map[string]any) (apiRequest, error) {
 	method := strings.ToUpper(strings.TrimSpace(f.method))
+	if method == "" {
+		if f.input != "" || len(fields) > 0 {
+			method = http.MethodPost
+		} else {
+			method = http.MethodGet
+		}
+	}
 
 	if f.input != "" {
 		if len(fields) > 0 {
 			return apiRequest{}, errors.New("use either --input or -f/-F, not both")
 		}
-		raw, err := readAPIInput(ctx, f.input)
+		raw, err := readAPIInput(f.input)
 		if err != nil {
 			return apiRequest{}, err
 		}
-		if method == "" {
-			method = http.MethodPost
-		}
 		return apiRequest{method: method, path: path, body: bytes.NewReader(raw)}, nil
-	}
-
-	if method == "" {
-		if len(fields) > 0 {
-			method = http.MethodPost
-		} else {
-			method = http.MethodGet
-		}
 	}
 
 	if len(fields) == 0 {
@@ -323,9 +317,9 @@ func appendQuery(path string, q url.Values) string {
 	return path + sep + q.Encode()
 }
 
-func readAPIInput(ctx context.Context, path string) ([]byte, error) {
+func readAPIInput(path string) ([]byte, error) {
 	if path == "-" {
-		raw, err := io.ReadAll(io.LimitReader(stdinReader(ctx), apiMaxResponseBytes))
+		raw, err := io.ReadAll(io.LimitReader(os.Stdin, apiMaxResponseBytes))
 		if err != nil {
 			return nil, fmt.Errorf("read body from stdin: %w", err)
 		}
@@ -337,9 +331,6 @@ func readAPIInput(ctx context.Context, path string) ([]byte, error) {
 	}
 	return raw, nil
 }
-
-// stdinReader is a seam so tests can supply a body without touching os.Stdin.
-var stdinReader = func(context.Context) io.Reader { return os.Stdin }
 
 func parseAPIHeaders(headers []string) (http.Header, error) {
 	h := make(http.Header, len(headers))
