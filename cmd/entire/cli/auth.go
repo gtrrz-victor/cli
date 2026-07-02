@@ -132,19 +132,17 @@ func newAuthCmd() *cobra.Command {
 //
 //	curl -H "Authorization: Bearer $(entire auth token)" "$CORE/api/v1/clusters"
 //
-// Hidden: it emits a live credential, so it's a deliberate scripting escape
-// hatch, not part of the everyday surface. It resolves the same bearer the API
-// client would — ENTIRE_TOKEN verbatim when set, otherwise the active context's
-// login JWT, refreshed if it's near expiry — and prints nothing but the token
-// (errors and the not-logged-in hint go to stderr) so command substitution
-// stays clean.
+// It emits a live credential, so treat the output as a secret. It resolves the
+// same bearer the API client would — ENTIRE_TOKEN verbatim when set, otherwise
+// the active context's login JWT, refreshed if it's near expiry — and prints
+// nothing but the token (errors and the not-logged-in hint go to stderr) so
+// command substitution stays clean.
 func newAuthTokenCmd() *cobra.Command {
 	var insecureHTTPAuth bool
 	cmd := &cobra.Command{
-		Use:    "token",
-		Short:  "Print the active control-plane bearer token (for scripting)",
-		Hidden: true,
-		Args:   cobra.NoArgs,
+		Use:   "token",
+		Short: "Print the active control-plane bearer token (for scripting)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Refresh may exchange/refresh over the network; honor the
 			// plain-HTTP opt-in before resolving so local dev cores work.

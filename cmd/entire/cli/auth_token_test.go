@@ -20,7 +20,7 @@ func makeTestJWT(t *testing.T, payloadJSON string) string {
 	return header + "." + payload + "." + enc.EncodeToString([]byte("sig"))
 }
 
-// TestAuthTokenCmd covers the hidden `entire auth token` scripting helper.
+// TestAuthTokenCmd covers the `entire auth token` scripting helper.
 //
 // Not parallel: it manipulates ENTIRE_TOKEN / ENTIRE_CONFIG_DIR.
 func TestAuthTokenCmd(t *testing.T) {
