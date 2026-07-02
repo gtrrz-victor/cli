@@ -149,6 +149,15 @@ func (c *Client) Delete(ctx context.Context, path string) (*http.Response, error
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
 
+// Request sends an authenticated request with an explicit method, optional
+// extra headers, and an optional raw body. It's the general-purpose escape
+// hatch behind `entire api`; prefer the typed verbs (Get/Post/…) for normal
+// use. The bearer, User-Agent, and default Accept are still attached by the
+// transport; a body still gets Content-Type: application/json.
+func (c *Client) Request(ctx context.Context, method, path string, headers http.Header, body io.Reader) (*http.Response, error) {
+	return c.do(ctx, method, path, body, headers)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, headers http.Header) (*http.Response, error) {
 	endpoint, err := ResolveURLFromBase(c.baseURL, path)
 	if err != nil {
