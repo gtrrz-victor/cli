@@ -112,7 +112,7 @@ func reviewPickerHeight(optionCount int) int {
 func writeReviewCompletionFooter(w io.Writer, manifest LocalReviewManifest) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Review complete.")
-	handle := reviewManifestHandle(manifest)
+	handle := reviewManifestCompletionHandle(manifest)
 	if handle == "" {
 		return
 	}
@@ -128,12 +128,19 @@ func reviewManifestHandle(manifest LocalReviewManifest) string {
 	return ""
 }
 
+func reviewManifestCompletionHandle(manifest LocalReviewManifest) string {
+	if !manifest.CreatedAt.IsZero() {
+		return reviewManifestTimeHandle(manifest.CreatedAt)
+	}
+	return reviewManifestHandle(manifest)
+}
+
 func printReviewFindingsList(w io.Writer, manifests []LocalReviewManifest) {
 	fmt.Fprintln(w, "Review Findings")
 	fmt.Fprintln(w)
 	for _, manifest := range manifests {
 		fmt.Fprintf(w, "%s\n", reviewManifestListLabel(manifest))
-		if handle := reviewManifestHandle(manifest); handle != "" {
+		if handle := reviewManifestViewHandle(manifest, manifests); handle != "" {
 			fmt.Fprintf(w, "  view: %s\n", reviewFindingsCommand(handle))
 		}
 	}
@@ -145,11 +152,7 @@ func reviewFindingsCommand(handle string) string {
 }
 
 func printReviewFindingsHandles(w io.Writer, manifests []LocalReviewManifest) {
-	var handles []string
-	for _, manifest := range manifests {
-		handles = append(handles, reviewManifestHandles(manifest)...)
-	}
-	handles = dedupeStrings(handles)
+	handles := reviewAvailableManifestHandles(manifests)
 	if len(handles) == 0 {
 		return
 	}
@@ -157,6 +160,39 @@ func printReviewFindingsHandles(w io.Writer, manifests []LocalReviewManifest) {
 	for _, handle := range handles {
 		fmt.Fprintf(w, "  view: %s\n", reviewFindingsCommand(handle))
 	}
+}
+
+func reviewManifestViewHandle(manifest LocalReviewManifest, manifests []LocalReviewManifest) string {
+	counts := reviewManifestHandleCounts(manifests)
+	for _, handle := range reviewManifestHandles(manifest) {
+		if counts[handle] == 1 {
+			return handle
+		}
+	}
+	return ""
+}
+
+func reviewAvailableManifestHandles(manifests []LocalReviewManifest) []string {
+	counts := reviewManifestHandleCounts(manifests)
+	var handles []string
+	for _, manifest := range manifests {
+		for _, handle := range reviewManifestHandles(manifest) {
+			if counts[handle] == 1 {
+				handles = append(handles, handle)
+			}
+		}
+	}
+	return dedupeStrings(handles)
+}
+
+func reviewManifestHandleCounts(manifests []LocalReviewManifest) map[string]int {
+	counts := make(map[string]int)
+	for _, manifest := range manifests {
+		for _, handle := range reviewManifestHandles(manifest) {
+			counts[handle]++
+		}
+	}
+	return counts
 }
 
 func printReviewManifestDetail(w io.Writer, manifest LocalReviewManifest) {
