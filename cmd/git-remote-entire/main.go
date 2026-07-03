@@ -40,6 +40,7 @@ import (
 	"github.com/entireio/cli/internal/remotehelper"
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 	"github.com/entireio/cli/internal/remotehelper/githelper"
+	"github.com/entireio/cli/internal/remotehelper/httpdebug"
 	"github.com/entireio/cli/internal/remotehelper/replicas"
 	"github.com/entireio/cli/internal/remotehelper/transport"
 )
@@ -112,8 +113,11 @@ func run(args []string) int {
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &httpclient.UserAgentTransport{
-			Next: httpclient.NewDiscoveryTransport(skipTLS),
-			UA:   httpUserAgent,
+			Next: &httpdebug.TimingRoundTripper{
+				Next:  httpclient.NewDiscoveryTransport(skipTLS),
+				Label: "auth",
+			},
+			UA: httpUserAgent,
 		},
 	}
 
@@ -128,10 +132,12 @@ func run(args []string) int {
 		if action == "" {
 			return fmt.Errorf("cannot classify git op for %s %s; scoped-token exchange requires a recognised smart-HTTP endpoint", req.Method, req.URL.Path)
 		}
+		start := time.Now()
 		token, err := creds.Token(req.Context(), repoSlug, action)
 		if err != nil {
 			return fmt.Errorf("repo-scoped token exchange: %w", err)
 		}
+		debuglog.Printf("timing: token-acquire action=%s dur_ms=%d (keychain + login refresh + exchange; ~0 when memoized)", action, time.Since(start).Milliseconds())
 		req.Header.Set("Authorization", "Bearer "+token)
 		return nil
 	}
@@ -153,10 +159,12 @@ func run(args []string) int {
 	protocolVersion := resolveProtocolVersion()
 	debuglog.Printf("git protocol.version=%d (v2 advertises stateless-connect + push; v0/v1 advertises connect)", protocolVersion)
 
+	helperStart := time.Now()
 	if err := githelper.Run(ctx, proxy, protocolVersion, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		return 128
 	}
+	debuglog.Printf("timing: helper-session dur_ms=%d", time.Since(helperStart).Milliseconds())
 	return 0
 }
 
@@ -213,6 +221,13 @@ func parseProtocolVersion(raw string, warn io.Writer) int {
 	return defaultVersion
 }
 
+// tokenSource is the one-method seam setAuth needs: repocreds.Cache
+// (repo-scoped tokens) and identityTokenSource (jurisdiction identity
+// tokens, ENTIRE_GIT_AUTH=identity) both satisfy it.
+type tokenSource interface {
+	Token(ctx context.Context, audienceSuffix, action string) (string, error)
+}
+
 // resolveCreds builds the repo-scoped token cache, choosing the auth source:
 //
 //   - ENTIRE_TOKEN set: use the env JWT verbatim as the login token, deriving
@@ -221,7 +236,7 @@ func parseProtocolVersion(raw string, warn io.Writer) int {
 //     error, never a silent fallback to context resolution.
 //   - otherwise: resolve the login context for this cluster from contexts.json
 //     and exchange its stored login JWT.
-func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string, skipTLS bool, httpClient *http.Client) (*repocreds.Cache, error) {
+func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string, skipTLS bool, httpClient *http.Client) (tokenSource, error) {
 	// Presence of ENTIRE_TOKEN is the signal: if it's set at all (LookupEnv,
 	// not Getenv, so we can tell set-empty from unset), we commit to the
 	// env-token path and any failure to use it is fatal — never a silent
@@ -255,6 +270,13 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 	loginProvider, err := auth.NewRefreshingLoginProvider(clusterCtx, httpClient.Transport, skipTLS)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // NewRefreshingLoginProvider already returns a user-facing error
+	}
+
+	// EXPERIMENT: ENTIRE_GIT_AUTH=identity mints one jurisdiction identity
+	// token for the whole process instead of per-(repo,action) scoped tokens.
+	if identityAuthEnabled() {
+		debuglog.Printf("auth mode: jurisdiction identity token (ENTIRE_GIT_AUTH=identity), core=%s", clusterCtx.CoreURL)
+		return newIdentityTokenSource(clusterCtx.CoreURL, loginProvider, httpClient), nil
 	}
 
 	// Mint repo-scoped tokens by exchanging the context's login JWT at its

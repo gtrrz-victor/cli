@@ -122,6 +122,7 @@ func New(cfg Config) *Proxy {
 	// underlying transport's dial budget differs.
 	wrap := func(base http.RoundTripper) http.RoundTripper {
 		var rt http.RoundTripper = &httpdebug.RoundTripper{Next: base}
+		rt = &httpdebug.TimingRoundTripper{Next: rt, Label: "git"}
 		if cfg.UserAgent != "" {
 			rt = &httpclient.UserAgentTransport{Next: rt, UA: cfg.UserAgent}
 		}
