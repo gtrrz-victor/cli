@@ -84,9 +84,9 @@ func newProjectCreateCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&ownerID, "owner", "", "owning org (name or ULID), or account (github:handle or ULID) (required)")
-	cmd.Flags().StringVar(&ownerType, "owner-type", "org", "owner kind: org or account")
-	cmd.Flags().StringVar(&region, "region", "", "jurisdiction slug (defaults to the server's home jurisdiction)")
+	cmd.Flags().StringVar(&ownerID, "owner", "", "Owning org (name or ULID), or account (github:handle or ULID) (required)")
+	cmd.Flags().StringVar(&ownerType, "owner-type", "org", "Owner kind: org or account")
+	cmd.Flags().StringVar(&region, "region", "", "Jurisdiction slug (defaults to the server's home jurisdiction)")
 	markRequired(cmd, "owner")
 	return cmd
 }
@@ -154,8 +154,8 @@ func newProjectListCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "filter by exact project name")
-	cmd.Flags().StringVar(&org, "org", "", "list projects owned by this org (name or ULID)")
+	cmd.Flags().StringVar(&name, "name", "", "Filter by exact project name")
+	cmd.Flags().StringVar(&org, "org", "", "List projects owned by this org (name or ULID)")
 	return cmd
 }
 

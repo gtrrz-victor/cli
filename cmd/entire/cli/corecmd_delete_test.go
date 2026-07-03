@@ -32,10 +32,11 @@ func writeNotFoundProblem(t *testing.T, w http.ResponseWriter) {
 	}
 }
 
-// runDeleteCmd points the active-context client at srv via the activeCoreClient
-// seam, runs newCmd() with args, and returns its stdout, stderr, and error. The
+// runCoreCmd runs any control-plane command against a seamed httptest core:
+// it points the active-context client at srv via the activeCoreClient seam,
+// runs newCmd() with args, and returns its stdout, stderr, and error. The
 // caller must not be parallel: the seam is package-global.
-func runDeleteCmd(t *testing.T, newCmd func() *cobra.Command, srvURL string, args ...string) (stdout, stderr string, err error) {
+func runCoreCmd(t *testing.T, newCmd func() *cobra.Command, srvURL string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	prev := activeCoreClient
 	activeCoreClient = func(context.Context) (*coreapi.Client, error) {
@@ -79,7 +80,7 @@ func TestControlPlaneDelete_Wiring(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			out, errOut, err := runDeleteCmd(t, tc.newCmd, srv.URL, testDeleteULID, "--force")
+			out, errOut, err := runCoreCmd(t, tc.newCmd, srv.URL, testDeleteULID, "--force")
 			require.NoError(t, err)
 			require.Equal(t, http.MethodDelete, gotMethod)
 			require.Equal(t, tc.wantPath, gotPath)
@@ -93,7 +94,7 @@ func TestControlPlaneDelete_Wiring(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			out, errOut, err := runDeleteCmd(t, tc.newCmd, srv.URL, testDeleteULID, "--force")
+			out, errOut, err := runCoreCmd(t, tc.newCmd, srv.URL, testDeleteULID, "--force")
 			require.NoError(t, err)
 			require.Contains(t, out, "not found; nothing to delete")
 			require.Empty(t, errOut)
@@ -106,7 +107,7 @@ func TestControlPlaneDelete_Wiring(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			_, _, err := runDeleteCmd(t, tc.newCmd, srv.URL, testDeleteULID)
+			_, _, err := runCoreCmd(t, tc.newCmd, srv.URL, testDeleteULID)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "--force")
 		})

@@ -207,8 +207,8 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once the placement is registered, without waiting for the initial clone")
-	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 30*time.Minute, "how long to wait for the initial clone to finish")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return once the placement is registered, without waiting for the initial clone")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 30*time.Minute, "How long to wait for the initial clone to finish")
 	return cmd
 }
 
@@ -397,10 +397,10 @@ func newRepoMirrorListCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&cluster, "cluster", "", "filter by cluster public host")
-	cmd.Flags().StringVar(&provider, "provider", "", "filter by upstream provider (e.g. github)")
-	cmd.Flags().StringVar(&owner, "owner", "", "filter by upstream owner login")
-	cmd.Flags().BoolVar(&showAvailable, "show-available", false, "instead of existing mirrors, list GitHub repos you could onboard as mirrors (ignores --cluster/--provider)")
+	cmd.Flags().StringVar(&cluster, "cluster", "", "Filter by cluster public host")
+	cmd.Flags().StringVar(&provider, "provider", "", "Filter by upstream provider (e.g. github)")
+	cmd.Flags().StringVar(&owner, "owner", "", "Filter by upstream owner login")
+	cmd.Flags().BoolVar(&showAvailable, "show-available", false, "Instead of existing mirrors, list GitHub repos you could onboard as mirrors (ignores --cluster/--provider)")
 	return cmd
 }
 

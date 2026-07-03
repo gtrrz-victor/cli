@@ -28,22 +28,22 @@ func newCreateOrgServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// Not parallel: runDeleteCmd swaps the package-level activeCoreClient seam.
+// Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestOrgCreate_HumanByDefault(t *testing.T) {
 	srv := newCreateOrgServer(t)
-	out, errOut, err := runDeleteCmd(t, newOrgCreateCmd, srv.URL, "acme")
+	out, errOut, err := runCoreCmd(t, newOrgCreateCmd, srv.URL, "acme")
 	require.NoError(t, err)
 	require.Contains(t, out, "✓ Created org acme ("+testDeleteULID+")")
 	require.NotContains(t, out, "{", "default output must not be JSON")
 	require.Empty(t, errOut)
 }
 
-// Not parallel: runDeleteCmd swaps the package-level activeCoreClient seam.
+// Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestOrgCreate_JSONOnRequest(t *testing.T) {
 	srv := newCreateOrgServer(t)
 	// org create's --json is persistent on the group root, so drive the
 	// full group command with "create" as a subcommand arg.
-	out, _, err := runDeleteCmd(t, newOrgCmd, srv.URL, "create", "acme", "--json")
+	out, _, err := runCoreCmd(t, newOrgCmd, srv.URL, "create", "acme", "--json")
 	require.NoError(t, err)
 	require.Contains(t, out, `"name": "acme"`)
 	require.Contains(t, out, `"id": "`+testDeleteULID+`"`)

@@ -69,7 +69,7 @@ func newGrantCmd() *cobra.Command {
 // saying where the grant comes from; ID keeps the ULID for revoke.
 var (
 	orgMemberColumns = []string{"ACCOUNT", "ROLE", "STATUS"}
-	grantColumns     = []string{"GRANTEE-TYPE", "GRANTEE", "ID", "ROLE", "SOURCE"}
+	grantColumns     = []string{"GRANTEE", "ROLE", "SOURCE", "TYPE", "ID"}
 )
 
 func orgMemberRow(m coreapi.Membership) []string {
@@ -77,13 +77,13 @@ func orgMemberRow(m coreapi.Membership) []string {
 }
 
 func projectGrantRow(g coreapi.ProjectGrant) []string {
-	return []string{g.GranteeType, granteeName(g.GranteeName, g.GranteeId), g.GranteeId, g.Role, g.Source}
+	return []string{granteeName(g.GranteeName, g.GranteeId), g.Role, g.Source, g.GranteeType, g.GranteeId}
 }
 
 // repoGrantRow mirrors projectGrantRow; RepoGrant and ProjectGrant share the
 // grantee/role/source shape, so both reuse grantColumns.
 func repoGrantRow(g coreapi.RepoGrant) []string {
-	return []string{g.GranteeType, granteeName(g.GranteeName, g.GranteeId), g.GranteeId, g.Role, g.Source}
+	return []string{granteeName(g.GranteeName, g.GranteeId), g.Role, g.Source, g.GranteeType, g.GranteeId}
 }
 
 // granteeName returns the friendly name when the server resolved one, falling
@@ -145,7 +145,7 @@ func newGrantOrgAddCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", "", "org role: owner, admin, or member (default member)")
+	cmd.Flags().StringVar(&role, "role", "", "Org role: owner, admin, or member (default member)")
 	return cmd
 }
 
@@ -254,7 +254,7 @@ func newGrantProjectAddCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", "", "project role: reader, writer, or admin (required)")
+	cmd.Flags().StringVar(&role, "role", "", "Project role: reader, writer, or admin (required)")
 	markRequired(cmd, "role")
 	return cmd
 }
@@ -402,7 +402,7 @@ func newGrantRepoAddCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", "", "repo role: reader, writer, or admin (required)")
+	cmd.Flags().StringVar(&role, "role", "", "Repo role: reader, writer, or admin (required)")
 	bindRepoProjectFlag(cmd, &project)
 	markRequired(cmd, "role")
 	return cmd

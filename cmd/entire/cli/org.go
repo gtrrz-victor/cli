@@ -54,7 +54,7 @@ func newOrgCreateCmd() *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&region, "region", "", "jurisdiction slug (defaults to the server's home jurisdiction)")
+	cmd.Flags().StringVar(&region, "region", "", "Jurisdiction slug (defaults to the server's home jurisdiction)")
 	return cmd
 }
 

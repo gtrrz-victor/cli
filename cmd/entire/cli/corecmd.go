@@ -25,7 +25,7 @@ import (
 //     (local/dev deployments where the core isn't behind TLS). Hidden, as
 //     elsewhere in the CLI.
 func addControlPlaneFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().Bool("json", false, "output raw JSON instead of a table")
+	cmd.PersistentFlags().Bool("json", false, "Output raw JSON instead of a table")
 	cmd.PersistentFlags().Bool("insecure-http-auth", false, "Allow authentication over plain HTTP (insecure, for local development only)")
 	if err := cmd.PersistentFlags().MarkHidden("insecure-http-auth"); err != nil {
 		panic(fmt.Sprintf("hide insecure-http-auth flag: %v", err))
@@ -458,7 +458,7 @@ func renderCoreError(err error) error {
 }
 
 // printJSON writes v as indented JSON to w — the --json view for list/get
-// and the default for create commands that echo the new object.
+// and mutations.
 func printJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
