@@ -2955,17 +2955,6 @@ func filesChangedInCommitFallback(ctx context.Context, headTree, parentTree *obj
 	return result
 }
 
-// subtractFiles returns files that are NOT in the exclude set.
-func subtractFiles(files []string, exclude map[string]struct{}) []string {
-	var remaining []string
-	for _, f := range files {
-		if _, excluded := exclude[f]; !excluded {
-			remaining = append(remaining, f)
-		}
-	}
-	return remaining
-}
-
 // carryForwardToNewShadowBranch creates a new shadow branch at the current HEAD
 // containing the remaining uncommitted files and all session metadata.
 // This enables the next commit to get its own unique checkpoint.
