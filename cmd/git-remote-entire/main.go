@@ -278,10 +278,10 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 	// One keychain-persisted jurisdiction access token authenticates every
 	// repo (authorized live at the data plane) — there is no repo-scoped
 	// fallback on this path. The cluster must advertise its jurisdiction
-	// audience; ENTIRE_JURISDICTION_AUDIENCE overrides for local dev.
+	// audience.
 	audience := clusterAuth.JurisdictionAudience
-	if audience == "" && os.Getenv("ENTIRE_JURISDICTION_AUDIENCE") == "" {
-		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates jurisdiction-token git auth — upgrade the cluster (or set ENTIRE_JURISDICTION_AUDIENCE)", parsedURL.Host, clusterdiscovery.Path)
+	if audience == "" {
+		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates jurisdiction-token git auth", parsedURL.Host, clusterdiscovery.Path)
 	}
 	debuglog.Printf("auth: jurisdiction access token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
 	return newJurisdictionTokenSource(clusterCtx.CoreURL, audience, clusterAuth.JurisdictionCoreURL, clusterCtx.Handle, loginProvider, httpClient), nil

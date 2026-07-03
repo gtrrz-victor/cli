@@ -8,7 +8,7 @@ package main
 //
 // The token is persisted in the OS keychain (like the login JWT) so fresh
 // git-remote-entire processes reuse it instead of paying the exchange per
-// git command — with the server-side 2h IdentityTokenTTL that removes the
+// git command — with the server-side 8h JurisdictionAccessTokenTTL that removes the
 // exchange from the hot path entirely.
 
 import (
@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +28,8 @@ import (
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 )
 
-// jurisdictionKeyringService is the keychain service name for a jurisdiction's
-// jurisdiction tokens, keyed by audience so tokens for different jurisdictions
+// jurisdictionKeyringService is the keychain service name for jurisdiction
+// tokens, keyed by audience so tokens for different jurisdictions
 // (and prod vs staging) can't be confused. The account is the context handle.
 func jurisdictionKeyringService(audience string) string {
 	return "entire-jurisdiction:" + strings.TrimRight(audience, "/")
@@ -62,9 +61,6 @@ type jurisdictionTokenSource struct {
 }
 
 func newJurisdictionTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle string, login func(context.Context) (string, error), client *http.Client) *jurisdictionTokenSource {
-	if override := strings.TrimSpace(os.Getenv("ENTIRE_JURISDICTION_AUDIENCE")); override != "" {
-		audience = override
-	}
 	return &jurisdictionTokenSource{
 		homeCoreURL:         homeCoreURL,
 		audience:            audience,
@@ -111,7 +107,7 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 	return token, nil
 }
 
-// mint exchanges the login JWT for an jurisdiction token at the core owning the
+// mint exchanges the login JWT for a jurisdiction token at the core owning the
 // target jurisdiction. For a same-jurisdiction login that is the login's own
 // core; for a cross-jurisdiction repo the sibling core accepts our login JWT
 // via the foreign-session path and mints the jurisdiction token in the same
@@ -152,12 +148,8 @@ func (s *jurisdictionTokenSource) mint(ctx context.Context) (string, time.Durati
 // audience is in the login's home jurisdiction, else the cluster's
 // advertised jurisdiction core. Both arrive over TLS-authenticated trust
 // roots (the login context / the cluster's /.well-known), but the login JWT
-// is only ever POSTed to an https origin. ENTIRE_JURISDICTION_CORE overrides.
+// is only ever POSTed to an https origin.
 func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) {
-	if override := strings.TrimSpace(os.Getenv("ENTIRE_JURISDICTION_CORE")); override != "" {
-		return strings.TrimRight(override, "/"), nil
-	}
-
 	label, err := jurisdictionLabel(s.audience)
 	if err != nil {
 		return "", err
@@ -171,7 +163,7 @@ func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) 
 	}
 
 	if s.jurisdictionCoreURL == "" {
-		return "", fmt.Errorf("cross-jurisdiction jurisdiction-token exchange for %s: cluster advertises no jurisdiction_core_url; upgrade the cluster (or set ENTIRE_JURISDICTION_CORE)", s.audience)
+		return "", fmt.Errorf("cross-jurisdiction token exchange for %s: cluster advertises no jurisdiction_core_url", s.audience)
 	}
 	if !strings.HasPrefix(s.jurisdictionCoreURL, "https://") {
 		return "", fmt.Errorf("advertised jurisdiction core %q must be https", s.jurisdictionCoreURL)

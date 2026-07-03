@@ -67,18 +67,6 @@ func TestExchangeCore(t *testing.T) {
 			t.Fatal("expected error for plaintext advertised core")
 		}
 	})
-
-	t.Run("ENTIRE_JURISDICTION_CORE overrides", func(t *testing.T) {
-		t.Setenv("ENTIRE_JURISDICTION_CORE", "https://override.example.io/")
-		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", "", "h", nil, nil)
-		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if core != "https://override.example.io" {
-			t.Fatalf("core = %q, want trimmed override", core)
-		}
-	})
 }
 
 func TestJurisdictionToken_MintsPersistsAndReuses(t *testing.T) {
@@ -99,11 +87,10 @@ func TestJurisdictionToken_MintsPersistsAndReuses(t *testing.T) {
 	}))
 	defer core.Close()
 
+	// Same-jurisdiction routing: home_jurisdiction "eu" matches the audience
+	// label, so the exchange goes to homeCoreURL — the fake core.
 	login := staticLogin(fakeLoginJWT(t, "eu"))
 	s := newJurisdictionTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", login, core.Client())
-	// The home-core short-circuit compares jurisdiction labels; the httptest
-	// URL is not jurisdiction-shaped, so route via the override.
-	t.Setenv("ENTIRE_JURISDICTION_CORE", core.URL)
 
 	token, err := s.Token(context.Background(), "/et/x/y", "pull")
 	if err != nil {
@@ -166,7 +153,6 @@ func TestJurisdictionToken_ExpiredPersistedTokenRemints(t *testing.T) {
 		_, _ = w.Write([]byte(`{"access_token":"fresh-jwt","token_type":"Bearer","expires_in":7200}`)) //nolint:errcheck // test
 	}))
 	defer core.Close()
-	t.Setenv("ENTIRE_JURISDICTION_CORE", core.URL)
 
 	s := newJurisdictionTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", staticLogin(fakeLoginJWT(t, "eu")), core.Client())
 	token, err := s.Token(context.Background(), "/et/x/y", "pull")
