@@ -68,15 +68,16 @@ func DiscoverAPI(ctx context.Context, apiHost string, c *http.Client, debugf Deb
 // reuse the cores cache (different file). Cold failures stay folded under
 // ErrDiscoveryUnavailable (from DiscoverAPI) for the caller to surface.
 func resolveAPICores(ctx context.Context, cacheDir, apiHost string, httpClient *http.Client, debugf DebugFunc) ([]string, error) {
-	return resolveCachedCores(cacheDir, apiHost, "api host",
+	cores, _, err := resolveCachedCores(cacheDir, apiHost, "api host",
 		discovery.LoadAPICores, discovery.ModifyAPICores,
-		func() ([]string, error) {
+		func() ([]string, string, error) {
 			body, err := DiscoverAPI(ctx, apiHost, httpClient, debugf)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
-			return body.TrustedIssuers, nil
+			return body.TrustedIssuers, "", nil
 		}, debugf)
+	return cores, err
 }
 
 // ResolveContextForAPI picks the local login context to authenticate data-API
