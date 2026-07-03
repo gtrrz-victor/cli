@@ -7,12 +7,10 @@ import (
 	"testing"
 
 	git "github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 	"github.com/entireio/cli/redact"
 )
@@ -80,7 +78,7 @@ func TestSeam_GitRefsPrimaryWithGitBranchMirror(t *testing.T) {
 	// Reads must be served by the git-refs primary, not the mirror: after the
 	// mirror's v1 branch is deleted, the composed store still reads everything.
 	t.Run("reads resolve from primary", func(t *testing.T) {
-		require.NoError(t, repo.Storer.RemoveReference(plumbing.NewBranchReferenceName(paths.MetadataBranchName)))
+		require.NoError(t, repo.Storer.RemoveReference(v1BranchRef()))
 		assertSeamVariants(t, stores.Persistent, cid)
 	})
 }

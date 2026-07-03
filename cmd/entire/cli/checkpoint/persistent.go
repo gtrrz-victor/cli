@@ -2488,6 +2488,13 @@ type Author struct {
 	Email string
 }
 
+// AuthorReader provides optional checkpoint author lookup. It stays in the
+// implementation package: GetCheckpointAuthor is a git-log operation and Author
+// is an implementation type, not part of the storage contract.
+type AuthorReader interface {
+	GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error)
+}
+
 // GetCheckpointAuthor retrieves the author of a checkpoint from the configured
 // committed-read ref history.
 // Finds the commit whose subject matches "Checkpoint: <id>" and returns its author.
