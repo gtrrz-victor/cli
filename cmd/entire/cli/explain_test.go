@@ -5821,3 +5821,96 @@ func TestGetBranchCheckpoints_TruncationSignal(t *testing.T) {
 		require.False(t, truncated)
 	})
 }
+
+// setupExplainBranchViewRepo initializes a repo with one commit and an .entire
+// dir in a temp CWD, returning the commit hash. Shared scaffolding for the
+// default branch-view tests of runExplainBranchWithFilter.
+func setupExplainBranchViewRepo(t *testing.T) plumbing.Hash {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	testutil.InitRepo(t, tmpDir)
+	repo, err := git.PlainOpen(tmpDir)
+	require.NoError(t, err)
+
+	w, err := repo.Worktree()
+	require.NoError(t, err)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("test content"), 0o644))
+	_, err = w.Add("test.txt")
+	require.NoError(t, err)
+	commitHash, err := w.Commit("initial commit", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test",
+			Email: "test@example.com",
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(".entire", 0o750))
+	return commitHash
+}
+
+// TestRunExplainBranchWithFilter_ShowsBranchView covers the default
+// `entire explain` view (no filter): branch header plus checkpoint count.
+func TestRunExplainBranchWithFilter_ShowsBranchView(t *testing.T) {
+	setupExplainBranchViewRepo(t)
+
+	var stdout, stderr bytes.Buffer
+	err := runExplainBranchWithFilter(context.Background(), &stdout, &stderr, true, "")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "branch  ") {
+		t.Errorf("expected 'branch' row in output, got: %s", output)
+	}
+	if !strings.Contains(output, "checkpoints") {
+		t.Errorf("expected 'checkpoints' row in output, got: %s", output)
+	}
+}
+
+// TestRunExplainBranchWithFilter_NoCheckpoints_ShowsHelpfulMessage pins the
+// zero-checkpoint hint shown to users before their first agent session saves.
+func TestRunExplainBranchWithFilter_NoCheckpoints_ShowsHelpfulMessage(t *testing.T) {
+	setupExplainBranchViewRepo(t)
+
+	var stdout, stderr bytes.Buffer
+	err := runExplainBranchWithFilter(context.Background(), &stdout, &stderr, true, "")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "checkpoints  0") {
+		t.Errorf("expected 'checkpoints  0' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Checkpoints will appear") || !strings.Contains(output, "agent session") {
+		t.Errorf("expected helpful message about checkpoints, got: %s", output)
+	}
+}
+
+// TestRunExplainBranchWithFilter_DetachedHead covers the default view's branch
+// labeling when HEAD is detached — a real user path with no branch name.
+func TestRunExplainBranchWithFilter_DetachedHead(t *testing.T) {
+	commitHash := setupExplainBranchViewRepo(t)
+
+	repo, err := git.PlainOpen(".")
+	require.NoError(t, err)
+	w, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, w.Checkout(&git.CheckoutOptions{Hash: commitHash}))
+
+	var stdout, stderr bytes.Buffer
+	err = runExplainBranchWithFilter(context.Background(), &stdout, &stderr, true, "")
+	if err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "HEAD") && !strings.Contains(output, "detached") {
+		t.Errorf("expected output to indicate detached HEAD state, got: %s", output)
+	}
+}
