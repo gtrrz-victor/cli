@@ -59,7 +59,7 @@ func newOrgListCmd() *cobra.Command {
 		Short: "List organizations you can see",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCoreList(cmd, orgColumns, orgRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Org, error) {
+			return runCoreList(cmd, "No organizations found.", orgColumns, orgRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Org, error) {
 				return fetchAllPages(ctx, func(ctx context.Context, cursor string) ([]coreapi.Org, string, error) {
 					params := coreapi.ListOrgsParams{}
 					if cursor != "" {

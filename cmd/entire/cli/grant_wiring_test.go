@@ -99,7 +99,7 @@ func TestGrantRemove_RouteWiring(t *testing.T) {
 			))
 			t.Cleanup(srv.Close)
 
-			_, err := runDeleteCmd(t, tc.newCmd, srv.URL, tc.args...)
+			_, _, err := runDeleteCmd(t, tc.newCmd, srv.URL, tc.args...)
 			require.NoError(t, err)
 			require.Equal(t, http.MethodDelete, gotMethod)
 			require.Equal(t, tc.wantPath, gotPath)
@@ -132,9 +132,10 @@ func TestGrantRemove_Idempotent(t *testing.T) {
 			))
 			t.Cleanup(srv.Close)
 
-			out, err := runDeleteCmd(t, tc.newCmd, srv.URL, tc.args...)
+			out, errOut, err := runDeleteCmd(t, tc.newCmd, srv.URL, tc.args...)
 			require.NoError(t, err)
 			require.Contains(t, out, "nothing to revoke")
+			require.Empty(t, errOut)
 		})
 	}
 }

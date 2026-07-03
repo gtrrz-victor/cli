@@ -94,7 +94,7 @@ func newProjectListCmd() *cobra.Command {
 		Short: "List projects you can see",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCoreList(cmd, projectColumns, projectRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Project, error) {
+			return runCoreList(cmd, "No projects found.", projectColumns, projectRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Project, error) {
 				// Both the global and org-scoped list endpoints filter by name
 				// server-side (case-insensitive), returning the single match under
 				// the response's `project` field (or 404 → empty result, not an

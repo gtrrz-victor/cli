@@ -154,7 +154,7 @@ func newRepoListCmd() *cobra.Command {
 		Long:  "List repositories in a project, addressed by name or ULID.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, repoColumns, repoRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Repo, error) {
+			return runCoreList(cmd, "No repositories found in this project.", repoColumns, repoRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Repo, error) {
 				projID, err := resolveProjectRef(ctx, c, args[0])
 				if err != nil {
 					return nil, err

@@ -151,7 +151,7 @@ func newGrantOrgListCmd() *cobra.Command {
 		Short: "List org members",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, orgMemberColumns, orgMemberRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Membership, error) {
+			return runCoreList(cmd, "No members found.", orgMemberColumns, orgMemberRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Membership, error) {
 				orgID, err := resolveOrgRef(ctx, c, args[0])
 				if err != nil {
 					return nil, err
@@ -257,7 +257,7 @@ func newGrantProjectListCmd() *cobra.Command {
 		Short: "List project members",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, grantColumns, projectGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.ProjectGrant, error) {
+			return runCoreList(cmd, "No grants found.", grantColumns, projectGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.ProjectGrant, error) {
 				projID, err := resolveProjectRef(ctx, c, args[0])
 				if err != nil {
 					return nil, err
@@ -403,7 +403,7 @@ func newGrantRepoListCmd() *cobra.Command {
 		Short: "List repo grants",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreList(cmd, grantColumns, repoGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.RepoGrant, error) {
+			return runCoreList(cmd, "No grants found.", grantColumns, repoGrantRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.RepoGrant, error) {
 				repoID, err := resolveRepoRef(ctx, c, args[0], project)
 				if err != nil {
 					return nil, err
@@ -478,11 +478,11 @@ func revokeRepoGrantee(ctx context.Context, cmd *cobra.Command, c *coreapi.Clien
 func revokeGrant(cmd *cobra.Command, verb, subject string, revoke func() error) error {
 	if err := revoke(); err != nil {
 		if isCoreNotFound(err) {
-			cmd.Printf("%s: no such grant; nothing to revoke\n", subject)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: no such grant; nothing to revoke\n", subject)
 			return nil
 		}
 		return err
 	}
-	cmd.Printf("%s %s\n", verb, subject)
+	fmt.Fprintf(cmd.OutOrStdout(), "✓ %s %s\n", verb, subject)
 	return nil
 }

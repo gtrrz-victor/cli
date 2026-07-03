@@ -94,12 +94,12 @@ func runControlPlaneDelete(
 			// delete call — e.g. a ULID passed straight through, or a concurrent
 			// delete) is the desired end state, not an error.
 			if isCoreNotFound(err) {
-				cmd.Printf("%s not found; nothing to delete\n", label)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s not found; nothing to delete\n", label)
 				return nil
 			}
 			return err
 		}
-		cmd.Printf("Deleted %s\n", label)
+		fmt.Fprintf(cmd.OutOrStdout(), "✓ Deleted %s\n", label)
 		return nil
 	})
 }
@@ -142,36 +142,42 @@ func confirmControlPlaneDeletion(ctx context.Context, w io.Writer, label string,
 }
 
 // runCoreList fetches a slice via fn and renders it as an aligned table
-// (default) or the raw wire JSON (--json). headers names the columns; row
-// maps one item to its cells in the same order. The human view keeps the
-// output actionable — only the columns a person acts on — while --json
-// preserves the full model for scripting.
-func runCoreList[T any](cmd *cobra.Command, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) error {
-	return runCore(cmd, renderCoreList(cmd, headers, row, fn))
+// (default) or the raw wire JSON (--json). empty is the full sentence printed
+// to stdout in place of the table when there are no items (e.g. "No
+// organizations found."). headers names the columns; row maps one item to its
+// cells in the same order. The human view keeps the output actionable — only
+// the columns a person acts on — while --json preserves the full model for
+// scripting.
+func runCoreList[T any](cmd *cobra.Command, empty string, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) error {
+	return runCore(cmd, renderCoreList(cmd, empty, headers, row, fn))
 }
 
 // runCoreListForCluster is runCoreList for a resource-provider command (see
-// runCoreForCluster): identical table/JSON rendering, but dialing the core that
-// fronts clusterHost rather than the active context.
-func runCoreListForCluster[T any](cmd *cobra.Command, clusterHost string, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) error {
-	return runCoreForCluster(cmd, clusterHost, renderCoreList(cmd, headers, row, fn))
+// runCoreForCluster): identical table/JSON/empty-state rendering, but dialing
+// the core that fronts clusterHost rather than the active context.
+func runCoreListForCluster[T any](cmd *cobra.Command, clusterHost, empty string, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) error {
+	return runCoreForCluster(cmd, clusterHost, renderCoreList(cmd, empty, headers, row, fn))
 }
 
 // renderCoreList builds the run-function shared by runCoreList and
-// runCoreListForCluster: fetch via fn, then render as a table (default) or raw
-// JSON (--json). Kept separate from the client-selection so the two list
-// variants differ only in which core they dial.
-func renderCoreList[T any](cmd *cobra.Command, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) func(context.Context, *coreapi.Client) error {
+// runCoreListForCluster: fetch via fn, then render as a table (default), the
+// empty sentence (no items), or raw JSON (--json). Kept separate from the
+// client-selection so the two list variants differ only in which core they
+// dial.
+func renderCoreList[T any](cmd *cobra.Command, empty string, headers []string, row func(T) []string, fn func(ctx context.Context, c *coreapi.Client) ([]T, error)) func(context.Context, *coreapi.Client) error {
 	return func(ctx context.Context, c *coreapi.Client) error {
 		items, err := fn(ctx, c)
 		if err != nil {
 			return err
 		}
 		if jsonRequested(cmd) {
+			if items == nil {
+				items = []T{} // a nil slice encodes as null; scripts expect []
+			}
 			return printJSON(cmd.OutOrStdout(), items)
 		}
 		if len(items) == 0 {
-			fmt.Fprintln(cmd.ErrOrStderr(), "(none)")
+			fmt.Fprintln(cmd.OutOrStdout(), empty)
 			return nil
 		}
 		return printTable(cmd.OutOrStdout(), headers, items, row)

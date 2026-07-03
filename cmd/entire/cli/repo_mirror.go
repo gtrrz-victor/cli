@@ -341,7 +341,7 @@ func newRepoMirrorListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if showAvailable {
-				return runCoreList(cmd, availableMirrorColumns, availableMirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.AvailableMirror, error) {
+				return runCoreList(cmd, "No repos available to mirror.", availableMirrorColumns, availableMirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.AvailableMirror, error) {
 					// Computed live from GitHub using your own login, so name the
 					// core being dialled (same rationale as the existing-mirror
 					// banner). --cluster/--provider don't apply here: the
@@ -360,7 +360,7 @@ func newRepoMirrorListCmd() *cobra.Command {
 					return out.Available, nil
 				})
 			}
-			return runCoreList(cmd, mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Mirror, error) {
+			return runCoreList(cmd, "No mirrors found.", mirrorColumns, mirrorRow, func(ctx context.Context, c *coreapi.Client) ([]coreapi.Mirror, error) {
 				// mirror list is identity-scoped: it shows the mirrors visible
 				// from the active login's federation, so naming that login server
 				// makes a surprising empty result legible — e.g. mirrors in a
@@ -527,17 +527,20 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 				// error here, not idempotent success: the server only
 				// answers 204 when it actually removed a placement, so a
 				// 404 ("no such mirror / not visible / different cluster")
-				// surfaces verbatim via renderCoreError rather than being
-				// reported as a successful removal.
+				// maps to a targeted "may be on a different cluster" error
+				// rather than being reported as a successful removal.
 				if err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{
 					Provider:    coreapi.DeleteMirrorProviderGithub,
 					Owner:       owner,
 					Repo:        repo,
 					ClusterHost: clusterHost,
 				}); err != nil {
+					if isCoreNotFound(err) {
+						return fmt.Errorf("no mirror of github.com/%s/%s on %s — it may be on a different cluster (run `entire repo mirror list` to see placements)", owner, repo, clusterHost)
+					}
 					return err
 				}
-				cmd.Printf("Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)
+				fmt.Fprintf(cmd.OutOrStdout(), "✓ Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)
 				return nil
 			})
 		},
