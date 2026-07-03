@@ -63,29 +63,29 @@ func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterH
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
 
-	coreURLs, _, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
 
-	return selectContext(f, "cluster "+clusterHost, coreURLs, debugf)
+	return selectContext(f, "cluster "+clusterHost, entry.CoreURLs, debugf)
 }
 
 // ClusterAuth is ResolveClusterAuth's result: the selected login context
 // plus the cluster facts a caller needs to mint credentials for it.
 type ClusterAuth struct {
 	Context *contexts.Context
-	// CoreURLs is the cluster's advertised trusted-core set.
-	CoreURLs []string
 	// JurisdictionAudience is the cluster's identity-token audience; empty
-	// when the cluster doesn't advertise one (fall back to repo-scoped
-	// tokens).
+	// when the cluster doesn't advertise one.
 	JurisdictionAudience string
+	// JurisdictionCoreURL is the advertised core minting for that audience —
+	// the cross-jurisdiction exchange endpoint.
+	JurisdictionCoreURL string
 }
 
 // ResolveClusterAuth is ResolveContextForCluster plus the cluster's
-// advertised metadata (trusted cores, jurisdiction audience), sharing the
-// same cache and single /.well-known fetch.
+// advertised jurisdiction metadata, sharing the same cache and single
+// /.well-known fetch.
 func ResolveClusterAuth(ctx context.Context, configDir, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*ClusterAuth, error) {
 	if debugf == nil {
 		debugf = func(string, ...any) {}
@@ -96,16 +96,20 @@ func ResolveClusterAuth(ctx context.Context, configDir, cacheDir, clusterHost st
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
 
-	coreURLs, jurisdictionAudience, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
 
-	selected, err := selectContext(f, "cluster "+clusterHost, coreURLs, debugf)
+	selected, err := selectContext(f, "cluster "+clusterHost, entry.CoreURLs, debugf)
 	if err != nil {
 		return nil, err
 	}
-	return &ClusterAuth{Context: selected, CoreURLs: coreURLs, JurisdictionAudience: jurisdictionAudience}, nil
+	return &ClusterAuth{
+		Context:              selected,
+		JurisdictionAudience: entry.JurisdictionAudience,
+		JurisdictionCoreURL:  entry.JurisdictionCoreURL,
+	}, nil
 }
 
 // ResolveClusterCores returns the trusted control-plane core URLs that
@@ -119,8 +123,11 @@ func ResolveClusterCores(ctx context.Context, cacheDir, clusterHost string, http
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
-	cores, _, err := resolveClusterCores(ctx, cacheDir, normalizeClusterHost(clusterHost), httpClient, debugf)
-	return cores, err
+	entry, err := resolveClusterCores(ctx, cacheDir, normalizeClusterHost(clusterHost), httpClient, debugf)
+	if err != nil {
+		return nil, err
+	}
+	return entry.CoreURLs, nil
 }
 
 // normalizeClusterHost folds a cluster host to its canonical form for use as a
@@ -143,9 +150,9 @@ func resolveCachedCores(
 	cacheDir, host, label string,
 	load func(string) (discovery.ClusterCoresCache, error),
 	modify func(string, func(discovery.ClusterCoresCache) error) error,
-	discover func() ([]string, string, error),
+	discover func() (discovery.CoresEntry, error),
 	debugf DebugFunc,
-) ([]string, string, error) {
+) (*discovery.CoresEntry, error) {
 	cache, err := load(cacheDir)
 	if err != nil {
 		// A cache read problem must not block resolution — discover live.
@@ -164,45 +171,49 @@ func resolveCachedCores(
 			preAudience := label == "cluster" && entry.JurisdictionAudience == ""
 			if fresh && !preAudience {
 				debugf("%s %s cores from cache: %v", label, host, entry.CoreURLs)
-				return entry.CoreURLs, entry.JurisdictionAudience, nil
+				return entry, nil
 			}
 			stale = entry
 			debugf("%s %s cores cache expired or pre-audience; re-fetching /.well-known", label, host)
 		}
 	}
 
-	cores, jurisdictionAudience, err := discover()
+	fetched, err := discover()
 	if err != nil {
 		if stale != nil {
 			debugf("%s discovery for %s failed (%v); falling back to stale cached cores %v", label, host, err, stale.CoreURLs)
-			return stale.CoreURLs, stale.JurisdictionAudience, nil
+			return stale, nil
 		}
-		return nil, "", err
+		return nil, err
 	}
 
 	if mErr := modify(cacheDir, func(c discovery.ClusterCoresCache) error {
-		c.SetEntry(host, cores, jurisdictionAudience)
+		c.SetEntry(host, fetched)
 		return nil
 	}); mErr != nil {
 		// Non-fatal: we resolved the cores, the next call just re-fetches.
 		debugf("%s cache write for %s failed: %v", label, host, mErr)
 	}
-	return cores, jurisdictionAudience, nil
+	return &fetched, nil
 }
 
 // resolveClusterCores returns the control-plane core URLs that front
-// clusterHost plus its advertised jurisdiction audience, from
+// clusterHost plus its advertised jurisdiction audience/core, from
 // cluster_cores.json when fresh, otherwise via a live /.well-known fetch
 // (cached, with stale fallback on failure).
-func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) ([]string, string, error) {
+func resolveClusterCores(ctx context.Context, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*discovery.CoresEntry, error) {
 	return resolveCachedCores(cacheDir, clusterHost, "cluster",
 		discovery.LoadClusterCores, discovery.ModifyClusterCores,
-		func() ([]string, string, error) {
+		func() (discovery.CoresEntry, error) {
 			body, err := Discover(ctx, clusterHost, httpClient, debugf)
 			if err != nil {
-				return nil, "", formatDiscoveryError(clusterHost, err)
+				return discovery.CoresEntry{}, formatDiscoveryError(clusterHost, err)
 			}
-			return body.CoreURLs, body.JurisdictionAudience, nil
+			return discovery.CoresEntry{
+				CoreURLs:             body.CoreURLs,
+				JurisdictionAudience: body.JurisdictionAudience,
+				JurisdictionCoreURL:  body.JurisdictionCoreURL,
+			}, nil
 		}, debugf)
 }
 

@@ -32,10 +32,8 @@ func staticLogin(jwt string) func(context.Context) (string, error) {
 }
 
 func TestExchangeCore(t *testing.T) {
-	trusted := []string{"https://eu.auth.example.io", "https://au.auth.example.io"}
-
 	t.Run("same jurisdiction uses home core", func(t *testing.T) {
-		s := newIdentityTokenSource("https://au.auth.example.io", "https://au.example.io", trusted, "h", nil, nil)
+		s := newIdentityTokenSource("https://au.auth.example.io", "https://au.example.io", "https://au.auth.example.io", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
 		if err != nil {
 			t.Fatal(err)
@@ -45,27 +43,34 @@ func TestExchangeCore(t *testing.T) {
 		}
 	})
 
-	t.Run("cross jurisdiction derives sibling from trusted set", func(t *testing.T) {
-		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", trusted, "h", nil, nil)
+	t.Run("cross jurisdiction uses advertised jurisdiction core", func(t *testing.T) {
+		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", "https://au.auth.example.io/", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if core != "https://au.auth.example.io" {
-			t.Fatalf("core = %q, want au sibling", core)
+			t.Fatalf("core = %q, want advertised au core (trimmed)", core)
 		}
 	})
 
-	t.Run("derived sibling not advertised is refused", func(t *testing.T) {
-		s := newIdentityTokenSource("https://eu.auth.example.io", "https://us.example.io", trusted, "h", nil, nil)
+	t.Run("cross jurisdiction without advertised core is refused", func(t *testing.T) {
+		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", "", "h", nil, nil)
 		if _, err := s.exchangeCore(fakeLoginJWT(t, "eu")); err == nil {
-			t.Fatal("expected error for unadvertised sibling core")
+			t.Fatal("expected error when no jurisdiction core is advertised")
+		}
+	})
+
+	t.Run("non-https advertised core is refused", func(t *testing.T) {
+		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", "http://au.auth.example.io", "h", nil, nil)
+		if _, err := s.exchangeCore(fakeLoginJWT(t, "eu")); err == nil {
+			t.Fatal("expected error for plaintext advertised core")
 		}
 	})
 
 	t.Run("ENTIRE_IDENTITY_CORE overrides", func(t *testing.T) {
 		t.Setenv("ENTIRE_IDENTITY_CORE", "https://override.example.io/")
-		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", nil, "h", nil, nil)
+		s := newIdentityTokenSource("https://eu.auth.example.io", "https://au.example.io", "", "h", nil, nil)
 		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
 		if err != nil {
 			t.Fatal(err)
@@ -95,7 +100,7 @@ func TestIdentityToken_MintsPersistsAndReuses(t *testing.T) {
 	defer core.Close()
 
 	login := staticLogin(fakeLoginJWT(t, "eu"))
-	s := newIdentityTokenSource(core.URL, "https://eu.example.io", nil, "toothbrush", login, core.Client())
+	s := newIdentityTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", login, core.Client())
 	// The home-core short-circuit compares jurisdiction labels; the httptest
 	// URL is not jurisdiction-shaped, so route via the override.
 	t.Setenv("ENTIRE_IDENTITY_CORE", core.URL)
@@ -120,7 +125,7 @@ func TestIdentityToken_MintsPersistsAndReuses(t *testing.T) {
 	}
 
 	// Fresh source (new process): served from the persisted keychain entry.
-	s2 := newIdentityTokenSource(core.URL, "https://eu.example.io", nil, "toothbrush", login, core.Client())
+	s2 := newIdentityTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", login, core.Client())
 	token2, err := s2.Token(context.Background(), "/et/x/y", "pull")
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +138,7 @@ func TestIdentityToken_MintsPersistsAndReuses(t *testing.T) {
 	}
 
 	// A different handle must not share the token.
-	s3 := newIdentityTokenSource(core.URL, "https://eu.example.io", nil, "other-account", login, core.Client())
+	s3 := newIdentityTokenSource(core.URL, "https://eu.example.io", "", "other-account", login, core.Client())
 	if _, err := s3.Token(context.Background(), "/et/x/y", "pull"); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +168,7 @@ func TestIdentityToken_ExpiredPersistedTokenRemints(t *testing.T) {
 	defer core.Close()
 	t.Setenv("ENTIRE_IDENTITY_CORE", core.URL)
 
-	s := newIdentityTokenSource(core.URL, "https://eu.example.io", nil, "toothbrush", staticLogin(fakeLoginJWT(t, "eu")), core.Client())
+	s := newIdentityTokenSource(core.URL, "https://eu.example.io", "", "toothbrush", staticLogin(fakeLoginJWT(t, "eu")), core.Client())
 	token, err := s.Token(context.Background(), "/et/x/y", "pull")
 	if err != nil {
 		t.Fatal(err)

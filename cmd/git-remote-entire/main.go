@@ -284,7 +284,7 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates identity-token git auth — upgrade the cluster (or set ENTIRE_IDENTITY_AUDIENCE)", parsedURL.Host, clusterdiscovery.Path)
 	}
 	debuglog.Printf("auth: jurisdiction identity token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
-	return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.CoreURLs, clusterCtx.Handle, loginProvider, httpClient), nil
+	return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.JurisdictionCoreURL, clusterCtx.Handle, loginProvider, httpClient), nil
 }
 
 // resolveEnvTokenCreds builds the repo-cred cache for the ENTIRE_TOKEN path.

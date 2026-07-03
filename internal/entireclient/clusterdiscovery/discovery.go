@@ -35,6 +35,10 @@ type Response struct {
 	// e.g. https://au.entire.io). Empty when the cluster does not accept
 	// jurisdiction tokens or predates the field.
 	JurisdictionAudience string `json:"jurisdiction_audience"`
+	// JurisdictionCoreURL is the core (OAuth AS) that mints tokens for
+	// JurisdictionAudience — the endpoint a cross-jurisdiction identity
+	// exchange dials. The audience itself is not dialable.
+	JurisdictionCoreURL string `json:"jurisdiction_core_url"`
 }
 
 // Sentinel errors returned by Discover so callers can branch on the

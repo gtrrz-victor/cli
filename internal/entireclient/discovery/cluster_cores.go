@@ -42,8 +42,11 @@ type CoresEntry struct {
 	// advertised by its /.well-known/entire-cluster.json. Empty when the
 	// cluster does not accept jurisdiction identity tokens (or predates
 	// the field) — callers must then fall back to repo-scoped tokens.
-	JurisdictionAudience string    `json:"jurisdiction_audience,omitempty"`
-	FetchedAt            time.Time `json:"fetched_at"`
+	JurisdictionAudience string `json:"jurisdiction_audience,omitempty"`
+	// JurisdictionCoreURL is the advertised core that mints for
+	// JurisdictionAudience — the cross-jurisdiction exchange endpoint.
+	JurisdictionCoreURL string    `json:"jurisdiction_core_url,omitempty"`
+	FetchedAt           time.Time `json:"fetched_at"`
 }
 
 // LoadClusterCores reads the cluster→cores cache. A missing or corrupt file
@@ -113,15 +116,14 @@ func (c ClusterCoresCache) GetEntry(cluster string) (entry *CoresEntry, fresh, o
 // Set records a cluster's core URLs, stamping the fetch time to now. The
 // slice is copied so later mutation by the caller can't corrupt the cache.
 func (c ClusterCoresCache) Set(cluster string, urls []string) {
-	c.SetEntry(cluster, urls, "")
+	c.SetEntry(cluster, CoresEntry{CoreURLs: urls})
 }
 
-// SetEntry is Set plus the cluster's advertised jurisdiction audience
-// (empty when the cluster does not advertise one).
-func (c ClusterCoresCache) SetEntry(cluster string, urls []string, jurisdictionAudience string) {
-	c[cluster] = &CoresEntry{
-		CoreURLs:             append([]string(nil), urls...),
-		JurisdictionAudience: jurisdictionAudience,
-		FetchedAt:            time.Now(),
-	}
+// SetEntry records a full discovery result (cores plus the jurisdiction
+// audience/core when advertised), stamping the fetch time to now. The
+// slice is copied so later mutation by the caller can't corrupt the cache.
+func (c ClusterCoresCache) SetEntry(cluster string, entry CoresEntry) {
+	entry.CoreURLs = append([]string(nil), entry.CoreURLs...)
+	entry.FetchedAt = time.Now()
+	c[cluster] = &entry
 }

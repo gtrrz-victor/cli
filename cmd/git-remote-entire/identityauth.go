@@ -47,10 +47,10 @@ type identityTokenSource struct {
 	homeCoreURL string
 	// audience is the cluster's advertised jurisdiction audience.
 	audience string
-	// trustedCores is the cluster's advertised core set; a derived
-	// cross-juris exchange core must be in it before the login JWT is
-	// POSTed there.
-	trustedCores []string
+	// jurisdictionCoreURL is the cluster's advertised core that mints for
+	// audience — the cross-jurisdiction exchange endpoint. It rides the
+	// same TLS-authenticated /.well-known trust root as the audience.
+	jurisdictionCoreURL string
 	// handle is the context's account handle — the keychain account key.
 	handle string
 	login  func(context.Context) (string, error)
@@ -61,17 +61,17 @@ type identityTokenSource struct {
 	expiresAt time.Time
 }
 
-func newIdentityTokenSource(homeCoreURL, audience string, trustedCores []string, handle string, login func(context.Context) (string, error), client *http.Client) *identityTokenSource {
+func newIdentityTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle string, login func(context.Context) (string, error), client *http.Client) *identityTokenSource {
 	if override := strings.TrimSpace(os.Getenv("ENTIRE_IDENTITY_AUDIENCE")); override != "" {
 		audience = override
 	}
 	return &identityTokenSource{
-		homeCoreURL:  homeCoreURL,
-		audience:     audience,
-		trustedCores: trustedCores,
-		handle:       handle,
-		login:        login,
-		client:       client,
+		homeCoreURL:         homeCoreURL,
+		audience:            audience,
+		jurisdictionCoreURL: strings.TrimRight(jurisdictionCoreURL, "/"),
+		handle:              handle,
+		login:               login,
+		client:              client,
 	}
 }
 
@@ -149,16 +149,16 @@ func (s *identityTokenSource) mint(ctx context.Context) (string, time.Duration, 
 }
 
 // exchangeCore picks the core to exchange at: the login's own core when the
-// audience is in the login's home jurisdiction, else the audience
-// jurisdiction's sibling core (https://<label>.auth.<family>), which must be
-// in the cluster's advertised core set before the login JWT is sent to it.
-// ENTIRE_IDENTITY_CORE overrides.
+// audience is in the login's home jurisdiction, else the cluster's
+// advertised jurisdiction core. Both arrive over TLS-authenticated trust
+// roots (the login context / the cluster's /.well-known), but the login JWT
+// is only ever POSTed to an https origin. ENTIRE_IDENTITY_CORE overrides.
 func (s *identityTokenSource) exchangeCore(loginJWT string) (string, error) {
 	if override := strings.TrimSpace(os.Getenv("ENTIRE_IDENTITY_CORE")); override != "" {
 		return strings.TrimRight(override, "/"), nil
 	}
 
-	label, family, err := splitJurisdictionHost(s.audience)
+	label, err := jurisdictionLabel(s.audience)
 	if err != nil {
 		return "", err
 	}
@@ -170,29 +170,29 @@ func (s *identityTokenSource) exchangeCore(loginJWT string) (string, error) {
 		return s.homeCoreURL, nil
 	}
 
-	sibling := "https://" + label + ".auth." + family
-	for _, trusted := range s.trustedCores {
-		if strings.TrimRight(trusted, "/") == sibling {
-			return sibling, nil
-		}
+	if s.jurisdictionCoreURL == "" {
+		return "", fmt.Errorf("cross-jurisdiction identity exchange for %s: cluster advertises no jurisdiction_core_url; upgrade the cluster (or set ENTIRE_IDENTITY_CORE)", s.audience)
 	}
-	return "", fmt.Errorf("cross-jurisdiction identity exchange: derived core %s is not in the cluster's advertised core set %v; set ENTIRE_IDENTITY_CORE", sibling, s.trustedCores)
+	if !strings.HasPrefix(s.jurisdictionCoreURL, "https://") {
+		return "", fmt.Errorf("advertised jurisdiction core %q must be https", s.jurisdictionCoreURL)
+	}
+	return s.jurisdictionCoreURL, nil
 }
 
-// splitJurisdictionHost splits a jurisdiction audience like
-// https://au.entire.io into its jurisdiction label ("au") and domain family
-// ("entire.io").
-func splitJurisdictionHost(audience string) (label, family string, err error) {
+// jurisdictionLabel extracts the jurisdiction label from an audience like
+// https://au.entire.io ("au"), for comparison against the login JWT's
+// home_jurisdiction claim.
+func jurisdictionLabel(audience string) (string, error) {
 	u, err := url.Parse(audience)
 	if err != nil {
-		return "", "", fmt.Errorf("parse jurisdiction audience %q: %w", audience, err)
+		return "", fmt.Errorf("parse jurisdiction audience %q: %w", audience, err)
 	}
 	host := strings.ToLower(u.Hostname())
-	label, family, ok := strings.Cut(host, ".")
-	if !ok || label == "" || family == "" {
-		return "", "", fmt.Errorf("jurisdiction audience %q has no <jurisdiction>.<domain> host", audience)
+	label, rest, ok := strings.Cut(host, ".")
+	if !ok || label == "" || rest == "" {
+		return "", fmt.Errorf("jurisdiction audience %q has no <jurisdiction>.<domain> host", audience)
 	}
-	return label, family, nil
+	return label, nil
 }
 
 // homeJurisdictionFromLoginJWT reads the home_jurisdiction claim without
