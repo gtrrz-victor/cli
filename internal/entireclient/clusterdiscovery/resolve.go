@@ -50,25 +50,11 @@ import (
 //
 // debugf is optional; nil suppresses debug output.
 func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*contexts.Context, error) {
-	if debugf == nil {
-		debugf = func(string, ...any) {}
-	}
-	// DNS hostnames are case-insensitive, so fold case before the host drives any
-	// lookup: the cache key, the /.well-known fetch, and the cores→context match.
-	// Without this, `aws-US-east-2.entire.io` and `aws-us-east-2.entire.io`
-	// resolve as different hosts and a context determination can fail spuriously.
-	clusterHost = normalizeClusterHost(clusterHost)
-	f, err := contexts.Load(configDir)
-	if err != nil {
-		return nil, fmt.Errorf("load contexts: %w", err)
-	}
-
-	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, false, httpClient, debugf)
+	a, err := resolveClusterAuth(ctx, configDir, cacheDir, clusterHost, false, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}
-
-	return selectContext(f, "cluster "+clusterHost, entry.CoreURLs, debugf)
+	return a.Context, nil
 }
 
 // ClusterAuth is ResolveClusterAuth's result: the selected login context
@@ -85,18 +71,30 @@ type ClusterAuth struct {
 
 // ResolveClusterAuth is ResolveContextForCluster plus the cluster's
 // advertised jurisdiction metadata, sharing the same cache and single
-// /.well-known fetch.
+// /.well-known fetch. Because its callers cannot proceed without the
+// jurisdiction audience, resolution requires one (see resolveCachedCores).
 func ResolveClusterAuth(ctx context.Context, configDir, cacheDir, clusterHost string, httpClient *http.Client, debugf DebugFunc) (*ClusterAuth, error) {
+	return resolveClusterAuth(ctx, configDir, cacheDir, clusterHost, true, httpClient, debugf)
+}
+
+// resolveClusterAuth is the shared body of ResolveContextForCluster and
+// ResolveClusterAuth: load contexts, resolve the cluster's cores entry,
+// select the login context.
+func resolveClusterAuth(ctx context.Context, configDir, cacheDir, clusterHost string, requireAudience bool, httpClient *http.Client, debugf DebugFunc) (*ClusterAuth, error) {
 	if debugf == nil {
 		debugf = func(string, ...any) {}
 	}
+	// DNS hostnames are case-insensitive, so fold case before the host drives any
+	// lookup: the cache key, the /.well-known fetch, and the cores→context match.
+	// Without this, `aws-US-east-2.entire.io` and `aws-us-east-2.entire.io`
+	// resolve as different hosts and a context determination can fail spuriously.
 	clusterHost = normalizeClusterHost(clusterHost)
 	f, err := contexts.Load(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("load contexts: %w", err)
 	}
 
-	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, true, httpClient, debugf)
+	entry, err := resolveClusterCores(ctx, cacheDir, clusterHost, requireAudience, httpClient, debugf)
 	if err != nil {
 		return nil, err
 	}

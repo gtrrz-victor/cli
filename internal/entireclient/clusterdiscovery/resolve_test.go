@@ -159,10 +159,10 @@ func TestResolve_CoresCachedAcrossCalls(t *testing.T) {
 	// The cores fact is persisted; the account choice is not.
 	cache, err := discovery.LoadClusterCores(cacheDir)
 	require.NoError(t, err)
-	urls, fresh, ok := cache.Get("aws-eu-central-1.entire.io")
+	entry, fresh, ok := cache.GetEntry("aws-eu-central-1.entire.io")
 	require.True(t, ok)
 	assert.True(t, fresh)
-	assert.Equal(t, []string{"https://eu.auth.entire.io"}, urls)
+	assert.Equal(t, []string{"https://eu.auth.entire.io"}, entry.CoreURLs)
 }
 
 // TestResolve_ClusterHostCaseInsensitive: a mixed-case cluster host resolves
@@ -190,7 +190,7 @@ func TestResolve_ClusterHostCaseInsensitive(t *testing.T) {
 	// Cached under the canonical lowercase host, so the lowercase form is a hit.
 	cache, err := discovery.LoadClusterCores(cacheDir)
 	require.NoError(t, err)
-	_, _, ok := cache.Get("aws-eu-central-1.entire.io")
+	_, _, ok := cache.GetEntry("aws-eu-central-1.entire.io")
 	assert.True(t, ok, "cores cached under the lowercased host key")
 
 	c2, err := ResolveContextForCluster(t.Context(), configDir, cacheDir, "aws-eu-central-1.entire.io", hostPinningClient(t, srv), t.Logf)

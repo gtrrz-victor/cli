@@ -92,32 +92,16 @@ func ModifyAPICores(cacheDir string, fn func(ClusterCoresCache) error) error {
 	return modifyCacheFile(cacheDir, apiDiscoveryFileName, readClusterCoresNoLock, writeClusterCoresNoLock, fn)
 }
 
-// Get returns a cluster's cached core URLs, whether the entry is still fresh,
+// GetEntry returns a cluster's cached cores entry, whether it is still fresh,
 // and whether it exists at all. A present-but-stale entry returns
-// (urls, false, true) so callers can attempt a re-fetch yet fall back to the
-// stale URLs if that fetch fails.
-func (c ClusterCoresCache) Get(cluster string) (urls []string, fresh, ok bool) {
-	entry, fresh, ok := c.GetEntry(cluster)
-	if !ok {
-		return nil, false, false
-	}
-	return entry.CoreURLs, fresh, true
-}
-
-// GetEntry is Get for callers that also need the entry's extra fields
-// (JurisdictionAudience). Same freshness/fallback semantics.
+// (entry, false, true) so callers can attempt a re-fetch yet fall back to
+// the stale entry if that fetch fails.
 func (c ClusterCoresCache) GetEntry(cluster string) (entry *CoresEntry, fresh, ok bool) {
 	entry = c[cluster]
 	if entry == nil || len(entry.CoreURLs) == 0 {
 		return nil, false, false
 	}
 	return entry, time.Now().Before(entry.FetchedAt.Add(ClusterCoresTTL)), true
-}
-
-// Set records a cluster's core URLs, stamping the fetch time to now. The
-// slice is copied so later mutation by the caller can't corrupt the cache.
-func (c ClusterCoresCache) Set(cluster string, urls []string) {
-	c.SetEntry(cluster, CoresEntry{CoreURLs: urls})
 }
 
 // SetEntry records a full discovery result (cores plus the jurisdiction
