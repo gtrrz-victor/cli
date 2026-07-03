@@ -12,15 +12,3 @@ import (
 type AuthorReader interface {
 	GetCheckpointAuthor(ctx context.Context, checkpointID id.CheckpointID) (Author, error)
 }
-
-// normalizeCheckpointSummary fills in the checkpoint metadata format version
-// for summaries read back without one (older records predate the field).
-func normalizeCheckpointSummary(summary *CheckpointSummary) *CheckpointSummary {
-	if summary == nil {
-		return nil
-	}
-	if summary.CheckpointVersion == "" {
-		summary.CheckpointVersion = CheckpointVersionBranchV1
-	}
-	return summary
-}

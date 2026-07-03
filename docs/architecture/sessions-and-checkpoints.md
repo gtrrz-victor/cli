@@ -251,7 +251,6 @@ failed or skipped regeneration **drops** the prior `transcript.jsonl` and clears
 ```json
 {
   "cli_version": "0.0.0-dev",
-  "checkpoint_version": "branch-v1",
   "checkpoint_id": "abc123def456",
   "strategy": "manual-commit",
   "branch": "main",
@@ -320,13 +319,13 @@ CLI defaults:
 {}
 ```
 
-`checkpoint_version` selects the checkpoint format for new writes. If no policy
-is configured, a policy omits `checkpoint_version`, or the field was set to an
+`checkpoint_version` is a checkpoint-data write guard. If no policy is
+configured, a policy omits `checkpoint_version`, or the field was set to an
 empty string with `entire checkpoint policy --checkpoint-version ""`, the CLI
-writes its default checkpoint version. The quotes are required so the shell
-passes an empty value instead of omitting the flag value. If another client
-configures a `checkpoint_version` this CLI cannot write, explicit
-checkpoint-data writers fail until the CLI is upgraded.
+uses its default checkpoint version for policy decisions. The quotes are
+required so the shell passes an empty value instead of omitting the flag value.
+If another client configures a `checkpoint_version` this CLI cannot write,
+explicit checkpoint-data writers fail until the CLI is upgraded.
 
 `checkpoint_min_version` is an upgrade nudge and checkpoint-data write guard.
 Clients that cannot read that version warn users to upgrade. Explicit
