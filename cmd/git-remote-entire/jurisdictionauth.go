@@ -189,7 +189,9 @@ func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) 
 	if home == "" {
 		return "", errors.New("login token has no home_jurisdiction claim")
 	}
-	if home == label {
+	// jurisdictionLabel lowercases the audience host; fold the claim too so
+	// the comparison doesn't hinge on core config region keys being lowercase.
+	if strings.ToLower(home) == label {
 		return s.homeCoreURL, nil
 	}
 

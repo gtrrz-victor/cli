@@ -59,6 +59,18 @@ func TestExchangeCore(t *testing.T) {
 		}
 	})
 
+	t.Run("home jurisdiction claim casing is folded", func(t *testing.T) {
+		t.Parallel()
+		s := newJurisdictionTokenSource(auCore, "https://au.example.io", "", "h", nil, nil)
+		core, err := s.exchangeCore(fakeLoginJWT(t, "AU"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if core != auCore {
+			t.Fatalf("core = %q, want home core despite mixed-case claim", core)
+		}
+	})
+
 	t.Run("cross jurisdiction uses advertised jurisdiction core", func(t *testing.T) {
 		t.Parallel()
 		s := newJurisdictionTokenSource("https://eu.auth.example.io", "https://au.example.io", auCore+"/", "h", nil, nil)
