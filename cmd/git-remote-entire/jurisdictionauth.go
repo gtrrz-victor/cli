@@ -13,8 +13,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,7 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/entireio/cli/cmd/entire/cli/auth"
 	"github.com/entireio/cli/internal/entireclient/httputil"
+	"github.com/entireio/cli/internal/entireclient/repocreds"
 	"github.com/entireio/cli/internal/entireclient/tokenstore"
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 )
@@ -92,12 +92,13 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 		//
 		// Freshness margins differ by design: cross-process reuse stops at
 		// the 5m TokenExpirationBuffer (a fresh process should not start on
-		// a nearly-dead token), while this process keeps its token until 1m
-		// before actual expiry — individual git requests are short.
+		// a nearly-dead token), while this process keeps its token until
+		// SafetyMargin before actual expiry — individual git requests are
+		// short.
 		if token, expiresAt := tokenstore.DecodeTokenWithExpiration(encoded); token != "" && !tokenstore.IsTokenExpiredOrExpiring(expiresAt) {
 			debuglog.Printf("jurisdiction token from keychain (aud=%s, expires %s)", s.audience, expiresAt.Format(time.RFC3339))
 			s.token = token
-			s.expiresAt = expiresAt.Add(-time.Minute)
+			s.expiresAt = expiresAt.Add(-repocreds.SafetyMargin)
 			return token, nil
 		}
 	}
@@ -113,7 +114,7 @@ func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (strin
 	}
 
 	s.token = token
-	margin := min(time.Minute, ttl/2)
+	margin := min(repocreds.SafetyMargin, ttl/2)
 	s.expiresAt = time.Now().Add(ttl - margin)
 	if err := tokenstore.Set(service, s.handle, tokenstore.EncodeTokenWithExpiration(token, int64(ttl/time.Second))); err != nil {
 		// Non-fatal: the token still serves this process; the next
@@ -156,14 +157,7 @@ func (s *jurisdictionTokenSource) mint(ctx context.Context) (string, time.Durati
 		return "", 0, err
 	}
 
-	form := url.Values{}
-	form.Set("grant_type", httputil.GrantTypeTokenExchange)
-	form.Set("subject_token", loginJWT)
-	form.Set("subject_token_type", "urn:ietf:params:oauth:token-type:access_token")
-	form.Set("requested_token_type", "urn:ietf:params:oauth:token-type:access_token")
-	form.Set("audience", s.audience)
-	form.Set("scope", "openid")
-	form.Set("client_id", "entire-cli") // same client as repocreds' oauthClientID
+	form := httputil.TokenExchangeForm(loginJWT, s.audience, auth.JurisdictionIdentityScope)
 
 	token, expiresIn, err := httputil.PostOAuthToken(ctx, s.client, coreURL, form)
 	if err != nil {
@@ -179,17 +173,21 @@ func (s *jurisdictionTokenSource) mint(ctx context.Context) (string, time.Durati
 
 // exchangeCore picks the core to exchange at: the login's own core when the
 // audience is in the login's home jurisdiction, else the cluster's
-// advertised jurisdiction core. Both arrive over TLS-authenticated trust
-// roots (the login context / the cluster's /.well-known), but the login JWT
-// is only ever POSTed to an https origin.
+// advertised jurisdiction core. The home core is the issuer the user logged
+// in at, used verbatim (it may legitimately be loopback http in local dev);
+// the advertised core comes from a foreign cluster's /.well-known, so it
+// must be https before the login JWT is POSTed to it.
 func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) {
 	label, err := jurisdictionLabel(s.audience)
 	if err != nil {
 		return "", err
 	}
-	home, err := homeJurisdictionFromLoginJWT(loginJWT)
+	home, err := auth.HomeJurisdictionFromLoginJWT(loginJWT)
 	if err != nil {
 		return "", err
+	}
+	if home == "" {
+		return "", errors.New("login token has no home_jurisdiction claim")
 	}
 	if home == label {
 		return s.homeCoreURL, nil
@@ -218,28 +216,4 @@ func jurisdictionLabel(audience string) (string, error) {
 		return "", fmt.Errorf("jurisdiction audience %q has no <jurisdiction>.<domain> host", audience)
 	}
 	return label, nil
-}
-
-// homeJurisdictionFromLoginJWT reads the home_jurisdiction claim without
-// verifying the signature (we only route with it; the server re-verifies).
-// Copied from auth.homeJurisdictionFromLoginJWT, which is unexported.
-func homeJurisdictionFromLoginJWT(loginJWT string) (string, error) {
-	parts := strings.Split(loginJWT, ".")
-	if len(parts) < 2 {
-		return "", errors.New("login token is not a JWT")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("decode login token payload: %w", err)
-	}
-	var claims struct {
-		HomeJurisdiction string `json:"home_jurisdiction"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", fmt.Errorf("parse login token payload: %w", err)
-	}
-	if claims.HomeJurisdiction == "" {
-		return "", errors.New("login token has no home_jurisdiction claim")
-	}
-	return claims.HomeJurisdiction, nil
 }
