@@ -53,40 +53,47 @@ func grantWiringHandler(t *testing.T, record func(method, path string), deleteFn
 // Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestGrantRemove_RouteWiring(t *testing.T) {
 	cases := []struct {
-		name     string
-		newCmd   func() *cobra.Command
-		args     []string
-		wantPath string
+		name       string
+		newCmd     func() *cobra.Command
+		args       []string
+		wantPath   string
+		wantOutput string // when set, the full success line; otherwise just "✓ " is checked
 	}{
 		{
 			"repo/by-provider",
 			newGrantRepoRemoveCmd,
 			[]string{wiringRepoULID, "github:alice"},
 			"/api/v1/repos/" + wiringRepoULID + "/grants/account/github/12345",
+			"✓ Revoked github:alice from repo " + wiringRepoULID,
 		},
 		{
 			"repo/by-grantee-id",
 			newGrantRepoRemoveCmd,
 			[]string{wiringRepoULID, wiringGranteeULID},
 			"/api/v1/repos/" + wiringRepoULID + "/grants/account/" + wiringGranteeULID,
+			"",
 		},
 		{
 			"project/by-provider",
 			newGrantProjectRemoveCmd,
 			[]string{wiringProjULID, "github:alice"},
 			"/api/v1/projects/" + wiringProjULID + "/grants/account/github/12345",
+			"",
 		},
 		{
 			"project/by-grantee-id",
 			newGrantProjectRemoveCmd,
 			[]string{wiringProjULID, wiringGranteeULID},
 			"/api/v1/projects/" + wiringProjULID + "/grants/account/" + wiringGranteeULID,
+			"",
 		},
 		{
 			"org/by-provider",
 			newGrantOrgRemoveCmd,
 			[]string{wiringOrgULID, "github:alice"},
 			"/api/v1/orgs/" + wiringOrgULID + "/members/github/12345",
+			// org remove uses verb "Removed"; project/repo use "Revoked".
+			"✓ Removed github:alice from org " + wiringOrgULID,
 		},
 	}
 
@@ -99,10 +106,14 @@ func TestGrantRemove_RouteWiring(t *testing.T) {
 			))
 			t.Cleanup(srv.Close)
 
-			_, _, err := runCoreCmd(t, tc.newCmd, srv.URL, tc.args...)
+			out, _, err := runCoreCmd(t, tc.newCmd, srv.URL, tc.args...)
 			require.NoError(t, err)
 			require.Equal(t, http.MethodDelete, gotMethod)
 			require.Equal(t, tc.wantPath, gotPath)
+			require.Contains(t, out, "✓ ")
+			if tc.wantOutput != "" {
+				require.Contains(t, out, tc.wantOutput)
+			}
 		})
 	}
 }

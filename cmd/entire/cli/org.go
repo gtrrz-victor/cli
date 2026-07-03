@@ -9,9 +9,9 @@ import (
 	"github.com/entireio/cli/internal/coreapi"
 )
 
-// newOrgCmd is the hidden `entire org` command group: create and list
-// organizations on the Entire control plane. Surfaced via `entire labs`
-// while the control-plane surface matures.
+// newOrgCmd is the hidden `entire org` command group: create, list, get, and
+// delete organizations on the Entire control plane. Surfaced via `entire
+// labs` while the control-plane surface matures.
 func newOrgCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "org",

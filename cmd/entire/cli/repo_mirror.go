@@ -523,29 +523,36 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 				return fmt.Errorf("invalid [cluster-host]: %w", err)
 			}
 			return runCoreForCluster(cmd, clusterHost, func(ctx context.Context, c *coreapi.Client) error {
-				// Delete by upstream coords in one call. A 404 is a real
-				// error here, not idempotent success: the server only
-				// answers 204 when it actually removed a placement, so a
-				// 404 ("no such mirror / not visible / different cluster")
-				// maps to a targeted "may be on a different cluster" error
-				// rather than being reported as a successful removal.
-				if err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{
-					Provider:    coreapi.DeleteMirrorProviderGithub,
-					Owner:       owner,
-					Repo:        repo,
-					ClusterHost: clusterHost,
-				}); err != nil {
-					if isCoreNotFound(err) {
-						// Deliberately not %w-wrapped: renderCoreError would extract
-						// the server's generic problem detail and replace this
-						// targeted message.
-						return fmt.Errorf("no mirror of github.com/%s/%s on %s — it may be on a different cluster (run `entire repo mirror list` to see placements)", owner, repo, clusterHost)
-					}
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "✓ Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)
-				return nil
+				return removeMirror(ctx, cmd.OutOrStdout(), c, owner, repo, clusterHost)
 			})
 		},
 	}
+}
+
+// removeMirror deletes the (owner, repo) placement on clusterHost via c and
+// reports the outcome on w. A decoded 404 is a real error here (the server
+// only answers 204 when it actually removed a placement); it is rewritten
+// into a targeted message with the server's own detail appended so no
+// information is lost.
+func removeMirror(ctx context.Context, w io.Writer, c *coreapi.Client, owner, repo, clusterHost string) error {
+	if err := c.DeleteMirror(ctx, coreapi.DeleteMirrorParams{
+		Provider:    coreapi.DeleteMirrorProviderGithub,
+		Owner:       owner,
+		Repo:        repo,
+		ClusterHost: clusterHost,
+	}); err != nil {
+		if isCoreNotFound(err) {
+			// Deliberately not %w-wrapped: renderCoreError would extract the
+			// server's problem detail and replace this targeted message. The
+			// detail is appended as plain text instead, so nothing is lost.
+			msg := fmt.Sprintf("no mirror of github.com/%s/%s on %s — it may be on a different cluster (run `entire repo mirror list` to see placements)", owner, repo, clusterHost)
+			if detail := coreapi.APIError(err); detail != "" {
+				msg += " (server: " + detail + ")"
+			}
+			return errors.New(msg)
+		}
+		return err
+	}
+	fmt.Fprintf(w, "✓ Removed mirror github.com/%s/%s from %s\n", owner, repo, clusterHost)
+	return nil
 }

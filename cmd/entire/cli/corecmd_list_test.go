@@ -1,65 +1,55 @@
 package cli
 
 import (
-	"bytes"
-	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/entireio/cli/internal/coreapi"
 )
 
-// runListRender builds a minimal command wired to renderCoreList via runCoreList so
-// the rendering path (table / empty state / --json) is exercised without a
-// server: fn returns items directly.
-func runListRender(t *testing.T, jsonFlag bool, items []coreapi.Org) (stdout, stderr string) {
+// serveOrgList answers GET /api/v1/orgs with the given orgs, standing in for
+// the control plane behind `entire org list`.
+func serveOrgList(t *testing.T, orgs []coreapi.Org) *httptest.Server {
 	t.Helper()
-	prev := activeCoreClient
-	activeCoreClient = func(context.Context) (*coreapi.Client, error) {
-		// The URL is never contacted: fn below returns items directly, so
-		// the client only needs to construct.
-		return coreapi.NewWithBearer("http://127.0.0.1:0", "tok")
-	}
-	t.Cleanup(func() { activeCoreClient = prev })
-
-	cmd := &cobra.Command{
-		Use: "list",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCoreList(cmd, "No organizations found.", orgColumns, orgRow,
-				func(context.Context, *coreapi.Client) ([]coreapi.Org, error) { return items, nil })
-		},
-	}
-	cmd.Flags().Bool("json", false, "Output raw JSON instead of a table")
-	var out, errW bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&errW)
-	args := []string{}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
-	cmd.SetArgs(args)
-	require.NoError(t, cmd.ExecuteContext(t.Context()))
-	return out.String(), errW.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		if err := writeJSON(w, &coreapi.ListOrgsOutputBody{Orgs: orgs}); err != nil {
+			t.Errorf("encode orgs: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
-// Not parallel: swaps the package-level activeCoreClient seam.
+// Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestRunCoreList_EmptyHumanMessageOnStdout(t *testing.T) {
-	out, errOut := runListRender(t, false, nil)
+	srv := serveOrgList(t, nil)
+	out, errOut, err := runCoreCmd(t, newOrgListCmd, srv.URL)
+	require.NoError(t, err)
 	require.Contains(t, out, "No organizations found.")
 	require.Empty(t, errOut, "empty-state message must go to stdout")
 }
 
-// Not parallel: swaps the package-level activeCoreClient seam.
+// Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestRunCoreList_EmptyJSONIsArray(t *testing.T) {
-	out, _ := runListRender(t, true, nil)
+	srv := serveOrgList(t, nil)
+	// org list's --json is persistent on the group root, so drive the full
+	// group command with "list" as a subcommand arg.
+	out, _, err := runCoreCmd(t, newOrgCmd, srv.URL, "list", "--json")
+	require.NoError(t, err)
 	require.JSONEq(t, "[]", out, "empty --json list must be [], not null")
 }
 
-// Not parallel: swaps the package-level activeCoreClient seam.
+// Not parallel: runCoreCmd swaps the package-level activeCoreClient seam.
 func TestRunCoreList_RendersRows(t *testing.T) {
-	out, errOut := runListRender(t, false, []coreapi.Org{{ID: testDeleteULID, Name: "acme", Region: "us"}})
+	srv := serveOrgList(t, []coreapi.Org{{ID: testDeleteULID, Name: "acme", Region: "us"}})
+	out, errOut, err := runCoreCmd(t, newOrgListCmd, srv.URL)
+	require.NoError(t, err)
 	require.Contains(t, out, "NAME")
 	require.Contains(t, out, "acme")
 	require.Empty(t, errOut)

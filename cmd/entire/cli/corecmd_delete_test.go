@@ -32,10 +32,17 @@ func writeNotFoundProblem(t *testing.T, w http.ResponseWriter) {
 	}
 }
 
-// runCoreCmd runs any control-plane command against a seamed httptest core:
-// it points the active-context client at srv via the activeCoreClient seam,
-// runs newCmd() with args, and returns its stdout, stderr, and error. The
-// caller must not be parallel: the seam is package-global.
+// runCoreCmd runs any active-context control-plane command against a seamed
+// httptest core: it points the active-context client at srv via the
+// activeCoreClient seam, runs newCmd() with args, and returns its stdout,
+// stderr, and error. Commands dialing via runCoreForCluster (mirror
+// create/remove/collaborators) bypass the seam and need their own httptest
+// wiring. The caller must not be parallel: the seam is package-global.
+//
+// Note: cobra's cmd.Print* falls back to OutOrStderr(), which under SetOut
+// resolves to the stdout buffer — so Empty(errOut) assertions in these tests
+// only guard explicit ErrOrStderr writes; the Contains-on-stdout assertions
+// are what pin the production stream.
 func runCoreCmd(t *testing.T, newCmd func() *cobra.Command, srvURL string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	prev := activeCoreClient
@@ -85,7 +92,7 @@ func TestControlPlaneDelete_Wiring(t *testing.T) {
 			require.Equal(t, http.MethodDelete, gotMethod)
 			require.Equal(t, tc.wantPath, gotPath)
 			require.Contains(t, out, "✓ Deleted "+tc.noun+" "+testDeleteULID)
-			require.Empty(t, errOut, "success output must go to stdout, not stderr")
+			require.Empty(t, errOut, "no explicit ErrOrStderr writes expected")
 		})
 
 		t.Run(tc.noun+"/already-gone is idempotent", func(t *testing.T) {

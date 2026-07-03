@@ -355,8 +355,9 @@ func writeTableRow(b *strings.Builder, cells []string, widths []int, styleFor fu
 }
 
 // runCoreMutation runs fn against the control plane and renders its outcome
-// the way the rest of the CLI renders mutations: the ✓ human confirmation on
-// stdout by default, or the wire object as JSON when --json was passed. fn
+// the way the rest of the CLI renders mutations: prints the caller's
+// ✓-prefixed confirmation on stdout by default, or the wire object as JSON
+// when --json was passed. fn
 // returns both so the human line can name the created resource while --json
 // preserves the full wire model (additive-only: synthesized fields like the
 // repo remote URL are merged in, nothing is ever omitted). It owns the same
@@ -382,11 +383,13 @@ func runCoreMutation(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi
 // without standing up the auth/context/TLS stack.
 var activeCoreClient = func(context.Context) (*coreapi.Client, error) { return coreapi.New() }
 
-// runCore is the variant for commands that don't render JSON (delete,
-// revoke, remove): it runs the same preamble — silence usage, build
-// client, map API errors — and leaves any success output to fn. The client
-// dials the active context's core (coreapi.New); use runCoreForCluster for
-// commands addressed at a specific cluster.
+// runCore is the shared base for every active-context control-plane command:
+// it owns the preamble only — silence usage, build the client, map API
+// errors — and leaves all rendering to fn. The delete/revoke verbs call it
+// directly and render their own output; runCoreList, runCoreObject, and
+// runCoreMutation build on it to add their table/JSON/confirmation
+// rendering. The client dials the active context's core (coreapi.New); use
+// runCoreForCluster for commands addressed at a specific cluster.
 func runCore(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi.Client) error) error {
 	return runCoreClient(cmd, activeCoreClient, fn)
 }
