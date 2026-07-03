@@ -55,7 +55,7 @@ func newProjectCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				// Orgs are addressed by name, accounts by github:handle; both
 				// also accept a raw ULID.
 				var ownerRef string
@@ -66,7 +66,7 @@ func newProjectCreateCmd() *cobra.Command {
 					ownerRef, err = resolveAccountRef(ctx, c, ownerID)
 				}
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				body := &coreapi.CreateProjectInputBody{
 					Name:      args[0],
@@ -76,7 +76,11 @@ func newProjectCreateCmd() *cobra.Command {
 				if region != "" {
 					body.Region = coreapi.NewOptString(region)
 				}
-				return c.CreateProject(ctx, body)
+				project, err := c.CreateProject(ctx, body)
+				if err != nil {
+					return "", nil, err
+				}
+				return fmt.Sprintf("✓ Created project %s (%s)", project.Name, project.ID), project, nil
 			})
 		},
 	}

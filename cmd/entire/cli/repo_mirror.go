@@ -291,7 +291,7 @@ func reportOneShotMirror(out, errW io.Writer, outcome mirrorCreateOutcome, err e
 		return err
 	}
 	if created.Created {
-		fmt.Fprintf(out, "\nRegistered mirror %s\n", created.MirrorId)
+		fmt.Fprintf(out, "\n✓ Registered mirror %s\n", created.MirrorId)
 	} else {
 		fmt.Fprintf(out, "\nMirror exists (%s)\n", created.MirrorId)
 	}
@@ -536,6 +536,9 @@ func newRepoMirrorRemoveCmd() *cobra.Command {
 					ClusterHost: clusterHost,
 				}); err != nil {
 					if isCoreNotFound(err) {
+						// Deliberately not %w-wrapped: renderCoreError would extract
+						// the server's generic problem detail and replace this
+						// targeted message.
 						return fmt.Errorf("no mirror of github.com/%s/%s on %s — it may be on a different cluster (run `entire repo mirror list` to see placements)", owner, repo, clusterHost)
 					}
 					return err

@@ -117,14 +117,14 @@ func newGrantOrgAddCmd() *cobra.Command {
 		Example: "  entire grant org add acme github:alice --role admin",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				orgID, err := resolveOrgRef(ctx, c, args[0])
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				provider, providerUserID, err := resolveGranteeProvider(ctx, c, args[1])
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				body := &coreapi.AddOrgMemberInputBody{
 					Provider:       provider,
@@ -133,11 +133,15 @@ func newGrantOrgAddCmd() *cobra.Command {
 				if role != "" {
 					r, err := parseOrgRole(role)
 					if err != nil {
-						return nil, err
+						return "", nil, err
 					}
 					body.Role = coreapi.NewOptAddOrgMemberInputBodyRole(r)
 				}
-				return c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: orgID})
+				m, err := c.AddOrgMember(ctx, body, coreapi.AddOrgMemberParams{OrgId: orgID})
+				if err != nil {
+					return "", nil, err
+				}
+				return fmt.Sprintf("✓ Added %s to org %s as %s", args[1], args[0], m.Role), m, nil
 			})
 		},
 	}
@@ -228,21 +232,25 @@ func newGrantProjectAddCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return err
 			}
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				projID, err := resolveProjectRef(ctx, c, args[0])
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				provider, providerUserID, err := resolveGranteeProvider(ctx, c, args[1])
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				body := &coreapi.GrantProjectAccessInputBody{
 					Provider:       provider,
 					ProviderUserId: providerUserID,
 					Role:           coreapi.GrantProjectAccessInputBodyRole(role),
 				}
-				return c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: projID})
+				out, err := c.GrantProjectAccess(ctx, body, coreapi.GrantProjectAccessParams{ProjectId: projID})
+				if err != nil {
+					return "", nil, err
+				}
+				return fmt.Sprintf("✓ Granted %s %s access to project %s", args[1], role, args[0]), out, nil
 			})
 		},
 	}
@@ -372,21 +380,25 @@ func newGrantRepoAddCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return err
 			}
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				repoID, err := resolveRepoRef(ctx, c, args[0], project)
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				provider, providerUserID, err := resolveGranteeProvider(ctx, c, args[1])
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				body := &coreapi.GrantRepoAccessInputBody{
 					Provider:       provider,
 					ProviderUserId: providerUserID,
 					Role:           coreapi.GrantRepoAccessInputBodyRole(role),
 				}
-				return c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: repoID})
+				out, err := c.GrantRepoAccess(ctx, body, coreapi.GrantRepoAccessParams{RepoId: repoID})
+				if err != nil {
+					return "", nil, err
+				}
+				return fmt.Sprintf("✓ Granted %s %s access to repo %s", args[1], role, args[0]), out, nil
 			})
 		},
 	}

@@ -121,10 +121,10 @@ func newRepoCreateCmd() *cobra.Command {
 		Short: "Create a repository in a project",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				projID, err := resolveProjectRef(ctx, c, projectID)
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
 				body := &coreapi.CreateRepoInputBody{
 					Name:      args[0],
@@ -135,9 +135,17 @@ func newRepoCreateCmd() *cobra.Command {
 				}
 				created, err := c.CreateRepo(ctx, body)
 				if err != nil {
-					return nil, err
+					return "", nil, err
 				}
-				return repoCreateOutput(created)
+				wire, err := repoCreateOutput(created)
+				if err != nil {
+					return "", nil, err
+				}
+				msg := fmt.Sprintf("✓ Created repository %s (%s)", created.Name, created.ID)
+				if remote := repoRemoteURL(*created); remote != "" {
+					msg += "\n  Remote: " + remote
+				}
+				return msg, wire, nil
 			})
 		},
 	}

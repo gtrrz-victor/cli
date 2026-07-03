@@ -354,19 +354,25 @@ func writeTableRow(b *strings.Builder, cells []string, widths []int, styleFor fu
 	b.WriteByte('\n')
 }
 
-// runCoreJSON runs fn against an authenticated control-plane client and
-// prints its result as indented JSON. It owns the preamble every
-// control-plane command shares: silence usage so input errors don't spam
-// the usage block, build the client, and map an API error to a
-// problem-detail SilentError. Commands supply only the call + the value to
-// render.
-func runCoreJSON(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi.Client) (any, error)) error {
+// runCoreMutation runs fn against the control plane and renders its outcome
+// the way the rest of the CLI renders mutations: the ✓ human confirmation on
+// stdout by default, or the wire object as JSON when --json was passed. fn
+// returns both so the human line can name the created resource while --json
+// preserves the full wire model (additive-only: synthesized fields like the
+// repo remote URL are merged in, nothing is ever omitted). It owns the same
+// preamble as the other runCore variants: silence usage, build the client,
+// map API errors to problem-detail messages.
+func runCoreMutation(cmd *cobra.Command, fn func(ctx context.Context, c *coreapi.Client) (message string, wire any, err error)) error {
 	return runCore(cmd, func(ctx context.Context, c *coreapi.Client) error {
-		out, err := fn(ctx, c)
+		message, wire, err := fn(ctx, c)
 		if err != nil {
 			return err
 		}
-		return printJSON(cmd.OutOrStdout(), out)
+		if jsonRequested(cmd) {
+			return printJSON(cmd.OutOrStdout(), wire)
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), message)
+		return nil
 	})
 }
 

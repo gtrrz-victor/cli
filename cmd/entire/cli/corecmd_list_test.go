@@ -11,7 +11,7 @@ import (
 	"github.com/entireio/cli/internal/coreapi"
 )
 
-// listCmd builds a minimal command wired to renderCoreList via runCoreList so
+// runListRender builds a minimal command wired to renderCoreList via runCoreList so
 // the rendering path (table / empty state / --json) is exercised without a
 // server: fn returns items directly.
 func runListRender(t *testing.T, jsonFlag bool, items []coreapi.Org) (stdout, stderr string) {
@@ -55,4 +55,12 @@ func TestRunCoreList_EmptyHumanMessageOnStdout(t *testing.T) {
 func TestRunCoreList_EmptyJSONIsArray(t *testing.T) {
 	out, _ := runListRender(t, true, nil)
 	require.JSONEq(t, "[]", out, "empty --json list must be [], not null")
+}
+
+// Not parallel: swaps the package-level activeCoreClient seam.
+func TestRunCoreList_RendersRows(t *testing.T) {
+	out, errOut := runListRender(t, false, []coreapi.Org{{ID: testDeleteULID, Name: "acme", Region: "us"}})
+	require.Contains(t, out, "NAME")
+	require.Contains(t, out, "acme")
+	require.Empty(t, errOut)
 }

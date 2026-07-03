@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -40,12 +41,16 @@ func newOrgCreateCmd() *cobra.Command {
 		Short: "Create an organization",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCoreJSON(cmd, func(ctx context.Context, c *coreapi.Client) (any, error) {
+			return runCoreMutation(cmd, func(ctx context.Context, c *coreapi.Client) (string, any, error) {
 				body := &coreapi.CreateOrgInputBody{Name: args[0]}
 				if region != "" {
 					body.Region = coreapi.NewOptString(region)
 				}
-				return c.CreateOrg(ctx, body)
+				org, err := c.CreateOrg(ctx, body)
+				if err != nil {
+					return "", nil, err
+				}
+				return fmt.Sprintf("✓ Created org %s (%s)", org.Name, org.ID), org, nil
 			})
 		},
 	}
