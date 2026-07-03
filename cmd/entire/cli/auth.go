@@ -139,14 +139,13 @@ func newAuthTokenCmd() *cobra.Command {
 		Use:   "token",
 		Short: "Print the active control-plane bearer token — a live credential, treat as a secret",
 		Long: "Print the active control-plane bearer token to stdout so scripts and\n" +
-			"ad-hoc curl can authenticate against the core API without re-deriving the\n" +
-			"keychain slot.\n\n" +
+			"ad-hoc curl can authenticate against the control-plane API.\n\n" +
 			"The output is a live credential — treat it as a secret. It is the same\n" +
 			"bearer the API client uses: ENTIRE_TOKEN verbatim when set, otherwise the\n" +
 			"active context's login JWT (refreshed if it's near expiry). Only the token\n" +
 			"is printed to stdout; errors and the not-logged-in hint go to stderr so\n" +
 			"command substitution stays clean.",
-		Example: "  curl -H \"Authorization: Bearer $(entire auth token)\" \"$CORE/api/v1/clusters\"",
+		Example: "  curl -H \"Authorization: Bearer $(entire auth token)\" \"https://us.console.entire.io/api/v1/clusters\"",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Refresh may exchange/refresh over the network; honor the
