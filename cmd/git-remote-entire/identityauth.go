@@ -67,6 +67,18 @@ func (s *identityTokenSource) Token(ctx context.Context, _, _ string) (string, e
 		return "", err
 	}
 
+	// The identity token must be minted by the core owning the target
+	// jurisdiction (isJurisdictionAudience is an exact match on that core's
+	// own audience). For a repo homed outside the login's jurisdiction the
+	// exchange goes to the sibling core, which accepts our login JWT via the
+	// foreign-session path (validateForeignSessionExchange) and mints the
+	// identity token in the same single POST. ENTIRE_IDENTITY_CORE overrides
+	// the exchange target for that cross-juris case.
+	coreURL := s.coreURL
+	if override := strings.TrimSpace(os.Getenv("ENTIRE_IDENTITY_CORE")); override != "" {
+		coreURL = strings.TrimRight(override, "/")
+	}
+
 	form := url.Values{}
 	form.Set("grant_type", httputil.GrantTypeTokenExchange)
 	form.Set("subject_token", loginJWT)
@@ -76,9 +88,9 @@ func (s *identityTokenSource) Token(ctx context.Context, _, _ string) (string, e
 	form.Set("scope", "openid")
 	form.Set("client_id", "entire-cli") // same client as repocreds' oauthClientID
 
-	token, expiresIn, err := httputil.PostOAuthToken(ctx, s.client, s.coreURL, form)
+	token, expiresIn, err := httputil.PostOAuthToken(ctx, s.client, coreURL, form)
 	if err != nil {
-		return "", fmt.Errorf("identity token exchange (aud=%s at %s): %w", audience, s.coreURL, err)
+		return "", fmt.Errorf("identity token exchange (aud=%s at %s): %w", audience, coreURL, err)
 	}
 	if strings.TrimSpace(token) == "" {
 		return "", errors.New("identity token exchange returned an empty access token")
