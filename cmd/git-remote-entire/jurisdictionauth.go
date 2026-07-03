@@ -1,6 +1,6 @@
 package main
 
-// Jurisdiction identity tokens (ADR 20260612) are how git-remote-entire
+// Jurisdiction access tokens (docs/auth.md, ADR 20260612) are how git-remote-entire
 // authenticates git smart-HTTP: a token minted with scope=openid and
 // aud = the cluster's advertised jurisdiction_audience. The data plane
 // authorizes it live against regional SpiceDB, so one token covers every
@@ -29,19 +29,19 @@ import (
 	"github.com/entireio/cli/internal/remotehelper/debuglog"
 )
 
-// identityKeyringService is the keychain service name for a jurisdiction's
-// identity tokens, keyed by audience so tokens for different jurisdictions
+// jurisdictionKeyringService is the keychain service name for a jurisdiction's
+// jurisdiction tokens, keyed by audience so tokens for different jurisdictions
 // (and prod vs staging) can't be confused. The account is the context handle.
-func identityKeyringService(audience string) string {
-	return "entire-identity:" + strings.TrimRight(audience, "/")
+func jurisdictionKeyringService(audience string) string {
+	return "entire-jurisdiction:" + strings.TrimRight(audience, "/")
 }
 
-// identityTokenSource satisfies the same Token(ctx, audienceSuffix, action)
-// seam as repocreds.Cache but ignores the repo/action: one identity token
+// jurisdictionTokenSource satisfies the same Token(ctx, audienceSuffix, action)
+// seam as repocreds.Cache but ignores the repo/action: one jurisdiction token
 // covers every repo the account can reach. Tokens come from, in order: the
 // in-process memo, the OS keychain (persisted by an earlier invocation),
 // or a fresh /oauth/token exchange (then persisted).
-type identityTokenSource struct {
+type jurisdictionTokenSource struct {
 	// homeCoreURL is the login context's core — the exchange target for the
 	// common case where the cluster's jurisdiction is the login's home.
 	homeCoreURL string
@@ -61,11 +61,11 @@ type identityTokenSource struct {
 	expiresAt time.Time
 }
 
-func newIdentityTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle string, login func(context.Context) (string, error), client *http.Client) *identityTokenSource {
-	if override := strings.TrimSpace(os.Getenv("ENTIRE_IDENTITY_AUDIENCE")); override != "" {
+func newJurisdictionTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle string, login func(context.Context) (string, error), client *http.Client) *jurisdictionTokenSource {
+	if override := strings.TrimSpace(os.Getenv("ENTIRE_JURISDICTION_AUDIENCE")); override != "" {
 		audience = override
 	}
-	return &identityTokenSource{
+	return &jurisdictionTokenSource{
 		homeCoreURL:         homeCoreURL,
 		audience:            audience,
 		jurisdictionCoreURL: strings.TrimRight(jurisdictionCoreURL, "/"),
@@ -75,20 +75,20 @@ func newIdentityTokenSource(homeCoreURL, audience, jurisdictionCoreURL, handle s
 	}
 }
 
-// Token returns the identity token, minting only when neither the memo nor
+// Token returns the jurisdiction token, minting only when neither the memo nor
 // the keychain has a fresh one.
-func (s *identityTokenSource) Token(ctx context.Context, _, _ string) (string, error) {
+func (s *jurisdictionTokenSource) Token(ctx context.Context, _, _ string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.token != "" && time.Now().Before(s.expiresAt) {
 		return s.token, nil
 	}
 
-	service := identityKeyringService(s.audience)
+	service := jurisdictionKeyringService(s.audience)
 	if encoded, err := tokenstore.Get(service, s.handle); err == nil {
 		token, expiresAt := tokenstore.DecodeTokenWithExpiration(encoded)
 		if !tokenstore.IsTokenExpiredOrExpiring(expiresAt) {
-			debuglog.Printf("identity token from keychain (aud=%s, expires %s)", s.audience, expiresAt.Format(time.RFC3339))
+			debuglog.Printf("jurisdiction token from keychain (aud=%s, expires %s)", s.audience, expiresAt.Format(time.RFC3339))
 			s.token = token
 			s.expiresAt = expiresAt.Add(-time.Minute)
 			return token, nil
@@ -106,17 +106,17 @@ func (s *identityTokenSource) Token(ctx context.Context, _, _ string) (string, e
 	if err := tokenstore.Set(service, s.handle, tokenstore.EncodeTokenWithExpiration(token, int64(ttl/time.Second))); err != nil {
 		// Non-fatal: the token still serves this process; the next
 		// invocation just re-mints.
-		debuglog.Printf("identity token keychain write failed: %v", err)
+		debuglog.Printf("jurisdiction token keychain write failed: %v", err)
 	}
 	return token, nil
 }
 
-// mint exchanges the login JWT for an identity token at the core owning the
+// mint exchanges the login JWT for an jurisdiction token at the core owning the
 // target jurisdiction. For a same-jurisdiction login that is the login's own
 // core; for a cross-jurisdiction repo the sibling core accepts our login JWT
-// via the foreign-session path and mints the identity token in the same
+// via the foreign-session path and mints the jurisdiction token in the same
 // single POST.
-func (s *identityTokenSource) mint(ctx context.Context) (string, time.Duration, error) {
+func (s *jurisdictionTokenSource) mint(ctx context.Context) (string, time.Duration, error) {
 	loginJWT, err := s.login(ctx)
 	if err != nil {
 		return "", 0, fmt.Errorf("refresh login token: %w", err)
@@ -138,13 +138,13 @@ func (s *identityTokenSource) mint(ctx context.Context) (string, time.Duration, 
 
 	token, expiresIn, err := httputil.PostOAuthToken(ctx, s.client, coreURL, form)
 	if err != nil {
-		return "", 0, fmt.Errorf("identity token exchange (aud=%s at %s): %w", s.audience, coreURL, err)
+		return "", 0, fmt.Errorf("jurisdiction token exchange (aud=%s at %s): %w", s.audience, coreURL, err)
 	}
 	if strings.TrimSpace(token) == "" {
-		return "", 0, errors.New("identity token exchange returned an empty access token")
+		return "", 0, errors.New("jurisdiction token exchange returned an empty access token")
 	}
 	ttl := time.Duration(expiresIn) * time.Second
-	debuglog.Printf("identity token minted: aud=%s at %s ttl=%s", s.audience, coreURL, ttl)
+	debuglog.Printf("jurisdiction token minted: aud=%s at %s ttl=%s", s.audience, coreURL, ttl)
 	return token, ttl, nil
 }
 
@@ -152,9 +152,9 @@ func (s *identityTokenSource) mint(ctx context.Context) (string, time.Duration, 
 // audience is in the login's home jurisdiction, else the cluster's
 // advertised jurisdiction core. Both arrive over TLS-authenticated trust
 // roots (the login context / the cluster's /.well-known), but the login JWT
-// is only ever POSTed to an https origin. ENTIRE_IDENTITY_CORE overrides.
-func (s *identityTokenSource) exchangeCore(loginJWT string) (string, error) {
-	if override := strings.TrimSpace(os.Getenv("ENTIRE_IDENTITY_CORE")); override != "" {
+// is only ever POSTed to an https origin. ENTIRE_JURISDICTION_CORE overrides.
+func (s *jurisdictionTokenSource) exchangeCore(loginJWT string) (string, error) {
+	if override := strings.TrimSpace(os.Getenv("ENTIRE_JURISDICTION_CORE")); override != "" {
 		return strings.TrimRight(override, "/"), nil
 	}
 
@@ -171,7 +171,7 @@ func (s *identityTokenSource) exchangeCore(loginJWT string) (string, error) {
 	}
 
 	if s.jurisdictionCoreURL == "" {
-		return "", fmt.Errorf("cross-jurisdiction identity exchange for %s: cluster advertises no jurisdiction_core_url; upgrade the cluster (or set ENTIRE_IDENTITY_CORE)", s.audience)
+		return "", fmt.Errorf("cross-jurisdiction jurisdiction-token exchange for %s: cluster advertises no jurisdiction_core_url; upgrade the cluster (or set ENTIRE_JURISDICTION_CORE)", s.audience)
 	}
 	if !strings.HasPrefix(s.jurisdictionCoreURL, "https://") {
 		return "", fmt.Errorf("advertised jurisdiction core %q must be https", s.jurisdictionCoreURL)

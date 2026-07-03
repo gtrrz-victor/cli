@@ -75,7 +75,7 @@ func ResolveContextForCluster(ctx context.Context, configDir, cacheDir, clusterH
 // plus the cluster facts a caller needs to mint credentials for it.
 type ClusterAuth struct {
 	Context *contexts.Context
-	// JurisdictionAudience is the cluster's identity-token audience; empty
+	// JurisdictionAudience is the cluster's jurisdiction-token audience; empty
 	// when the cluster doesn't advertise one.
 	JurisdictionAudience string
 	// JurisdictionCoreURL is the advertised core minting for that audience —

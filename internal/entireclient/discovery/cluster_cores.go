@@ -38,9 +38,9 @@ type ClusterCoresCache map[string]*CoresEntry
 // change re-interprets existing entries without a migration.
 type CoresEntry struct {
 	CoreURLs []string `json:"core_urls"`
-	// JurisdictionAudience is the cluster's identity-token audience as
+	// JurisdictionAudience is the cluster's jurisdiction-token audience as
 	// advertised by its /.well-known/entire-cluster.json. Empty when the
-	// cluster does not accept jurisdiction identity tokens (or predates
+	// cluster does not accept jurisdiction access tokens (or predates
 	// the field) — callers must then fall back to repo-scoped tokens.
 	JurisdictionAudience string `json:"jurisdiction_audience,omitempty"`
 	// JurisdictionCoreURL is the advertised core that mints for

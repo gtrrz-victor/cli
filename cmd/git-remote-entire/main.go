@@ -222,8 +222,8 @@ func parseProtocolVersion(raw string, warn io.Writer) int {
 }
 
 // tokenSource is the one-method seam setAuth needs: repocreds.Cache
-// (repo-scoped tokens) and identityTokenSource (jurisdiction identity
-// tokens, ENTIRE_GIT_AUTH=identity) both satisfy it.
+// (repo-scoped tokens) and jurisdictionTokenSource (jurisdiction
+// access tokens) both satisfy it.
 type tokenSource interface {
 	Token(ctx context.Context, audienceSuffix, action string) (string, error)
 }
@@ -236,7 +236,7 @@ type tokenSource interface {
 //     scoped tokens. A non-URL aud is a hard error, never a silent fallback
 //     to context resolution.
 //   - otherwise: resolve the login context for this cluster from contexts.json
-//     and mint a keychain-persisted jurisdiction identity token from its
+//     and mint a keychain-persisted jurisdiction access token from its
 //     stored login JWT.
 func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string, skipTLS bool, httpClient *http.Client) (tokenSource, error) {
 	// Presence of ENTIRE_TOKEN is the signal: if it's set at all (LookupEnv,
@@ -275,16 +275,16 @@ func resolveCreds(ctx context.Context, parsedURL *url.URL, clusterBaseURL string
 		return nil, err //nolint:wrapcheck // NewRefreshingLoginProvider already returns a user-facing error
 	}
 
-	// One keychain-persisted jurisdiction identity token authenticates every
+	// One keychain-persisted jurisdiction access token authenticates every
 	// repo (authorized live at the data plane) — there is no repo-scoped
 	// fallback on this path. The cluster must advertise its jurisdiction
-	// audience; ENTIRE_IDENTITY_AUDIENCE overrides for local dev.
+	// audience; ENTIRE_JURISDICTION_AUDIENCE overrides for local dev.
 	audience := clusterAuth.JurisdictionAudience
-	if audience == "" && os.Getenv("ENTIRE_IDENTITY_AUDIENCE") == "" {
-		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates identity-token git auth — upgrade the cluster (or set ENTIRE_IDENTITY_AUDIENCE)", parsedURL.Host, clusterdiscovery.Path)
+	if audience == "" && os.Getenv("ENTIRE_JURISDICTION_AUDIENCE") == "" {
+		return nil, fmt.Errorf("cluster %s advertises no jurisdiction_audience at %s; its entire-server predates jurisdiction-token git auth — upgrade the cluster (or set ENTIRE_JURISDICTION_AUDIENCE)", parsedURL.Host, clusterdiscovery.Path)
 	}
-	debuglog.Printf("auth: jurisdiction identity token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
-	return newIdentityTokenSource(clusterCtx.CoreURL, audience, clusterAuth.JurisdictionCoreURL, clusterCtx.Handle, loginProvider, httpClient), nil
+	debuglog.Printf("auth: jurisdiction access token (aud=%s, core=%s)", audience, clusterCtx.CoreURL)
+	return newJurisdictionTokenSource(clusterCtx.CoreURL, audience, clusterAuth.JurisdictionCoreURL, clusterCtx.Handle, loginProvider, httpClient), nil
 }
 
 // resolveEnvTokenCreds builds the repo-cred cache for the ENTIRE_TOKEN path.
