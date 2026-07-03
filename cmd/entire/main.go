@@ -89,14 +89,20 @@ func main() {
 		var silent *cli.SilentError
 
 		switch {
-		case errors.Is(err, context.Canceled):
-			// Aborted (a signal cancelled the root context). Don't dump the
-			// raw transport/keyring cancellation string ("...: context
-			// canceled", "read access token: signal: interrupt") as if it
-			// were a failure — die quietly by re-raising the signal that
-			// triggered it (see dieFromSignal) so an enclosing
+		case errors.Is(err, context.Canceled) && caughtSignal.Load() != nil:
+			// A signal cancelled the root context (our handler fired). Don't
+			// dump the raw transport/keyring cancellation string ("...:
+			// context canceled", "read access token: signal: interrupt") as
+			// if it were a failure — die quietly by re-raising the signal
+			// that triggered it (see dieFromSignal) so an enclosing
 			// `while ...; do entire; done` loop actually breaks on a single
 			// Ctrl-C, and a SIGTERM shutdown still exits 143.
+			//
+			// We gate on the handler having fired rather than on the error
+			// type alone: a context.Canceled that arose without a signal
+			// (e.g. an internally-cancelled sub-context) is a genuine error
+			// and must fall through to normal reporting, not masquerade as a
+			// user abort (which would also wrongly break an enclosing loop).
 			cancel()
 			dieFromSignal(terminatingSignal())
 		case errors.As(err, &silent):
