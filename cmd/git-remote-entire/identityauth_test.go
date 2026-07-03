@@ -35,12 +35,12 @@ func TestExchangeCore(t *testing.T) {
 	trusted := []string{"https://eu.auth.example.io", "https://au.auth.example.io"}
 
 	t.Run("same jurisdiction uses home core", func(t *testing.T) {
-		s := newIdentityTokenSource("https://eu.auth.example.io", "https://eu.example.io", trusted, "h", nil, nil)
-		core, err := s.exchangeCore(fakeLoginJWT(t, "eu"))
+		s := newIdentityTokenSource("https://au.auth.example.io", "https://au.example.io", trusted, "h", nil, nil)
+		core, err := s.exchangeCore(fakeLoginJWT(t, "au"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if core != "https://eu.auth.example.io" {
+		if core != "https://au.auth.example.io" {
 			t.Fatalf("core = %q, want home core", core)
 		}
 	})
@@ -90,7 +90,7 @@ func TestIdentityToken_MintsPersistsAndReuses(t *testing.T) {
 			t.Errorf("audience = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"identity-jwt","token_type":"Bearer","expires_in":7200}`))
+		_, _ = w.Write([]byte(`{"access_token":"identity-jwt","token_type":"Bearer","expires_in":7200}`)) //nolint:errcheck // test
 	}))
 	defer core.Close()
 
@@ -158,7 +158,7 @@ func TestIdentityToken_ExpiredPersistedTokenRemints(t *testing.T) {
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mints++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"fresh-jwt","token_type":"Bearer","expires_in":7200}`))
+		_, _ = w.Write([]byte(`{"access_token":"fresh-jwt","token_type":"Bearer","expires_in":7200}`)) //nolint:errcheck // test
 	}))
 	defer core.Close()
 	t.Setenv("ENTIRE_IDENTITY_CORE", core.URL)

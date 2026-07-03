@@ -21,6 +21,7 @@ type TimingRoundTripper struct {
 // RoundTrip implements http.RoundTripper.
 func (t *TimingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !debuglog.Enabled() {
+		//nolint:wrapcheck // passthrough - wrapping would change error semantics
 		return t.Next.RoundTrip(req)
 	}
 	start := time.Now()
@@ -28,6 +29,7 @@ func (t *TimingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	dur := time.Since(start)
 	if err != nil {
 		debuglog.Printf("timing: %s %s %s error=%v dur_ms=%d", t.Label, req.Method, req.URL.Redacted(), err, dur.Milliseconds())
+		//nolint:wrapcheck // passthrough - wrapping would change error semantics
 		return resp, err
 	}
 	debuglog.Printf("timing: %s %s %s status=%d dur_ms=%d", t.Label, req.Method, req.URL.Redacted(), resp.StatusCode, dur.Milliseconds())
