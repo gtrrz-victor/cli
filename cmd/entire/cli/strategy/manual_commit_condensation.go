@@ -1172,14 +1172,6 @@ func (s *ManualCommitStrategy) CondenseAndMarkFullyCondensed(ctx context.Context
 	}
 	defer repo.Close()
 
-	checkpointID, err := cpkg.GenerateCheckpointID(logCtx)
-	if err != nil {
-		logging.Warn(logCtx, "eager condense: failed to generate checkpoint ID",
-			slog.String("error", err.Error()),
-		)
-		return nil // fail-open
-	}
-
 	var shadowBranchName string
 	var didCondense bool
 	mutErr := MutateSessionState(ctx, sessionID, func(state *SessionState) error {
@@ -1209,6 +1201,18 @@ func (s *ManualCommitStrategy) CondenseAndMarkFullyCondensed(ctx context.Context
 			state.StepCount = 0
 			state.FullyCondensed = true
 			return nil
+		}
+
+		// Mint the checkpoint ID only now that condensation is actually going to
+		// run — the skip paths above (files-touched, no steps, no shadow branch)
+		// return before this, so a no-op session stop no longer pays the ID mint
+		// (and its checkpoints-config load).
+		checkpointID, genErr := cpkg.GenerateCheckpointID(logCtx)
+		if genErr != nil {
+			logging.Warn(logCtx, "eager condense: failed to generate checkpoint ID",
+				slog.String("error", genErr.Error()),
+			)
+			return ErrMutationSkip // fail-open; PostCommit retries
 		}
 
 		result, condErr := s.CondenseSession(ctx, repo, checkpointID, state, nil)

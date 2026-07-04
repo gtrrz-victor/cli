@@ -17,7 +17,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
-	"github.com/entireio/cli/cmd/entire/cli/checkpoint/remote"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	cliReview "github.com/entireio/cli/cmd/entire/cli/review"
@@ -633,15 +632,13 @@ func suggestCheckpointRefFetchCommand(ctx context.Context, checkpointID id.Check
 	return suggestFetchCommand(ctx, refName.String()+":"+refName.String())
 }
 
-// suggestFetchCommand builds a "git fetch <target> <refspec>" hint, preferring
-// the configured checkpoint remote URL when available and falling back to origin.
+// suggestFetchCommand builds a "git fetch <target> <refspec>" hint. It resolves
+// the target the same way attach's own fetch does (resolveCheckpointFetchTarget:
+// the checkpoint-remote/token URL if any, else origin) so the pasteable command
+// points at the remote the fetch actually used — not a bare "origin" that fails
+// in a token-only environment with an SSH origin.
 func suggestFetchCommand(ctx context.Context, refspec string) string {
-	if remote.Configured(ctx) {
-		if url, err := remote.FetchURL(ctx); err == nil && url != "" {
-			return fmt.Sprintf("git fetch %s %s", url, refspec)
-		}
-	}
-	return "git fetch origin " + refspec
+	return fmt.Sprintf("git fetch %s %s", resolveCheckpointFetchTarget(ctx), refspec)
 }
 
 func resolveCheckpointID(ctx context.Context, headCommit *object.Commit) (id.CheckpointID, bool) {

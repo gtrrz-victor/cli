@@ -32,6 +32,33 @@ func TestGenerateULID(t *testing.T) {
 	}
 }
 
+func TestCheckpointID_DisplayShort(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		// Legacy hex is random throughout: its 12-char form is shown whole.
+		{"legacy hex", "a1b2c3d4e5f6", "a1b2c3d4e5f6"},
+		// A ULID is shown in full — front-truncating drops its entropy tail and
+		// would render an ambiguous, unresolvable prefix.
+		{"ulid shown in full", sampleULID, sampleULID},
+		// Non-ID sentinels trim like the legacy case (here: unchanged, under width).
+		{"temporary sentinel", "temporary", "temporary"},
+		// An over-width unknown string is trimmed to ShortIDLength.
+		{"overlong unknown", "0123456789abcdef", "0123456789ab"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := CheckpointID(tt.input).DisplayShort(); got != tt.want {
+				t.Errorf("CheckpointID(%q).DisplayShort() = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckpointID_Methods(t *testing.T) {
 	t.Run("String", func(t *testing.T) {
 		id := CheckpointID("a1b2c3d4e5f6")

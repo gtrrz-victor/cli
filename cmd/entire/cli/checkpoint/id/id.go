@@ -50,8 +50,10 @@ const ShortIDLength = 12
 
 // MaxIDLength is the longest a valid checkpoint ID can be — a 26-character ULID.
 // Use it (not ShortIDLength) when reasoning about whether a string could be a
-// checkpoint ID or a prefix of one, since IDs are no longer fixed-width.
-const MaxIDLength = 26
+// checkpoint ID or a prefix of one, since IDs are no longer fixed-width. Tied to
+// oklog/ulid's own encoded-size constant so the three ULID-width sites (this,
+// ulidPattern's {26}, and the library) cannot drift apart.
+const MaxIDLength = ulid.EncodedSize
 
 // checkpointIDRegex validates the legacy format: exactly 12 lowercase hex characters.
 var checkpointIDRegex = regexp.MustCompile(`^` + Pattern + `$`)
@@ -182,6 +184,24 @@ func Validate(s string) error {
 // String returns the checkpoint ID as a string.
 func (id CheckpointID) String() string {
 	return string(id)
+}
+
+// DisplayShort returns the checkpoint ID trimmed for compact display. A legacy
+// hex ID is random throughout, so its ShortIDLength-char prefix identifies it and
+// resolves as a prefix. A ULID encodes a millisecond timestamp in its leading
+// characters (near-identical for checkpoints minted close in time) with entropy
+// only in the tail, so a front-truncated ULID is both ambiguous and misleading —
+// it looks like a complete ID but won't resolve — so a ULID is returned in full.
+// Non-ID strings (e.g. "temporary") are trimmed like the legacy case.
+func (id CheckpointID) DisplayShort() string {
+	s := string(id)
+	if KindOf(s) == KindULID {
+		return s
+	}
+	if len(s) > ShortIDLength {
+		return s[:ShortIDLength]
+	}
+	return s
 }
 
 // IsEmpty returns true if the checkpoint ID is empty or unset.

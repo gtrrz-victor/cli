@@ -2553,8 +2553,6 @@ const (
 	maxMessageDisplayLength = 80
 	// maxPromptDisplayLength is the maximum length for session prompts before truncation
 	maxPromptDisplayLength = 60
-	// checkpointIDDisplayLength is the number of characters to show from checkpoint IDs
-	checkpointIDDisplayLength = 12
 )
 
 // formatBranchCheckpoints formats checkpoint information for a branch.
@@ -2715,10 +2713,9 @@ func groupByCheckpointID(points []strategy.RewindPoint) []checkpointGroup {
 // followed by indicators and the prompt — which cascades from
 // SessionPrompt → latest commit message → dimmed `(no prompt recorded)`.
 func formatCheckpointGroup(sb *strings.Builder, group checkpointGroup, styles statusStyles) {
-	cpID := group.checkpointID
-	if len(cpID) > checkpointIDDisplayLength {
-		cpID = cpID[:checkpointIDDisplayLength]
-	}
+	// Kind-aware trim: a legacy hex ID shows its 12-char prefix; a ULID is shown
+	// in full (front-truncating a ULID drops its entropy tail and won't resolve).
+	cpID := id.CheckpointID(group.checkpointID).DisplayShort()
 
 	// Indicators (Task / temporary). Skip [temporary] when cpID already says so.
 	var indicators []string
