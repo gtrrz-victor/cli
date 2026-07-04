@@ -62,16 +62,19 @@ func (s *kindRoutingStore) readOrder(checkpointID id.CheckpointID) []PersistentS
 	}
 }
 
-// firstResolved calls read on each store in order and returns the first result
-// that is not "absent" (per absent). A real (non-absent) error short-circuits.
-// When every store reports absent, the last absent result is returned so callers
-// still see the backend's own not-found signal.
+// firstResolved calls read on each store in order and returns the first genuine
+// hit (a non-absent result with no error). A non-final store that reports absent
+// OR errors falls through to the next store, so a transient failure in one
+// backend (e.g. a git-refs on-demand fetch error) does not hide a checkpoint that
+// resolves in the fallback backend. The final store's result is returned as-is
+// (hit, absent, or error), so callers still see the backend's own not-found /
+// error signal when nothing resolved.
 func firstResolved[T any](stores []PersistentStore, read func(PersistentStore) (T, error), absent func(T, error) bool) (T, error) {
 	var v T
 	var err error
-	for _, st := range stores {
+	for i, st := range stores {
 		v, err = read(st)
-		if !absent(v, err) {
+		if i == len(stores)-1 || (err == nil && !absent(v, err)) {
 			return v, err
 		}
 	}
@@ -106,14 +109,33 @@ func (s *kindRoutingStore) List(ctx context.Context) ([]CheckpointInfo, error) {
 	if err != nil {
 		return nil, err //nolint:wrapcheck // in-package store error surfaced verbatim
 	}
-	// Disjoint by construction (hex on the branch, ULID in refs; a migrated hex
-	// ref would appear only in refs). Concatenate and re-sort most-recent-first to
-	// match each backend's own List ordering.
 	merged := make([]CheckpointInfo, 0, len(branchList)+len(refsList))
 	merged = append(merged, branchList...)
 	merged = append(merged, refsList...)
-	sort.Slice(merged, func(i, j int) bool { return merged[i].CreatedAt.After(merged[j].CreatedAt) })
-	return merged, nil
+	sortCheckpointInfosByRecency(merged)
+	// Dedup by ID: during coexistence/migration the same checkpoint can appear in
+	// both backends (a ULID mirrored to the branch, or a hex still on the branch
+	// and also migrated into refs). Keep the first occurrence — i.e. the most
+	// recent after the sort.
+	deduped := merged[:0]
+	seen := make(map[id.CheckpointID]struct{}, len(merged))
+	for _, info := range merged {
+		if _, dup := seen[info.CheckpointID]; dup {
+			continue
+		}
+		seen[info.CheckpointID] = struct{}{}
+		deduped = append(deduped, info)
+	}
+	return deduped, nil
+}
+
+// sortCheckpointInfosByRecency orders checkpoints most-recent-first by CreatedAt.
+// Shared by the git-branch, git-refs, and routing List implementations so they
+// present a consistent order.
+func sortCheckpointInfosByRecency(checkpoints []CheckpointInfo) {
+	sort.Slice(checkpoints, func(i, j int) bool {
+		return checkpoints[i].CreatedAt.After(checkpoints[j].CreatedAt)
+	})
 }
 
 func (s *kindRoutingStore) ReadSessionContent(ctx context.Context, checkpointID id.CheckpointID, sessionIndex int) (*SessionContent, error) {
