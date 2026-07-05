@@ -569,7 +569,7 @@ var ErrNoCellForJurisdiction = errors.New("no entire-api cell configured for jur
 // cluster first). It hand-parses GET /api/v1/clusters rather than reusing the
 // generated coreapi.ListClusters() because coreapi imports this (auth) package,
 // so auth cannot import coreapi without a cycle — the repo-scoped path avoids
-// this by resolving the cell in the cli layer (see resolveExpertsCellTarget).
+// this by resolving the cell in the cli layer (see resolveRepoCellTarget).
 func resolveCellAPIBaseURL(ctx context.Context, coreURL, loginJWT, jurisdiction string, httpClient *http.Client) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(coreURL, "/")+clustersAPIPath, nil)
 	if err != nil {
