@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Control-plane commands (`org`, `project`, `repo`, `grant`) now print human-readable confirmations by default; the wire JSON (including `repo create`'s `entire://` remote) moved behind `--json`. Empty `--json` lists emit `[]`, and success messages moved from stderr to stdout ([#1626](https://github.com/entireio/cli/pull/1626))
+
 ## [0.7.8] - 2026-06-30
 
 ### Added
