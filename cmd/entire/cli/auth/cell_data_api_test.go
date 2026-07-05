@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,5 +603,72 @@ func TestCellClientFactory_ReusesTokenPerJurisdiction(t *testing.T) {
 	}
 	if got, want := strings.Join(audiences, ","), "https://eu.entire.io,"+usEntireAudience; got != want {
 		t.Fatalf("exchange audiences = %q, want %q", got, want)
+	}
+}
+
+// TestCellClientFactory_SingleFlightsConcurrentMints pins the per-jurisdiction
+// locking: concurrent ClientFor calls for the same jurisdiction produce exactly
+// one exchange (the rest wait on the slot and reuse the result), not one each.
+// Not parallel: manipulates env + token store.
+func TestCellClientFactory_SingleFlightsConcurrentMints(t *testing.T) {
+	t.Setenv("ENTIRE_CONFIG_DIR", t.TempDir())
+	t.Setenv("ENTIRE_API_BASE_URL", "https://entire.io")
+	t.Setenv("ENTIRE_API_AUDIENCE_TEMPLATE", "")
+	t.Setenv("ENTIRE_CORE_BASE_URL_TEMPLATE", "")
+	restore := tokenstore.UseFileBackendForTesting(filepath.Join(t.TempDir(), "tokens.json"))
+	t.Cleanup(restore)
+
+	var mu sync.Mutex
+	exchangeCount := 0
+	coreSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != oauthTokenPath {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		exchangeCount++
+		mu.Unlock()
+		time.Sleep(30 * time.Millisecond) // widen the window concurrent callers could race into
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"identity-token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer coreSrv.Close()
+
+	svc := tokenstore.CoreKeyringService(coreSrv.URL)
+	loginJWT := makeJWT(t, fmt.Sprintf(`{"iss":%q,"home_jurisdiction":"us","exp":%d}`, coreSrv.URL, time.Now().Add(2*time.Hour).Unix()))
+	if err := tokenstore.Set(svc, "me", tokenstore.EncodeTokenWithExpiration(loginJWT, 7200)); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	ctxObj := &contexts.Context{Name: "me@core", CoreURL: coreSrv.URL, Handle: "me", KeychainService: svc}
+	t.Cleanup(SetResolveContextForCellAPIForTest(t, func(context.Context, string, string, string, *http.Client, clusterdiscovery.DebugFunc) (*contexts.Context, error) {
+		return ctxObj, nil
+	}))
+	t.Cleanup(SetCellExchangeTransportForTest(t, coreSrv.Client().Transport))
+
+	factory, err := NewEntireAPICellClientFactory(context.Background(), false)
+	if err != nil {
+		t.Fatalf("NewEntireAPICellClientFactory: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = factory.ClientFor(context.Background(), &CellTarget{
+				BaseURL:      fmt.Sprintf("https://cell-%d.api.example", i),
+				Jurisdiction: "eu",
+			})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("ClientFor[%d]: %v", i, err)
+		}
+	}
+	if exchangeCount != 1 {
+		t.Fatalf("exchange count = %d, want 1 (same jurisdiction single-flighted)", exchangeCount)
 	}
 }

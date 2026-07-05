@@ -119,8 +119,18 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 type CellClientFactory struct {
 	subject cellSubject
 
-	mu     sync.Mutex
-	tokens map[string]string // jurisdiction -> minted identity token
+	mu    sync.Mutex           // guards slots (map access only, never held across I/O)
+	slots map[string]*mintSlot // jurisdiction -> its token slot
+}
+
+// mintSlot single-flights one jurisdiction's token: the slot mutex is held
+// across the mint, so concurrent callers for the same jurisdiction wait for one
+// exchange instead of duplicating it, while other jurisdictions mint in
+// parallel on their own slots. A failed mint caches nothing — the next caller
+// retries.
+type mintSlot struct {
+	mu    sync.Mutex
+	token string
 }
 
 // NewEntireAPICellClientFactory resolves the exchange subject (active stored
@@ -131,7 +141,7 @@ func NewEntireAPICellClientFactory(ctx context.Context, insecureHTTP bool) (*Cel
 	if err != nil {
 		return nil, err
 	}
-	return &CellClientFactory{subject: subject, tokens: make(map[string]string)}, nil
+	return &CellClientFactory{subject: subject, slots: make(map[string]*mintSlot)}, nil
 }
 
 // ClientFor returns an authenticated client for the given cell target (nil
@@ -169,22 +179,30 @@ func (f *CellClientFactory) ClientFor(ctx context.Context, target *CellTarget) (
 }
 
 // tokenFor returns the cached identity token for jurisdiction, minting it on
-// first use. The mutex is held across the mint: concurrent callers for the
-// same jurisdiction wait for one exchange instead of duplicating it, at the
-// cost of serializing cross-jurisdiction mints (fine for the handful of
-// jurisdictions a fan-out touches).
+// first use. Locking is per jurisdiction (see mintSlot): a slow exchange for
+// one jurisdiction never blocks another jurisdiction's mint — in a fan-out,
+// healthy cells must not burn their per-cell deadline waiting on an unrelated
+// region's exchange.
 func (f *CellClientFactory) tokenFor(ctx context.Context, jurisdiction, coreURL string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if token, ok := f.tokens[jurisdiction]; ok {
-		return token, nil
+	slot, ok := f.slots[jurisdiction]
+	if !ok {
+		slot = &mintSlot{}
+		f.slots[jurisdiction] = slot
+	}
+	f.mu.Unlock()
+
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.token != "" {
+		return slot.token, nil
 	}
 	audience := jurisdictionAudience(jurisdiction, f.subject.dataOrigin, f.subject.discoveredCore)
 	token, err := exchangeJurisdictionToken(ctx, coreURL, f.subject.loginJWT, audience, f.subject.httpClient)
 	if err != nil {
 		return "", fmt.Errorf("exchange jurisdictional identity token: %w", err)
 	}
-	f.tokens[jurisdiction] = token
+	slot.token = token
 	return token, nil
 }
 

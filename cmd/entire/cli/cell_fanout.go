@@ -47,8 +47,11 @@ type cellGroup struct {
 }
 
 // groupReposByCell groups a repo index by hosting cell, one group per distinct
-// cell, deterministically ordered by cell name. Entries without an ID are
-// skipped (nothing to ask the cell about).
+// cell, deterministically ordered by cell name (jurisdiction as tiebreak).
+// Entries without an ID are skipped (nothing to ask the cell about). The key
+// includes the jurisdiction so entries whose index row carries no cell don't
+// collapse across jurisdictions into one group routed by whichever repo came
+// first — they stay per-jurisdiction and route via the jurisdiction fallback.
 func groupReposByCell(repos []coreapi.RepoIndexEntry) []cellGroup {
 	byCell := make(map[string]*cellGroup)
 	for _, r := range repos {
@@ -56,13 +59,15 @@ func groupReposByCell(repos []coreapi.RepoIndexEntry) []cellGroup {
 		if id == "" {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(r.Cell))
+		cell := strings.ToLower(strings.TrimSpace(r.Cell))
+		jurisdiction := strings.ToLower(strings.TrimSpace(r.Jurisdiction))
+		key := cell + "\x00" + jurisdiction
 		g, ok := byCell[key]
 		if !ok {
 			g = &cellGroup{
-				cell:         key,
+				cell:         cell,
 				clusterSlug:  strings.ToLower(strings.TrimSpace(r.ClusterSlug)),
-				jurisdiction: strings.ToLower(strings.TrimSpace(r.Jurisdiction)),
+				jurisdiction: jurisdiction,
 			}
 			byCell[key] = g
 		}
@@ -72,15 +77,25 @@ func groupReposByCell(repos []coreapi.RepoIndexEntry) []cellGroup {
 	for _, g := range byCell {
 		cells = append(cells, *g)
 	}
-	sort.Slice(cells, func(i, j int) bool { return cells[i].cell < cells[j].cell })
+	sort.Slice(cells, func(i, j int) bool {
+		if cells[i].cell != cells[j].cell {
+			return cells[i].cell < cells[j].cell
+		}
+		return cells[i].jurisdiction < cells[j].jurisdiction
+	})
 	return cells
 }
 
 // resolveCellBaseURLs fills each group's baseURL from the cluster catalog,
-// joining on ClusterSlug ↔ Cluster.Slug. Best-effort: on a catalog error or a
-// missing/incomplete cluster row the group keeps baseURL "" and falls back to
-// jurisdiction routing — a degraded catalog must not sink the fan-out.
+// joining on ClusterSlug ↔ Cluster.Slug. Best-effort: on a catalog error or
+// timeout (bounded by cellResolveTimeout, like resolveRepoCellTarget — a hung
+// core must not stall the command) or a missing/incomplete cluster row, the
+// group keeps baseURL "" and falls back to jurisdiction routing — a degraded
+// catalog must not sink the fan-out.
 func resolveCellBaseURLs(ctx context.Context, c cellCoreClient, cells []cellGroup) {
+	ctx, cancel := context.WithTimeout(ctx, cellResolveTimeout)
+	defer cancel()
+
 	clusters, err := c.ListClusters(ctx)
 	if err != nil {
 		logging.Debug(ctx, "cell fan-out: list clusters failed, using jurisdiction routing", "error", err.Error())
@@ -97,10 +112,21 @@ func resolveCellBaseURLs(ctx context.Context, c cellCoreClient, cells []cellGrou
 				"cluster_slug", cells[i].clusterSlug, "cell", cells[i].cell)
 			continue
 		}
-		cells[i].baseURL = strings.TrimRight(strings.TrimSpace(cl.ApiUrl.Or("")), "/")
+		// A concrete baseURL needs a jurisdiction to mint the matching token
+		// for — mirroring resolveRepoCellTarget, which refuses a target unless
+		// both are present. Setting baseURL with an unknown jurisdiction would
+		// dial the cell with a home-jurisdiction token.
+		jurisdiction := cells[i].jurisdiction
 		if j := strings.ToLower(strings.TrimSpace(cl.Jurisdiction)); j != "" {
-			cells[i].jurisdiction = j
+			jurisdiction = j
 		}
+		if jurisdiction == "" {
+			logging.Debug(ctx, "cell fan-out: no jurisdiction for cluster, using home routing",
+				"cluster_slug", cells[i].clusterSlug, "cell", cells[i].cell)
+			continue
+		}
+		cells[i].jurisdiction = jurisdiction
+		cells[i].baseURL = strings.TrimRight(strings.TrimSpace(cl.ApiUrl.Or("")), "/")
 	}
 }
 

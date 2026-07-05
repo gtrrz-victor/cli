@@ -21,22 +21,50 @@ func TestGroupReposByCell(t *testing.T) {
 		{ID: "01C", Cell: "AWS-US-EAST-2", ClusterSlug: "us-prod", Jurisdiction: "US"}, // case-folds into same group
 		{ID: "01A", Cell: euWestCell, ClusterSlug: "eu-prod", Jurisdiction: "eu"},
 		{ID: "", Cell: euWestCell}, // no ID → skipped
-		{ID: "01D"},                // no cell → its own "" group (home/jurisdiction routing)
+		// Blank cell in different jurisdictions must NOT collapse into one
+		// group — each routes via its own jurisdiction fallback.
+		{ID: "01D", Jurisdiction: "eu"},
+		{ID: "01E", Jurisdiction: "us"},
 	}
 	cells := groupReposByCell(repos)
-	if len(cells) != 3 {
-		t.Fatalf("groups = %d, want 3: %+v", len(cells), cells)
+	if len(cells) != 4 {
+		t.Fatalf("groups = %d, want 4: %+v", len(cells), cells)
 	}
-	// Deterministic order by cell name: "" < aws-eu-west-1 < aws-us-east-2.
-	if cells[0].cell != "" || cells[1].cell != euWestCell || cells[2].cell != "aws-us-east-2" {
-		t.Fatalf("group order = [%q %q %q], want [\"\" aws-eu-west-1 aws-us-east-2]", cells[0].cell, cells[1].cell, cells[2].cell)
+	// Deterministic order by cell name, jurisdiction tiebreak:
+	// ""/eu < ""/us < aws-eu-west-1 < aws-us-east-2.
+	order := []struct{ cell, jurisdiction string }{
+		{"", "eu"}, {"", "us"}, {euWestCell, "eu"}, {"aws-us-east-2", "us"},
 	}
-	us := cells[2]
+	for i, want := range order {
+		if cells[i].cell != want.cell || cells[i].jurisdiction != want.jurisdiction {
+			t.Fatalf("group[%d] = %q/%q, want %q/%q", i, cells[i].cell, cells[i].jurisdiction, want.cell, want.jurisdiction)
+		}
+	}
+	if got := strings.Join(cells[0].repoIDs, ","); got != "01D" {
+		t.Fatalf("blank-cell eu repoIDs = %q, want 01D", got)
+	}
+	us := cells[3]
 	if got := strings.Join(us.repoIDs, ","); got != "01B,01C" {
 		t.Fatalf("us repoIDs = %q, want 01B,01C", got)
 	}
 	if us.clusterSlug != "us-prod" || us.jurisdiction != "us" {
 		t.Fatalf("us group coordinates = %+v, want us-prod/us", us)
+	}
+}
+
+// TestResolveCellBaseURLs_RefusesBaseURLWithoutJurisdiction pins the guard: a
+// concrete baseURL is only usable together with the jurisdiction its token
+// must be minted for; a catalog row with no jurisdiction leaves the group on
+// home routing instead of dialing a foreign cell with a home token.
+func TestResolveCellBaseURLs_RefusesBaseURLWithoutJurisdiction(t *testing.T) {
+	t.Parallel()
+	cells := []cellGroup{{cell: "aws-eu-west-1", clusterSlug: "eu-prod"}} // no jurisdiction anywhere
+	fake := &fakeCellCore{clusters: []coreapi.Cluster{
+		{Slug: "eu-prod", ApiUrl: coreapi.NewOptString(euCellAPIURL)}, // row has no jurisdiction either
+	}}
+	resolveCellBaseURLs(context.Background(), fake, cells)
+	if cells[0].baseURL != "" || cells[0].jurisdiction != "" {
+		t.Fatalf("group = %+v, want untouched (home routing)", cells[0])
 	}
 }
 
