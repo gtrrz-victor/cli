@@ -11,6 +11,8 @@ import (
 
 const euCellAPIURL = "https://eu.api.entire.io"
 
+const euWestCell = "aws-eu-west-1"
+
 func TestDistinctActiveClusterHosts(t *testing.T) {
 	t.Parallel()
 	mirrors := []coreapi.Mirror{

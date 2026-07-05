@@ -506,6 +506,35 @@ env-token-first precedence itself — see `resolveAuthStatusTarget` /
 deliberate exception: it manages a *stored* login session, which an ephemeral
 env token has none of, so it stays on the active context.
 
+### Entire-API Cell Routing (which cell does a data-plane request go to?)
+
+The data plane (entire-api) is deployed per jurisdiction; a repo placement
+lives in exactly one cell, user `/me/*` activity is consolidated in the
+caller's home cell, and no server-side cross-cell aggregator exists. The CLI
+therefore has exactly three routing shapes, mirroring the entire.io BFF:
+
+- **Repo-scoped → one cell**: `resolveRepoCellTarget` (`cell_target.go`) maps
+  a repo (ULID or owner/repo) to the cell hosting it via mirrors + the cluster
+  catalog. Best-effort: any failure returns nil and the auth layer falls back
+  to home-jurisdiction routing. Used by experts
+  (`NewAuthenticatedEntireAPICellClient` in `api_client.go`).
+- **User-scoped `/me` → home cell, never fan out**:
+  `auth.NewEntireAPICellClient(ctx, insecure, nil)` routes by the
+  `home_jurisdiction` JWT claim; activity/recap use it with a data-API
+  fallback (`runAuthenticatedActivityAPI` in `entireapi_client.go`).
+- **Repo-set queries → fan out and merge client-side**: `cell_fanout.go` —
+  `groupReposByCell` (repo index → per-cell groups; the catalog join key is
+  `ClusterSlug`↔`Cluster.Slug`, NOT the cell name, which the catalog does not
+  expose), `resolveCellBaseURLs`, and `fanOutCells` (parallel per-cell calls,
+  per-cell timeout, partial failures isolated per slot). Merge semantics stay
+  with the command.
+
+Token rule: identity tokens are **per-jurisdiction, not per-cell**. Multi-cell
+callers must build one `auth.CellClientFactory`
+(`NewEntireAPICellClientFactory`) per operation — it resolves the login
+subject once and mints at most one token per jurisdiction. `fanOutCells` does
+this automatically; do not call `NewEntireAPICellClient` in a loop.
+
 ### Session Strategy (`cmd/entire/cli/strategy/`)
 
 The CLI uses a manual-commit strategy for managing session data and checkpoints. The strategy implements the `Strategy` interface defined in `strategy.go`.
