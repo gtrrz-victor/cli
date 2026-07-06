@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/entireio/cli/cmd/entire/cli/palette"
 	"golang.org/x/term"
 )
 
@@ -63,16 +64,16 @@ func newActivityStyles(w io.Writer) activityStyles {
 	if useColor {
 		s.bold = lipgloss.NewStyle().Bold(true)
 		s.dim = lipgloss.NewStyle().Faint(true)
-		s.label = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true)
+		s.label = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true)
 		s.value = lipgloss.NewStyle().Bold(true)
-		s.unit = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-		s.desc = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-		s.repoNm = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-		s.commitH = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		s.unit = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
+		s.desc = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
+		s.repoNm = lipgloss.NewStyle() // default fg: inverts with terminal theme
+		s.commitH = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 		s.commitM = lipgloss.NewStyle().Bold(true)
-		s.add = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-		s.del = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-		s.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		s.add = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Success))
+		s.del = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Error))
+		s.muted = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 	}
 
 	return s
@@ -95,12 +96,17 @@ func (s activityStyles) renderAgent(agentID, text string) string {
 
 type agentDisplay struct {
 	Label string
-	Color string // ANSI 256 color code
+	Color string // agent brand color (hex); lipgloss resolves to the terminal's profile
 	Char  rune   // block character for bar charts
 }
 
-// Agent colors match the dark-mode CSS variables from entire.io (Tailwind 400-level).
-// Lipgloss resolves hex to the best representation for the terminal's color profile.
+// Agent colors are the per-agent brand colors from entire.io (dark-mode CSS
+// variables, Tailwind 400-level). This is a deliberate exception to the CLI's
+// base16 palette: there are more agents than base16 has distinct hues, so
+// collapsing them onto ANSI slots makes neighboring agents indistinguishable
+// in bar charts and legends. We keep the hex values so each agent stays
+// recognizable; lipgloss resolves them to the best representation for the
+// terminal's color profile. The non-brand "unknown" fallback uses muted gray.
 var agentDisplayMap = map[string]agentDisplay{
 	"claude":   {Label: "Claude Code", Color: "#fb923c", Char: '▓'}, // orange-400
 	"gemini":   {Label: "Gemini", Color: "#60a5fa", Char: '▓'},      // blue-400
@@ -112,7 +118,7 @@ var agentDisplayMap = map[string]agentDisplay{
 	"cursor":   {Label: "Cursor", Color: "#38bdf8", Char: '▓'},      // sky-400
 	"droid":    {Label: "Droid", Color: "#f472b6", Char: '▓'},       // pink-400
 	"kiro":     {Label: "Kiro", Color: "#c084fc", Char: '▓'},        // purple-400
-	"unknown":  {Label: "Unknown", Color: "245", Char: '░'},
+	"unknown":  {Label: "Unknown", Color: palette.Muted, Char: '░'},
 }
 
 var agentOrder = []string{

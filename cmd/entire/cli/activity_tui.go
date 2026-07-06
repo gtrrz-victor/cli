@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/entireio/cli/cmd/entire/cli/api"
+	"github.com/entireio/cli/cmd/entire/cli/palette"
 )
 
 // activityDataMsg is sent when API data has been fetched.
@@ -54,7 +55,7 @@ type activityModel struct {
 func runActivityTUI(ctx context.Context, client *api.Client) error {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted))
 
 	m := activityModel{
 		loading:  true,
@@ -228,8 +229,8 @@ func (m activityModel) renderFooter() string {
 	if !m.sty.colorEnabled {
 		return ""
 	}
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Faint(true)
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true)
 	sep := helpStyle.Render(" · ")
 
 	fullHelp := keyStyle.Render("↑/↓, j/k") + helpStyle.Render(" scroll") +
@@ -272,16 +273,16 @@ func newActivityStylesWithWidth(width int, useColor bool) activityStyles {
 		width:        width,
 		bold:         lipgloss.NewStyle().Bold(true),
 		dim:          lipgloss.NewStyle().Faint(true),
-		label:        lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true),
+		label:        lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)).Bold(true),
 		value:        lipgloss.NewStyle().Bold(true),
-		unit:         lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-		desc:         lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-		repoNm:       lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
-		commitH:      lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+		unit:         lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
+		desc:         lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
+		repoNm:       lipgloss.NewStyle(), // default fg: inverts with terminal theme
+		commitH:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 		commitM:      lipgloss.NewStyle().Bold(true),
-		add:          lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-		del:          lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
-		muted:        lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+		add:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Success)),
+		del:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Error)),
+		muted:        lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Muted)),
 	}
 }
 

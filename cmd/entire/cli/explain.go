@@ -25,6 +25,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
 	"github.com/entireio/cli/cmd/entire/cli/interactive"
 	"github.com/entireio/cli/cmd/entire/cli/logging"
+	"github.com/entireio/cli/cmd/entire/cli/palette"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/strategy"
@@ -1770,9 +1771,9 @@ func formatCheckpointHeader(
 
 	headline := "● Checkpoint " + cpID.String()
 	if styles.colorEnabled {
-		bullet := styles.render(lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")), "●")
+		bullet := styles.render(lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Accent)), "●")
 		key := styles.render(styles.bold, "Checkpoint")
-		val := styles.render(lipgloss.NewStyle().Foreground(lipgloss.Color("#fb923c")), cpID.String())
+		val := styles.render(lipgloss.NewStyle().Foreground(lipgloss.Color(palette.Accent)), cpID.String())
 		headline = bullet + " " + key + " " + val
 	}
 	sb.WriteString(headline)
@@ -2709,7 +2710,7 @@ func groupByCheckpointID(points []strategy.RewindPoint) []checkpointGroup {
 }
 
 // formatCheckpointGroup formats a single checkpoint group for display.
-// The list view headline puts the checkpoint ID first (in bold orange),
+// The list view headline puts the checkpoint ID first (in bold accent/magenta),
 // followed by indicators and the prompt — which cascades from
 // SessionPrompt → latest commit message → dimmed `(no prompt recorded)`.
 func formatCheckpointGroup(sb *strings.Builder, group checkpointGroup, styles statusStyles) {
