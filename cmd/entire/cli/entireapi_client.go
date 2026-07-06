@@ -14,10 +14,11 @@ import (
 	"github.com/entireio/cli/internal/coreapi"
 )
 
-// currentRepoIDTimeout bounds currentRepoID's control-plane lookup. The lookup
-// is best-effort decoration (recap degrades to personal-only without it), so a
-// stalled core must not hang the command — mirror expertsCellResolveTimeout.
-const currentRepoIDTimeout = 5 * time.Second
+// currentRepoRefTimeout bounds currentRepoRef's control-plane lookup. The
+// lookup is best-effort decoration (recap degrades to personal-only without
+// it), so a stalled core must not hang the command — mirror
+// expertsCellResolveTimeout.
+const currentRepoRefTimeout = 5 * time.Second
 
 // runAuthenticatedActivityAPI runs fn with an authenticated client for the
 // activity/recap surface. It prefers the caller's home entire-api cell (the same
@@ -63,33 +64,39 @@ func forgeToMirrorProvider(forge string) (string, bool) {
 	}
 }
 
-// currentRepoID best-effort resolves the current repo (its "origin" remote) to
-// the ULID entire-api uses for repo-scoped params — recap's /me/recap?repo=.
-// entire.io/api documents the mirror id as exactly that repo_id (repo_id =
-// mirror_repos.id), and the CLI already lists mirrors via the control plane, so
-// no extra resolution is needed. Any failure returns "" — recap then shows the
-// personal side only rather than erroring.
-func currentRepoID(ctx context.Context) string {
-	ctx, cancel := context.WithTimeout(ctx, currentRepoIDTimeout)
+// currentRepoRef best-effort resolves the current repo (its "origin" remote)
+// to the ULID entire-api uses for repo-scoped params — recap's /me/recap?repo=
+// — plus the human owner/repo slug for display, from a single remote
+// resolution (the caller needs both; resolving twice would double the git and
+// control-plane work). entire.io/api documents the mirror id as exactly that
+// repo_id (repo_id = mirror_repos.id), and the CLI already lists mirrors via
+// the control plane, so no extra resolution is needed. Any failure returns
+// "", "" — recap then shows the personal side only rather than erroring.
+func currentRepoRef(ctx context.Context) (repoID, repoSlug string) {
+	ctx, cancel := context.WithTimeout(ctx, currentRepoRefTimeout)
 	defer cancel()
 
 	forge, owner, repo, err := gitremote.ResolveRemoteRepo(ctx, "origin")
-	if err != nil {
-		return ""
+	if err != nil || owner == "" || repo == "" {
+		return "", ""
 	}
 	provider, ok := forgeToMirrorProvider(forge)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	c, err := coreapi.New()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	mirrors, err := listMirrorsForRepo(ctx, c, provider, strings.ToLower(owner), repo)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return firstActiveRepoID(mirrors)
+	repoID = firstActiveRepoID(mirrors)
+	if repoID == "" {
+		return "", ""
+	}
+	return repoID, owner + "/" + repo
 }
 
 // firstActiveRepoID returns the id of the repo's first active mirror (the repo

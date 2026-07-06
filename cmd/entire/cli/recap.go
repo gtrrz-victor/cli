@@ -123,7 +123,11 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 	if err != nil {
 		return err
 	}
-	client, repoScope, err := newRecapClient(ctx, f.insecureHTTP)
+	// repoName is the human owner/repo label for the scope line: the ?repo=
+	// scope value is a repo_id ULID when routed to a cell (echoed back verbatim
+	// by the response), which is meaningless to show a user. Both are empty when
+	// no repo query is sent, so an unscoped recap isn't mislabelled.
+	client, repoScope, repoName, err := newRecapClient(ctx, f.insecureHTTP)
 	if err != nil {
 		if errors.Is(err, api.ErrInsecureHTTP) {
 			fmt.Fprintf(errW, "ENTIRE_API_BASE_URL is set to an insecure http:// URL (%s). Use https:// for production, or pass --insecure-http-auth for local dev.\n", api.BaseURL())
@@ -138,14 +142,6 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 		return err
 	}
 	rangeKey := f.rangeKey()
-	// The ?repo= value is a repo_id ULID when routed to a cell, which the recap
-	// response echoes back; show the human owner/repo name instead. Only when
-	// actually scoped (a repo query was sent), so an unscoped recap isn't
-	// mislabelled as scoped to the current repo.
-	repoName := ""
-	if repoScope != "" {
-		repoName = currentRepoSlug(ctx)
-	}
 	if f.useTUI(interactive.IsTerminalWriter(w), interactive.CanPromptInteractively(), IsAccessibleMode()) {
 		return runRecapTUI(ctx, client, recapTUIOptions{
 			Range:    rangeKey,
@@ -188,11 +184,13 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 // these were all relabelled as keyring read failures via keyringReadError,
 // which sent users on wild goose chases when the keyring was fine and the real
 // problem was downstream.
-// newRecapClient returns the recap client and the value to pass as /me/recap's
-// ?repo= (its team/contributors scope): the current repo's ULID when routed to
-// an entire-api cell (which addresses repos by id), or its owner/repo slug on
-// the data API (which addresses them by name). Empty when the current repo
-// can't be resolved — recap then shows the personal side only.
+// newRecapClient returns the recap client, the value to pass as /me/recap's
+// ?repo= (its team/contributors scope), and the repo's owner/repo display name.
+// The scope is the current repo's ULID when routed to an entire-api cell (which
+// addresses repos by id), or its owner/repo slug on the data API (which
+// addresses them by name); both come from one remote/mirror resolution, so the
+// caller never re-resolves for display. Empty when the current repo can't be
+// resolved — recap then shows the personal side only.
 //
 // It prefers the caller's home entire-api cell (the shared client) and falls
 // back to the data API on ANY cell-client failure — the cell path is a
@@ -201,13 +199,14 @@ func runRecap(ctx context.Context, w, errW io.Writer, f *recapFlags) error {
 // are silent; unexpected ones are debug-logged (logCellClientFallback). Only
 // failures of the data-API path itself surface — except ErrNotLoggedIn, which
 // recap tolerates, rendering and letting the server answer 401.
-func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, string, error) {
+func newRecapClient(ctx context.Context, insecureHTTP bool) (client *api.Client, repoScope, repoName string, err error) {
 	// Best-effort upgrade: on any cell failure fall back to the data API path
 	// below, which tolerates a missing login (renders, lets the server 401) so
 	// the not-logged-in case keeps working.
 	cellClient, cellErr := auth.NewEntireAPICellClient(ctx, insecureHTTP, nil)
 	if cellErr == nil {
-		return cellClient, currentRepoID(ctx), nil
+		repoID, repoSlug := currentRepoRef(ctx)
+		return cellClient, repoID, repoSlug, nil
 	}
 	logCellClientFallback(ctx, cellErr)
 
@@ -220,14 +219,16 @@ func newRecapClient(ctx context.Context, insecureHTTP bool) (*api.Client, string
 		err = nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	if token != "" && !insecureHTTP {
 		if err := api.RequireSecureURL(api.BaseURL()); err != nil {
-			return nil, "", fmt.Errorf("base URL check: %w", err)
+			return nil, "", "", fmt.Errorf("base URL check: %w", err)
 		}
 	}
-	return api.NewClient(token), currentRepoSlug(ctx), nil
+	// The data API scopes by slug, so scope and display name coincide.
+	slug := currentRepoSlug(ctx)
+	return api.NewClient(token), slug, slug, nil
 }
 
 func handleRecapFetchError(w io.Writer, err error) error {
