@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -744,6 +745,24 @@ func TestClusterArg(t *testing.T) {
 	}
 	if got := clusterArg([]string{"github.com/o/r"}); got != defaultClusterHost {
 		t.Errorf("omitted cluster = %q, want default %q", got, defaultClusterHost)
+	}
+}
+
+// TestResolveOneShotClusterHost_NonInteractive locks in that a non-interactive
+// `repo mirror create <github-url>` keeps the fixed defaultClusterHost without
+// dialing the control plane — scripts must get a stable, offline default. Under
+// `go test`, CanPromptInteractively() is false, so this exercises exactly the
+// script path; no server is running, so any catalog fetch would error.
+func TestResolveOneShotClusterHost_NonInteractive(t *testing.T) {
+	t.Parallel()
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	got, err := resolveOneShotClusterHost(cmd)
+	if err != nil {
+		t.Fatalf("resolveOneShotClusterHost() error = %v", err)
+	}
+	if got != defaultClusterHost {
+		t.Errorf("resolveOneShotClusterHost() = %q, want default %q", got, defaultClusterHost)
 	}
 }
 
