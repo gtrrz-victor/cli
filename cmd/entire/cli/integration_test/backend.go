@@ -131,7 +131,11 @@ func anyRefUnderPrefix(t *testing.T, dir, prefix string) bool {
 	cmd.Env = testutil.GitIsolatedEnv()
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		// Fail rather than return false: a broken invocation reported as
+		// "no refs" would make a "should NOT exist" assertion pass vacuously
+		// (same reasoning as RemoteCheckpointState). An absent prefix is not
+		// an error — for-each-ref exits 0 with empty output.
+		t.Fatalf("anyRefUnderPrefix: git for-each-ref %s in %s failed: %v", prefix, dir, err)
 	}
 	return strings.TrimSpace(string(out)) != ""
 }
