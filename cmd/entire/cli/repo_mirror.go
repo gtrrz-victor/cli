@@ -49,9 +49,11 @@ func availableMirrorRow(m coreapi.AvailableMirror) []string {
 
 // defaultClusterHost is the cluster the positional-arg mirror commands target
 // when the caller omits the <cluster-host> argument. The no-arg create wizard
-// instead enumerates real clusters from the catalog (GET /api/v1/clusters, see
-// availableRegions in repo_mirror_create_wizard.go); this stays as the
-// single-region fallback for the explicit `create <github-url>` form.
+// and the interactive one-shot `create <github-url>` instead enumerate real
+// clusters from the catalog (GET /api/v1/clusters, see availableRegions and
+// resolveOneShotClusterHost in repo_mirror_create_wizard.go); this stays as
+// the fixed fallback for non-interactive invocations, so scripts keep a
+// stable, offline-resolvable default.
 const defaultClusterHost = "aws-us-east-2.entire.io"
 
 // clusterArg returns the cluster host from the optional second positional
@@ -144,9 +146,9 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 			"the target cluster, then waits for the initial GitHub→EntireDB clone " +
 			"to finish so `git clone` works on return. Pass --no-wait to return " +
 			"as soon as the placement is registered. Idempotent on " +
-			"(upstream, cluster). The cluster-host defaults to " +
-			defaultClusterHost + " when omitted (the interactive wizard, with " +
-			"no args, instead lets you pick clusters).",
+			"(upstream, cluster). When the cluster-host is omitted, an " +
+			"interactive terminal offers the available clusters as a picker; " +
+			"non-interactive runs default to " + defaultClusterHost + ".",
 		Example: "  entire repo mirror create\n" +
 			"  entire repo mirror create github.com/octocat/hello-world\n" +
 			"  entire repo mirror create github.com/octocat/hello-world aws-us-east-2.entire.io",
@@ -160,11 +162,19 @@ func newRepoMirrorCreateCmd() *cobra.Command {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("invalid <github-url>: %w", err)
 			}
-			// The non-interactive one-shot keeps a fixed default cluster
-			// (defaultClusterHost) when [cluster-host] is omitted — catalog-based
-			// cluster guessing is intentionally limited to the interactive
-			// wizard (the no-args path above), so scripts get stable behavior.
-			clusterHost := clusterArg(args)
+			// [cluster-host] omitted: on an interactive terminal, offer the
+			// catalog's clusters as a picker (the same prompt-only-when-there-
+			// is-a-choice shape as `repo clone`); non-interactive invocations
+			// keep the fixed defaultClusterHost so scripts get stable behavior.
+			var clusterHost string
+			if len(args) > 1 {
+				clusterHost = args[1]
+			} else {
+				var rerr error
+				if clusterHost, rerr = resolveOneShotClusterHost(cmd); rerr != nil {
+					return rerr
+				}
+			}
 			if err := validateClusterHost(clusterHost); err != nil {
 				cmd.SilenceUsage = true
 				return fmt.Errorf("invalid [cluster-host]: %w", err)
