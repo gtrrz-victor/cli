@@ -173,6 +173,12 @@ func TestTargetJurisdictionRejectsBadLabel(t *testing.T) {
 	if got, err := targetJurisdiction(&CellTarget{Jurisdiction: "eu"}, good); err != nil || got != "eu" {
 		t.Fatalf("targetJurisdiction(target=eu) = %q, %v; want eu, nil", got, err)
 	}
+	// An uppercase JWT claim is case-folded rather than rejected by the strict
+	// lowercase label check.
+	upper := makeJWT(t, fmt.Sprintf(`{"home_jurisdiction":"US","exp":%d}`, time.Now().Add(time.Hour).Unix()))
+	if got, err := targetJurisdiction(nil, upper); err != nil || got != "us" {
+		t.Fatalf("targetJurisdiction(US) = %q, %v; want us, nil", got, err)
+	}
 }
 
 func TestNewEntireAPICellClient_RoutesThroughHomeCell(t *testing.T) {
