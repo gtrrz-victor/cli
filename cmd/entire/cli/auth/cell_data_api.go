@@ -119,15 +119,17 @@ func NewEntireAPICellClient(ctx context.Context, insecureHTTP bool, target *Cell
 type CellClientFactory struct {
 	subject cellSubject
 
-	mu    sync.Mutex           // guards slots (map access only, never held across I/O)
+	// mu guards the slots map only and is never held across I/O; the
+	// hold-across-I/O locking is per-jurisdiction, on each mintSlot.mu.
+	mu    sync.Mutex
 	slots map[string]*mintSlot // jurisdiction -> its token slot
 }
 
-// mintSlot single-flights one jurisdiction's token: the slot mutex is held
-// across the mint, so concurrent callers for the same jurisdiction wait for one
-// exchange instead of duplicating it, while other jurisdictions mint in
-// parallel on their own slots. A failed mint caches nothing — the next caller
-// retries.
+// mintSlot single-flights one jurisdiction's token. Unlike the factory-level
+// mutex, the slot mutex IS deliberately held across the network exchange:
+// concurrent callers for the same jurisdiction wait for one mint instead of
+// duplicating it, while other jurisdictions mint in parallel on their own
+// slots. A failed mint caches nothing — the next caller retries.
 type mintSlot struct {
 	mu    sync.Mutex
 	token string
