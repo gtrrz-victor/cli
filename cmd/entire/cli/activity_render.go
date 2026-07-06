@@ -526,8 +526,11 @@ func renderCommitListN(w io.Writer, sty activityStyles, days []commitDay, maxDay
 	}
 }
 
-// sessionTitleMaxRunes mirrors entire.io's 120-char displayName cap on the
-// Overview row (width-based truncation may shorten it further on the terminal).
+// sessionTitleMaxRunes caps the display-name *content* at 120 runes, matching
+// entire.io's Overview row (`displayName.slice(0, 120) + "…"`): the ellipsis is
+// appended as an overflow marker on top of the 120, so the rendered title can
+// be 121 runes — this is a content cap, not a hard total-length cap. On a real
+// terminal the width-based truncation below usually shortens it further first.
 const sessionTitleMaxRunes = 120
 
 func renderSessionList(w io.Writer, sty activityStyles, days []sessionDay) {
