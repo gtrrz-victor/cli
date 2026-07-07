@@ -1082,6 +1082,11 @@ To completely remove Entire integrations from this repository, use --uninstall:
 // runEnableInteractive runs the interactive enable flow.
 // agents must be provided by the caller (via detectOrSelectAgent).
 func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent, opts EnableOptions) error {
+	// Capture first-run status before we write any settings: setupEntireDirectory
+	// and saveSettings below make IsSetUpAny report true. maybeOfferSessionImport
+	// uses this so the import offer only fires on the very first enable.
+	firstRun := !settings.IsSetUpAny(ctx)
+
 	// Uninstall hooks for agents that were previously active but are no longer selected
 	if err := uninstallDeselectedAgentHooks(ctx, w, agents); err != nil {
 		return fmt.Errorf("failed to clean up deselected agents: %w", err)
@@ -1200,6 +1205,10 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 	if err := strategy.EnsureSetup(ctx); err != nil {
 		return fmt.Errorf("failed to setup strategy: %w", err)
 	}
+
+	// Offer to import pre-existing agent history for the just-selected agents.
+	// First-run only; best-effort (never fails enable).
+	maybeOfferSessionImport(ctx, w, agents, opts, firstRun)
 
 	if opts.SuppressDoneMessage {
 		// Bootstrap finalize will print its own completion summary after
@@ -1574,6 +1583,10 @@ func printWrongAgentError(w io.Writer, name string) {
 // setupAgentHooksNonInteractive sets up hooks for a specific agent non-interactively.
 // If strategyName is provided, it sets the strategy; otherwise uses default.
 func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Agent, opts EnableOptions) error {
+	// Capture first-run status before setupEntireDirectory/saveEnabledState make
+	// IsSetUpAny report true, so the import offer fires only on first enable.
+	firstRun := !settings.IsSetUpAny(ctx)
+
 	agentName := ag.Name()
 	// Check if agent supports hooks
 	if _, ok := agent.AsHookSupport(ag); !ok {
@@ -1663,6 +1676,10 @@ func setupAgentHooksNonInteractive(ctx context.Context, w io.Writer, ag agent.Ag
 	if err := strategy.EnsureSetup(ctx); err != nil {
 		return fmt.Errorf("failed to setup strategy: %w", err)
 	}
+
+	// Offer to import pre-existing history for the just-configured agent.
+	// First-run only; best-effort (never fails enable).
+	maybeOfferSessionImport(ctx, w, []agent.Agent{ag}, opts, firstRun)
 
 	if opts.SuppressDoneMessage {
 		// Bootstrap finalize will print its own completion summary.
