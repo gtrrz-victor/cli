@@ -349,6 +349,10 @@ func (p *Proxy) retryOn401(client *http.Client, resp *http.Response, build func(
 	if resp.StatusCode != http.StatusUnauthorized {
 		return resp, nil
 	}
+	// Drain (bounded, like httpError and the 5xx failover path) before Close
+	// so net/http can reuse the connection for the immediate retry instead of
+	// paying a fresh TCP+TLS handshake.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024)) //nolint:errcheck // best-effort drain for connection reuse
 	_ = resp.Body.Close()
 	debuglog.Printf("data plane returned 401; credential invalidated, retrying once with a freshly minted token")
 	req, err := build()
