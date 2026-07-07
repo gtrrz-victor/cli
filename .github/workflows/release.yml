@@ -57,64 +57,64 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Extract release notes from CHANGELOG.md
-        if: steps.release-type.outputs.prerelease == 'false'
-        run: |
-          VERSION="${RELEASE_TAG#v}"
-          awk -v ver="$VERSION" 'BEGIN{header="^## \\[" ver "\\]"} $0 ~ header{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > "$RUNNER_TEMP/release_notes.md"
-          if [ ! -s "$RUNNER_TEMP/release_notes.md" ]; then
-            echo "::error::No changelog entry found for version ${VERSION} in CHANGELOG.md"
-            exit 1
-          fi
+      # - name: Extract release notes from CHANGELOG.md
+      #   if: steps.release-type.outputs.prerelease == 'false'
+      #   run: |
+      #     VERSION="${RELEASE_TAG#v}"
+      #     awk -v ver="$VERSION" 'BEGIN{header="^## \\[" ver "\\]"} $0 ~ header{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > "$RUNNER_TEMP/release_notes.md"
+      #     if [ ! -s "$RUNNER_TEMP/release_notes.md" ]; then
+      #       echo "::error::No changelog entry found for version ${VERSION} in CHANGELOG.md"
+      #       exit 1
+      #     fi
 
-      - name: Generate nightly release notes
-        if: steps.release-type.outputs.prerelease == 'true'
-        run: |
-          LAST_NIGHTLY=$(git tag -l 'v*-nightly.*' --sort=-creatordate | grep -v "^${RELEASE_TAG}$" | head -1)
-          if [ -n "$LAST_NIGHTLY" ]; then
-            BASE_TAG="$LAST_NIGHTLY"
-          else
-            BASE_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD 2>/dev/null || echo "")
-          fi
-          echo "## Nightly Build (${RELEASE_TAG})" > "$RUNNER_TEMP/release_notes.md"
-          echo "" >> "$RUNNER_TEMP/release_notes.md"
-          if [ -n "$BASE_TAG" ]; then
-            echo "Changes since ${BASE_TAG}:" >> "$RUNNER_TEMP/release_notes.md"
-            echo "" >> "$RUNNER_TEMP/release_notes.md"
-            git log --oneline "${BASE_TAG}..HEAD" --no-merges >> "$RUNNER_TEMP/release_notes.md"
-          fi
+      # - name: Generate nightly release notes
+      #   if: steps.release-type.outputs.prerelease == 'true'
+      #   run: |
+      #     LAST_NIGHTLY=$(git tag -l 'v*-nightly.*' --sort=-creatordate | grep -v "^${RELEASE_TAG}$" | head -1)
+      #     if [ -n "$LAST_NIGHTLY" ]; then
+      #       BASE_TAG="$LAST_NIGHTLY"
+      #     else
+      #       BASE_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD 2>/dev/null || echo "")
+      #     fi
+      #     echo "## Nightly Build (${RELEASE_TAG})" > "$RUNNER_TEMP/release_notes.md"
+      #     echo "" >> "$RUNNER_TEMP/release_notes.md"
+      #     if [ -n "$BASE_TAG" ]; then
+      #       echo "Changes since ${BASE_TAG}:" >> "$RUNNER_TEMP/release_notes.md"
+      #       echo "" >> "$RUNNER_TEMP/release_notes.md"
+      #       git log --oneline "${BASE_TAG}..HEAD" --no-merges >> "$RUNNER_TEMP/release_notes.md"
+      #     fi
 
-      - name: Detect macOS signing availability
-        id: signing
-        env:
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-        run: |
-          if [ -n "$MACOS_SIGN_P12" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
+      # - name: Detect macOS signing availability
+      #   id: signing
+      #   env:
+      #     MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      #   run: |
+      #     if [ -n "$MACOS_SIGN_P12" ]; then
+      #       echo "enabled=true" >> "$GITHUB_OUTPUT"
+      #     else
+      #       echo "enabled=false" >> "$GITHUB_OUTPUT"
+      #     fi
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
-        with:
-          distribution: goreleaser-pro
-          version: latest
-          args: release --clean --release-notes=${{ runner.temp }}/release_notes.md
-        env:
-          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
-          POSTHOG_ENDPOINT: ${{ vars.POSTHOG_ENDPOINT }}
-          DISCORD_WEBHOOK_ID: ${{ secrets.DISCORD_WEBHOOK_ID }}
-          DISCORD_WEBHOOK_TOKEN: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}
+      # - name: Run GoReleaser
+      #   uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+      #   with:
+      #     distribution: goreleaser-pro
+      #     version: latest
+      #     args: release --clean --release-notes=${{ runner.temp }}/release_notes.md
+      #   env:
+      #     GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     TAP_GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+      #     GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+      #     MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      #     MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      #     MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      #     MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      #     MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      #     POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      #     POSTHOG_ENDPOINT: ${{ vars.POSTHOG_ENDPOINT }}
+      #     DISCORD_WEBHOOK_ID: ${{ secrets.DISCORD_WEBHOOK_ID }}
+      #     DISCORD_WEBHOOK_TOKEN: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}
 
       # Guard against the notarize pipe silently skipping (e.g. notarize.macos.ids
       # not matching the build ids). GoReleaser only warns and exits 0 in that
@@ -124,25 +124,25 @@ jobs:
       # ("Developer ID Application: … (TEAMID)") is greppable; an ad-hoc binary
       # embeds no certificate. Fail closed if any darwin binary is unsigned or if
       # none are found at all.
-      - name: Verify macOS binaries are Developer ID signed
-        if: steps.signing.outputs.enabled == 'true'
-        run: |
-          set -euo pipefail
-          mapfile -t bins < <(jq -r '.[] | select(.type=="Binary" and .goos=="darwin") | .path' dist/artifacts.json)
-          if [ "${#bins[@]}" -eq 0 ]; then
-            echo "::error::No darwin binaries found in dist/artifacts.json — cannot verify signing. Did the build matrix change?"
-            exit 1
-          fi
-          fail=0
-          for bin in "${bins[@]}"; do
-            if grep -aq "Developer ID Application" "$bin"; then
-              echo "ok: $bin is Developer ID signed"
-            else
-              echo "::error::$bin is NOT Developer ID signed (ad-hoc only) — the notarize pipe was skipped. Check that notarize.macos.ids in .goreleaser.yaml matches the build ids."
-              fail=1
-            fi
-          done
-          exit $fail
+      # - name: Verify macOS binaries are Developer ID signed
+      #   if: steps.signing.outputs.enabled == 'true'
+      #   run: |
+      #     set -euo pipefail
+      #     mapfile -t bins < <(jq -r '.[] | select(.type=="Binary" and .goos=="darwin") | .path' dist/artifacts.json)
+      #     if [ "${#bins[@]}" -eq 0 ]; then
+      #       echo "::error::No darwin binaries found in dist/artifacts.json — cannot verify signing. Did the build matrix change?"
+      #       exit 1
+      #     fi
+      #     fail=0
+      #     for bin in "${bins[@]}"; do
+      #       if grep -aq "Developer ID Application" "$bin"; then
+      #         echo "ok: $bin is Developer ID signed"
+      #       else
+      #         echo "::error::$bin is NOT Developer ID signed (ad-hoc only) — the notarize pipe was skipped. Check that notarize.macos.ids in .goreleaser.yaml matches the build ids."
+      #         fail=1
+      #       fi
+      #     done
+      #     exit $fail
 
   # A stable tag only refreshes the stable cask; the nightly channel would
   # otherwise not catch up until the next scheduled nightly run cuts a tag from
@@ -189,34 +189,34 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
-  notify-slack:
-    runs-on: ubuntu-latest
-    needs: [release, mirror-nightly]
-    if: ${{ always() && (needs.release.result == 'failure' || needs.mirror-nightly.result == 'failure') }}
-    steps:
-      - name: Notify Slack of release failure
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
-        with:
-          webhook: ${{ secrets.E2E_SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":red_circle: *Release Failed* for `${{ env.RELEASE_TAG }}`\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run details>"
-                  }
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    {
-                      "type": "mrkdwn",
-                      "text": "Tag: `${{ env.RELEASE_TAG }}` by ${{ github.actor }}"
-                    }
-                  ]
-                }
-              ]
-            }
+  # notify-slack:
+  #   runs-on: ubuntu-latest
+  #   needs: [release, mirror-nightly]
+  #   if: ${{ always() && (needs.release.result == 'failure' || needs.mirror-nightly.result == 'failure') }}
+  #   steps:
+  #     - name: Notify Slack of release failure
+  #       uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+  #       with:
+  #         webhook: ${{ secrets.E2E_SLACK_WEBHOOK_URL }}
+  #         webhook-type: incoming-webhook
+  #         payload: |
+  #           {
+  #             "blocks": [
+  #               {
+  #                 "type": "section",
+  #                 "text": {
+  #                   "type": "mrkdwn",
+  #                   "text": ":red_circle: *Release Failed* for `${{ env.RELEASE_TAG }}`\n\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run details>"
+  #                 }
+  #               },
+  #               {
+  #                 "type": "context",
+  #                 "elements": [
+  #                   {
+  #                     "type": "mrkdwn",
+  #                     "text": "Tag: `${{ env.RELEASE_TAG }}` by ${{ github.actor }}"
+  #                   }
+  #                 ]
+  #               }
+  #             ]
+  #           }
