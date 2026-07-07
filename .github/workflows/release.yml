@@ -43,9 +43,6 @@ jobs:
           app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: |
-            homebrew-tap
-            scoop-bucket
 
       - name: Detect release type
         id: release-type
